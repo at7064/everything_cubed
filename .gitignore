@@ -42,3 +42,8 @@ replay_*.log
 # analyzer
 analyzer/__pycache__/
 analyzer/surface_palette.json
+
+# xcode
+xcuserdata/
+*.xcuserstate
+ios/build/
