@@ -1,9 +1,9 @@
 # gradle
 
 .gradle/
-build/
-out/
-classes/
+/build/
+/out/
+/classes/
 
 # eclipse
 
