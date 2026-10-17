@@ -23,6 +23,9 @@ struct ScanSetupView: View {
                          ? "Guided LiDAR room scan. Walk slowly around the room and point at every wall, the floor and the furniture."
                          : "LiDAR depth only, without RoomPlan's guidance or room model.")
                 }
+                if let scanError = model.scanError {
+                    Section { Text(scanError).foregroundStyle(.red) }
+                }
                 if !kind.isSupported {
                     Section {
                         Text("This needs an iPhone or iPad with LiDAR (Pro models).").foregroundStyle(.red)

@@ -15,6 +15,7 @@ import java.net.SocketException;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -32,36 +33,34 @@ public final class PhoneServer {
 	/** Pairing code -> player. A player's code stays valid until they ask for a new one. */
 	private static final Map<String, UUID> CODES = new ConcurrentHashMap<>();
 	private static ServerSocket socket;
-	private static final List<JmDNS> BONJOUR = new ArrayList<>();
+	/** Bonjour responder per advertised LAN address. */
+	private static final Map<InetAddress, JmDNS> BONJOUR = new HashMap<>();
 
 	private PhoneServer() {
 	}
 
-	/** Starts listening if needed. Returns the port. */
+	/** Starts listening if needed, and (re)advertises on the networks this machine is on now. Returns the port. */
 	public static synchronized int start(MinecraftServer server, int port) throws IOException {
-		if (socket != null && !socket.isClosed()) return socket.getLocalPort();
-		ServerSocket ss = new ServerSocket(port);
-		socket = ss;
-		Thread accept = new Thread(() -> acceptLoop(ss, server), "everything_cubed-phone");
-		accept.setDaemon(true);
-		accept.start();
-		// Bonjour setup can take a few seconds per interface; keep it off the server thread.
-		Thread bonjour = new Thread(() -> advertise(ss.getLocalPort()), "everything_cubed-bonjour");
+		if (socket == null || socket.isClosed()) {
+			ServerSocket ss = new ServerSocket(port);
+			socket = ss;
+			Thread accept = new Thread(() -> acceptLoop(ss, server), "everything_cubed-phone");
+			accept.setDaemon(true);
+			accept.start();
+			EverythingCubed.LOGGER.info("Phone server listening on port {}", ss.getLocalPort());
+		}
+		int p = socket.getLocalPort();
+		// The computer may have changed networks since the last call. Bonjour setup can take a few seconds
+		// per interface; keep it off the server thread.
+		Thread bonjour = new Thread(() -> advertise(p), "everything_cubed-bonjour");
 		bonjour.setDaemon(true);
 		bonjour.start();
-		EverythingCubed.LOGGER.info("Phone server listening on port {}", ss.getLocalPort());
-		return ss.getLocalPort();
+		return p;
 	}
 
 	public static synchronized void stop() {
 		CODES.clear();
-		for (JmDNS j : BONJOUR) {
-			try {
-				j.unregisterAllServices();
-				j.close();
-			} catch (IOException ignored) {
-			}
-		}
+		BONJOUR.values().forEach(PhoneServer::close);
 		BONJOUR.clear();
 		if (socket != null) {
 			try {
@@ -107,18 +106,33 @@ public final class PhoneServer {
 		}
 	}
 
-	private static void advertise(int port) {
+	/** Advertises on every current LAN address, and stops advertising on addresses this machine no longer has. */
+	private static synchronized void advertise(int port) {
+		List<InetAddress> now = lanAddresses();
+		BONJOUR.entrySet().removeIf(e -> {
+			if (now.contains(e.getKey())) return false;
+			close(e.getValue());
+			return true;
+		});
 		String name = "Everything Cubed on " + hostName();
-		for (InetAddress a : lanAddresses()) {
+		for (InetAddress a : now) {
+			if (BONJOUR.containsKey(a)) continue;
 			try {
 				JmDNS j = JmDNS.create(a, hostName());
 				j.registerService(ServiceInfo.create(SERVICE_TYPE, name, port, "protocol=" + StreamMessage.PROTOCOL));
-				synchronized (PhoneServer.class) {
-					BONJOUR.add(j);
-				}
+				BONJOUR.put(a, j);
+				EverythingCubed.LOGGER.info("Advertising the phone server on {}", a.getHostAddress());
 			} catch (IOException e) {
 				EverythingCubed.LOGGER.warn("Bonjour advertising on {} failed; the app can still connect by address", a, e);
 			}
+		}
+	}
+
+	private static void close(JmDNS j) {
+		try {
+			j.unregisterAllServices();
+			j.close();
+		} catch (IOException ignored) {
 		}
 	}
 

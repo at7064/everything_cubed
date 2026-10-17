@@ -8,7 +8,9 @@ struct ScanView: View {
     var body: some View {
         ZStack {
             if let source = model.source {
-                SourceView(source: source).ignoresSafeArea()
+                SourceView(source: source)
+                    .ignoresSafeArea()
+                    .onAppear { model.captureViewAppeared() }
             }
             VStack(spacing: 12) {
                 stats
@@ -24,6 +26,9 @@ struct ScanView: View {
     private var stats: some View {
         VStack(spacing: 4) {
             HStack(spacing: 16) {
+                if model.phase == .scanning || model.phase == .finishing {
+                    Button("Cancel", role: .cancel) { model.cancelScan() }
+                }
                 Label("\(model.framesSent)", systemImage: "photo.stack")
                 Label("\(model.framesWithDepth)", systemImage: "cube.transparent")
                     .foregroundStyle(model.framesSent > 3 && model.framesWithDepth == 0 ? .red : .primary)

@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Network
 import UIKit
@@ -22,6 +23,8 @@ final class AppModel: ObservableObject, FrameSink {
 
     @Published private(set) var phase: Phase = .disconnected
     @Published private(set) var error: String?
+    /// Why a scan could not start (shown on the setup screen).
+    @Published private(set) var scanError: String?
     @Published private(set) var log: [LogLine] = []
     @Published private(set) var framesSent = 0
     @Published private(set) var framesWithDepth = 0
@@ -95,6 +98,29 @@ final class AppModel: ObservableObject, FrameSink {
     // MARK: scan
 
     func startScan(name: String, kind: CaptureKind) {
+        scanError = nil
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        print("[app] start scan '\(name)' with \(kind.rawValue), camera permission \(status.rawValue)")
+        switch status {
+        case .authorized:
+            beginCapture(name: name, kind: kind)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                Task { @MainActor in
+                    if granted { self.beginCapture(name: name, kind: kind) } else { self.cameraDenied() }
+                }
+            }
+        default:
+            cameraDenied()
+        }
+    }
+
+    private func cameraDenied() {
+        print("[app] camera permission denied")
+        scanError = "Camera access is off. Turn it on in Settings → Privacy & Security → Camera → Cubed Scanner."
+    }
+
+    private func beginCapture(name: String, kind: CaptureKind) {
         let src = kind.makeSource()
         source = src
         framesSent = 0
@@ -104,9 +130,30 @@ final class AppModel: ObservableObject, FrameSink {
         let p = FramePump(session: src.arSession, sink: self)
         p.onHint = { [weak self] text in if self?.hint != text { self?.hint = text } }
         pump = p
-        src.start()
-        p.start()
+        captureRunning = false
         phase = .scanning
+    }
+
+    private var captureRunning = false
+
+    /// Called once the source's camera view is on screen: RoomPlan only starts reliably inside a window.
+    func captureViewAppeared() {
+        guard phase == .scanning, !captureRunning, let src = source else { return }
+        captureRunning = true
+        src.start()
+        pump?.start()
+        print("[app] capture started (\(src.name))")
+    }
+
+    /// Abandons the scan without building; the mod keeps whatever photos already arrived.
+    func cancelScan() {
+        guard phase == .scanning || phase == .finishing else { return }
+        print("[app] scan cancelled")
+        pump?.stop()
+        source?.finish { _ in }
+        client.send(WireMessage("end", ["build": false]))
+        stopCapture()
+        phase = .paired
     }
 
     func takePhoto() {
