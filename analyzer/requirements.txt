@@ -1,0 +1,12 @@
+# Python 3.12 recommended (PyTorch / MapAnything wheels).
+numpy
+scipy
+scikit-learn
+pillow
+torch
+torchvision
+transformers>=4.45
+huggingface_hub
+# Multi-view metric 3D reconstruction (Meta, Apache-2.0 weights: facebook/map-anything-apache)
+mapanything @ git+https://github.com/facebookresearch/map-anything.git
+
