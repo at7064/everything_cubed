@@ -18,6 +18,8 @@ final class FurnitureDesigns {
 	private static final BlockState STEEL = first("light_gray_concrete");
 	private static final BlockState DARK_STEEL = first("gray_concrete");
 	private static final BlockState COUNTERTOP = first("polished_andesite");
+	private static final BlockState GOLD = first("gold_block");
+	private static final BlockState AMBER = first("shroomlight", "glowstone");
 
 	/** Height of a vanilla bed's mattress. */
 	private static final double BED_TOP = 9 / 16.0;
@@ -203,6 +205,27 @@ final class FurnitureDesigns {
 		m.box(0.32, 0, 0.32, 0.68, 0.05, 0.68, IRON);
 		m.box(0.47, 0.05, 0.47, 0.53, h - 0.5, 0.53, IRON);
 		m.glow(0.26, h - 0.55, 0.26, 0.74, h - 0.1, 0.74, LINEN);
+	}
+
+	/**
+	 * Chandelier: a lantern body between heights {@code y0} and {@code y1} (blocks above the floor), hung from
+	 * the ceiling at {@code top} on a rod. Dark iron frame and crown, gold bands, a glowing amber core.
+	 */
+	static void chandelier(FurnitureModel m, double y0, double y1, double top) {
+		double w = m.w, d = m.d, cx = w / 2, cz = d / 2, in = 0.15, post = 0.08;
+		if (top - y1 > 0.05) {
+			m.box(cx - 0.04, y1, cz - 0.04, cx + 0.04, top, cz + 0.04, BLACK);       // rod
+			m.box(cx - 0.2, top - 0.06, cz - 0.2, cx + 0.2, top, cz + 0.2, BLACK);   // ceiling rose
+		}
+		m.box(in + 0.1, y1 - 0.12, in + 0.1, w - in - 0.1, y1, d - in - 0.1, BLACK);  // crown
+		m.box(in, y1 - 0.2, in, w - in, y1 - 0.12, d - in, GOLD);                     // upper rim
+		for (double[] c : new double[][]{{in, in}, {w - in - post, in}, {in, d - in - post}, {w - in - post, d - in - post}})
+			m.box(c[0], y0 + 0.15, c[1], c[0] + post, y1 - 0.2, c[1] + post, BLACK);  // frame posts
+		m.glow(in + 0.08, y0 + 0.2, in + 0.08, w - in - 0.08, y1 - 0.22, d - in - 0.08, AMBER);
+		double mid = (y0 + y1) / 2;
+		m.box(in - 0.02, mid - 0.03, in - 0.02, w - in + 0.02, mid + 0.03, d - in + 0.02, GOLD); // middle band
+		m.box(in + 0.05, y0 + 0.08, in + 0.05, w - in - 0.05, y0 + 0.15, d - in - 0.05, GOLD); // bowl
+		m.box(cx - 0.08, y0, cz - 0.08, cx + 0.08, y0 + 0.08, cz + 0.08, BLACK);     // finial
 	}
 
 	// ------------------------------------------------------------------------------------- parts

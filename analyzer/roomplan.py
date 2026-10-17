@@ -20,7 +20,7 @@ from sklearn.cluster import DBSCAN, KMeans
 from sklearn.linear_model import RANSACRegressor
 from sklearn.neighbors import NearestNeighbors
 
-from palette import DYE_PALETTE, WALL_COLOURS, WALL_PALETTE, WOOD_PALETTE, Palette, srgb_to_lab
+from palette import CONCRETE, DYE_PALETTE, WALL_COLOURS, WALL_PALETTE, WOOD_PALETTE, Palette, srgb_to_lab
 
 # ADE20K (150 class) label -> our category. Anything unmapped is ignored ("other").
 ADE_TO_CATEGORY = {
@@ -34,7 +34,7 @@ ADE_TO_CATEGORY = {
     "wardrobe": "wardrobe", "bookcase": "bookshelf", "shelf": "shelf",
     "chair": "chair", "armchair": "chair", "swivel chair": "chair", "seat": "chair", "stool": "chair",
     "ottoman": "chair", "sofa": "sofa", "bench": "sofa",
-    "lamp": "lamp", "light": "ceiling_light", "chandelier": "ceiling_light", "sconce": "sconce",
+    "lamp": "lamp", "light": "ceiling_light", "chandelier": "chandelier", "sconce": "sconce",
     "plant": "plant", "flower": "plant", "pot": "plant", "vase": "plant",
     "painting": "painting", "poster": "painting", "bulletin board": "painting",
     "rug": "rug", "television receiver": "tv", "screen": "tv", "crt screen": "tv", "monitor": "tv",
@@ -45,10 +45,41 @@ ADE_TO_CATEGORY = {
     "mirror": "mirror", "clock": "clock",
 }
 CATEGORIES = sorted(set(ADE_TO_CATEGORY.values()) | {"other"})
+# Detected things without a template are "generic:<detected name>" (see perception.perceptron_pass); they are
+# built as a plain box and keep their name in the plan, so missing templates show up.
+GENERIC = "generic:"
+# Detected things that are a vanilla block: "vanilla:<block id>:<cube|model>:<detected name>" (perception.map_names).
+VANILLA = "vanilla:"
+
+
+def vanilla_parts(cat):
+    """(block id, is full cube, detected name) of a vanilla category."""
+    _, bid, kind, name = cat.split(":", 3)
+    return bid, kind == "cube", name
 STRUCTURAL = {"wall", "floor", "ceiling"}
+TEMPLATES = set(CATEGORIES) - STRUCTURAL - {"other"}
+# What each template is, for the detector's name mapping (perception.map_names_with_model).
+TEMPLATE_INFO = {
+    "bed": "a bed", "window": "a window, including stained glass", "door": "a door or doorway",
+    "table": "a table: dining, reading or library table, or a long bench-like table people sit at",
+    "desk": "a desk or writing table", "coffee_table": "a low table in front of a sofa",
+    "counter": "a kitchen counter or island", "cabinet": "a cabinet, chest of drawers, dresser or nightstand",
+    "wardrobe": "a wardrobe or closet", "bookshelf": "a bookcase or shelving unit full of books",
+    "shelf": "one wall-mounted shelf board", "chair": "any chair, armchair or stool",
+    "sofa": "a sofa, couch or upholstered bench", "lamp": "a floor or table lamp standing on something",
+    "ceiling_light": "a small light fixed flat on the ceiling",
+    "chandelier": "a chandelier, pendant or any light hanging down from the ceiling on chains or rods",
+    "sconce": "a light fixed to a wall", "plant": "a potted plant or flowers", "painting": "a painting, poster, "
+    "picture, board or framed thing on a wall", "rug": "a rug or carpet on the floor", "tv": "a TV, monitor or "
+    "computer screen", "fridge": "a refrigerator", "stove": "a stove or oven", "microwave": "a microwave",
+    "sink": "a sink", "bathtub": "a bathtub or shower", "toilet": "a toilet", "fireplace": "a fireplace",
+    "storage": "a box, basket or crate", "trash": "a trash can", "washer": "a washing machine or dishwasher",
+    "curtain": "a curtain or blind", "mirror": "a mirror", "clock": "a clock",
+}
+assert set(TEMPLATE_INFO) == TEMPLATES, set(TEMPLATE_INFO) ^ TEMPLATES
 WALL_MOUNTED = {"window", "door", "painting", "sconce", "curtain", "mirror", "clock"}
 # Things that never stand on the floor grid.
-NO_FOOTPRINT = WALL_MOUNTED | {"ceiling_light", "rug"}
+NO_FOOTPRINT = WALL_MOUNTED | {"ceiling_light", "chandelier", "rug"}
 # Placement priority (earlier wins collisions).
 PRIORITY = ["bed", "counter", "fridge", "stove", "sink", "bathtub", "toilet", "wardrobe", "bookshelf",
             "cabinet", "fireplace", "sofa", "desk", "table", "coffee_table", "shelf", "washer", "tv",
@@ -59,7 +90,7 @@ MAX_HEIGHT = {"bed": 1, "table": 1, "desk": 1, "coffee_table": 1, "counter": 1, 
               "stove": 1, "microwave": 1, "plant": 1, "lamp": 2, "fireplace": 2, "tv": 2, "shelf": 3}
 # Smallest believable cluster (points after 3 cm voxelisation) per category.
 MIN_POINTS = {"window": 60, "door": 120, "bed": 200, "rug": 150, "painting": 40, "plant": 25,
-              "lamp": 25, "ceiling_light": 15, "sconce": 10, "microwave": 30, "clock": 10}
+              "lamp": 25, "ceiling_light": 15, "chandelier": 25, "sconce": 10, "microwave": 30, "clock": 10}
 
 SIDES = ("north", "south", "west", "east")
 AUTO_SCALE = 1.25  # default blocks per metre
@@ -268,8 +299,10 @@ def cluster_category(p, eps=0.12, min_samples=8):
 
 # ----------------------------------------------------------------------------------- main entry
 
-def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metric=True, log=print, ctx=None):
-    """ctx: optional dict that receives the room frame (origin, R, y_shift, f, room) for texture projection."""
+def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metric=True, log=print, ctx=None,
+               known_height=None):
+    """ctx: optional dict that receives the room frame (origin, R, y_shift, f, room) for texture projection.
+    known_height: the room's real floor-to-ceiling height in metres; rescales the whole reconstruction to it."""
     points = np.asarray(points, float)
     colors = np.asarray(colors, float)
     cats = np.asarray(cats)
@@ -285,7 +318,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
     f = 1.0
 
     # Remove gross outliers (things seen through windows, reconstruction noise).
-    indoor = np.isin(cats, [c for c in CATEGORIES if c != "other"])
+    indoor = cats != "other"  # every known category, including generic ones
     ref = loc[indoor] if indoor.sum() > 100 else loc
     lo_q, hi_q = np.percentile(ref, 1, axis=0), np.percentile(ref, 99, axis=0)
     pad = 0.25 * (hi_q - lo_q)
@@ -302,6 +335,18 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             f = 3.5 / max(1e-6, np.percentile(loc[:, 0], 98) - np.percentile(loc[:, 0], 2))
         loc *= f
         log(f"[plan] non-metric reconstruction rescaled by {f:.3f}")
+    stretch = 1.0  # --known-height rescale; point spacing grows with it, so clustering radii must too
+    if known_height:
+        # Monocular metric scale is a learned guess and can be far off outside ordinary rooms (a 20 m hall
+        # came out at 0.4x). One real measurement fixes it everywhere, if the shape itself is right.
+        ceil_y = np.median(loc[ceil_m, 1]) if ceil_m.sum() >= 50 else None
+        if ceil_y and ceil_y > 0.5:
+            stretch = known_height / ceil_y
+            loc *= stretch
+            f *= stretch
+            log(f"[plan] measured ceiling {ceil_y:.2f} m, known {known_height:.2f} m: rescaled by {stretch:.3f}")
+        else:
+            log("[plan] --known-height ignored: too little ceiling seen to measure it")
 
     x, y, z = loc[:, 0], loc[:, 1], loc[:, 2]
     wall_n = np.zeros((0, 3))
@@ -345,7 +390,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
         hm = float(np.percentile(y[wall_m], 98))
     else:
         hm = 2.5
-    hm = float(np.clip(hm, 2.0, 25.0))
+    hm = float(np.clip(hm, 2.0, 40.0 if known_height else 25.0))
 
     wm, dm = bounds["xmax"] - bounds["xmin"], bounds["zmax"] - bounds["zmin"]
     if scale is None:
@@ -417,12 +462,14 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
     occupancy = -np.ones((W, D), int)
     openings, objects = [], []
     obj_clusters = []
-    for cat in CATEGORIES:
+    for cat in CATEGORIES + sorted(c for c in set(cats.tolist()) if c.startswith((GENERIC, VANILLA))):
         if cat in STRUCTURAL or cat == "other":
             continue
         m = np.flatnonzero(cats == cat)
-        for idx in cluster_category(loc[m]):
-            if len(idx) < MIN_POINTS.get(cat, 60):
+        # Chandeliers are open metalwork alone in the air: a wider radius keeps one from splitting into parts.
+        for idx in cluster_category(loc[m], eps=(0.35 if cat == "chandelier" else 0.12) * stretch):
+            small = cat.startswith(VANILLA) and not vanilla_parts(cat)[1]  # a lantern or candle is small
+            if len(idx) < MIN_POINTS.get(cat, 15 if small else 60):
                 continue
             obj_clusters.append((cat, summarize_cluster(loc[m][idx], colors[m][idx])))
     log("[plan] detected: " + ", ".join(f"{n}x {c}" for c, n in Counter(c for c, _ in obj_clusters).items()))
@@ -492,6 +539,18 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             # floor it would become a black pillar.
             log("[plan] screen resting on furniture, skipped")
             continue
+        if cat.startswith(GENERIC) and cl["lo"][1] > 0.4:
+            log(f"[plan] {cat[len(GENERIC):]} is not standing on the floor, skipped")
+            continue
+        if cat.startswith(VANILLA) and cl["lo"][1] > 0.4 and not vanilla_parts(cat)[1]:
+            # (Full cubes - bookcases, barrels - always stand on the floor; tables and chairs in front often
+            # hide their lower part, so they are placed from the floor up like any furniture.)
+            bid, cube, name = vanilla_parts(cat)
+            # A single block in the air (a lantern, a bell): it hangs from its top, at its real position.
+            objects.append({"type": "vanilla", "block": "minecraft:" + bid, "name": name, "cube": False, "hanging": True,
+                            "x": int(room.bx(cl["c"][0])), "z": int(room.bz(cl["c"][2])), "w": 1, "d": 1, "h": 1,
+                            "y": int(room.by(min(cl["hi"][1], hm - 1e-3))) + 1})
+            continue
         obj = place_object(cat, cl, room, occupancy, tables, nearest_side)
         if obj is None:
             log(f"[plan] no room for {cat}, skipped")
@@ -499,7 +558,18 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
         objects.append(obj)
 
     for cat, cl in obj_clusters:
-        if cat == "ceiling_light":
+        if cat == "chandelier":
+            # Footprint and hanging height from its real extent; the mod hangs it from the ceiling on a chain.
+            x0, x1 = int(room.bx(cl["lo"][0])), int(room.bx(cl["hi"][0]))
+            z0, z1 = int(room.bz(cl["lo"][2])), int(room.bz(cl["hi"][2]))
+            w, d = int(np.clip(x1 - x0 + 1, 1, 3)), int(np.clip(z1 - z0 + 1, 1, 3))
+            cx, cz = int(room.bx(cl["c"][0])), int(room.bz(cl["c"][2]))
+            y0, y1 = int(room.by(max(cl["lo"][1], 0))) + 1, int(room.by(min(cl["hi"][1], hm - 1e-3))) + 1
+            h = int(np.clip(y1 - y0 + 1, 1, 3))
+            objects.append({"type": "chandelier", "x": int(np.clip(cx - (w - 1) // 2, 0, W - w)),
+                            "z": int(np.clip(cz - (d - 1) // 2, 0, D - d)), "w": w, "d": d,
+                            "y": int(np.clip(y1 - h + 1, 1, H)), "h": h})
+        elif cat == "ceiling_light":
             objects.append({"type": "ceiling_light", "x": int(room.bx(cl["c"][0])), "z": int(room.bz(cl["c"][2])),
                             "w": 1, "d": 1, "h": 1})
         elif cat == "rug":
@@ -557,7 +627,7 @@ def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
     x0 = int(round((c[0] - room.xmin) / (room.xmax - room.xmin) * W - w / 2))
     z0 = int(round((c[2] - room.zmin) / (room.zmax - room.zmin) * D - d / 2))
     h = max(1, int(round(hi[1] * s)))
-    cap = MAX_HEIGHT.get(cat)
+    cap = 2 if cat.startswith(GENERIC) else MAX_HEIGHT.get(cat)  # a noisy cluster must not become a pillar
     h = min(h, cap if cap else H - 1, H - 1)
     side, dist = nearest_side(c[0], c[2])
     front = OPPOSITE[side]  # direction pointing from the nearest wall into the room
@@ -604,10 +674,19 @@ def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
             w, d = (min(w, 2), 1) if front in ("north", "south") else (1, min(d, 2))
     elif cat == "tv":
         w, d = (max(1, w), 1) if front in ("north", "south") else (1, max(1, d))
+    elif cat.startswith(VANILLA):
+        bid, cube, name = vanilla_parts(cat)
+        obj.update(type="vanilla", block="minecraft:" + bid, name=name, cube=cube, y=1)
+        if not cube:
+            w = d = h = 1
+    elif cat.startswith(GENERIC):
+        obj.update(type="generic", name=cat[len(GENERIC):], color=Palette(CONCRETE).nearest(cl["rgb"]))  # built as <color>_concrete
     w, d = max(1, min(w, W)), max(1, min(d, D))
 
-    # Snap wall-hugging furniture onto the wall it is near (reconstruction noise leaves gaps).
-    if dist < 0.6 and cat != "bed":
+    # Snap wall-hugging furniture onto the wall it is near (reconstruction noise leaves gaps). Bookcases are
+    # usually built against a wall, often in front of piers or a recess that puts the fitted wall further back.
+    snap = 1.5 if cat == "bookshelf" or cat.startswith("vanilla:bookshelf:") else 0.6
+    if dist < snap and cat != "bed":
         if side == "west": x0 = 0
         elif side == "east": x0 = W - w
         elif side == "north": z0 = 0
@@ -653,3 +732,118 @@ def choose_door(room: Room, openings, occupancy, objects):
             if score > best_score:
                 best, best_score = {"type": "door", "side": side, "u": u, "w": 1, "y": 0, "h": 2, "detected": False}, score
     return best
+
+
+# ----------------------------------------------------------------------------------- wall features
+
+WINDOW_SHARE = 0.5      # a wall cell is glass when this share of it shows window in the most head-on photo
+SHELF_SHARE = 0.5       # ... and built-in shelving when this share shows bookcase
+FEATURE_MIN_SEEN = 0.2  # a wall needs this share of its cells seen for the photos to decide its windows
+MAX_WINDOW = 0.6        # windows guessed from 3D clusters alone never take more of a wall than this
+MIRROR_UNSEEN, MIRROR_SEEN = 0.1, 0.3
+
+
+def _grid_of(openings, side, kind, rows, cols):
+    g = np.zeros((rows, cols), bool)
+    for o in openings:
+        if o["side"] == side and o["type"] == kind:
+            g[o["y"]:o["y"] + o["h"], o["u"]:o["u"] + o["w"]] = True
+    return g
+
+
+def _rects(grid):
+    """Vertical runs per column, merged across neighbouring columns with the same run: [(u, w, y, h)]."""
+    runs = []
+    for u in range(grid.shape[1]):
+        col = np.r_[False, grid[:, u], False].astype(int)
+        starts, ends = np.flatnonzero(np.diff(col) == 1), np.flatnonzero(np.diff(col) == -1)
+        runs += [(u, y0, y1 - y0) for y0, y1 in zip(starts, ends)]
+    out = []
+    for u, y, h in sorted(runs, key=lambda r: (r[1], r[2], r[0])):
+        if out and out[-1][2] == y and out[-1][3] == h and out[-1][0] + out[-1][1] == u:
+            out[-1] = (out[-1][0], out[-1][1] + 1, y, h)
+        else:
+            out.append((u, 1, y, h))
+    return out
+
+
+def apply_wall_features(plan, features, log=print, mirror=False):
+    """Windows and built-in bookshelves from what the photos show on each wall (walltex.project_features).
+
+    Windows: where a wall was seen well, glass goes exactly where the photos show glass, so the stone between
+    windows stays. Unseen parts keep the windows guessed from 3D clusters, but those never take more than
+    MAX_WINDOW of a wall: overlapping clusters once turned a whole wall into glass. Bookshelves seen on the
+    wall become vanilla bookshelf blocks in the wall itself (no picture of shelves), and furniture bookcases
+    standing at those spots are dropped as duplicates. mirror=True: a wall the photos hardly saw copies the
+    opposite wall when that one was seen well (halls, libraries, churches)."""
+    H = plan["size"]["y"]
+    decided = {}
+    for side, f in features.items():
+        rows, cols = f["seen"].shape
+        seen = f["seen"] >= 0.5
+        doors = _grid_of(plan["openings"], side, "door", rows, cols)
+        guessed = _grid_of(plan["openings"], side, "window", rows, cols)
+        if seen.mean() >= FEATURE_MIN_SEEN:
+            win = ((f["window"] >= WINDOW_SHARE) & seen) | (guessed & ~seen)
+            if win.mean() > MAX_WINDOW:
+                win &= seen
+        else:
+            win = guessed.copy()
+            if win.mean() > MAX_WINDOW:
+                # No photo evidence and implausibly much glass: keep every fourth column as a stone pier.
+                win &= (np.arange(cols) % 4 != 3)[None, :]
+                log(f"[plan] {side} wall: windows from clusters alone covered {guessed.mean():.0%}; piers kept")
+        win[0] = win[-1] = False             # not at floor level nor right under the ceiling
+        win &= ~doors
+        shelf = (f["bookshelf"] >= SHELF_SHARE) & seen & ~win & ~doors
+        decided[side] = {"win": win, "shelf": shelf, "seen": seen.mean()}
+
+    opposite = {"north": "south", "south": "north", "west": "east", "east": "west"}
+    mirrored = set()
+    if mirror:
+        for side, d in decided.items():
+            o = opposite[side]
+            if d["seen"] < MIRROR_UNSEEN and o in decided and decided[o]["seen"] >= MIRROR_SEEN:
+                decided[side] = dict(decided[o], seen=d["seen"])
+                mirrored.add((side, o))
+                log(f"[plan] {side} wall ({d['seen']:.0%} seen) mirrors the {o} wall ({decided[o]['seen']:.0%} seen)")
+
+    colour = {o["side"]: o.get("color") for o in plan["openings"] if o["type"] == "window" and o.get("color")}
+    keep = [o for o in plan["openings"] if not (o["type"] == "window" and o["side"] in decided)]
+    for side, d in decided.items():
+        for u, w, y, h in _rects(d["win"]):
+            keep.append({"type": "window", "side": side, "u": int(u), "w": int(w), "y": int(y), "h": int(h),
+                         **({"color": colour[side]} if side in colour else {})})
+        log(f"[plan] {side} wall: {d['seen']:.0%} seen, {d['win'].mean():.0%} glass, "
+            f"{int(d['shelf'].sum())} built-in bookshelf blocks")
+    plan["openings"] = keep
+
+    W, D = plan["size"]["x"], plan["size"]["z"]
+    for side, d in decided.items():
+        wall = plan["walls"][side]
+        if d["shelf"].any():
+            if "minecraft:bookshelf" not in wall["palette"]:
+                wall["palette"].append("minecraft:bookshelf")
+            g = np.array(wall["grid"])
+            g[d["shelf"][:g.shape[0], :g.shape[1]]] = wall["palette"].index("minecraft:bookshelf")
+            wall["grid"] = g.tolist()
+            tex = plan.get("textures", {}).get("walls", {}).get(side)
+            if tex:
+                t = np.array(tex["tiles"])
+                t[d["shelf"][:t.shape[0], :t.shape[1]]] = 0
+                tex["tiles"] = t.tolist()
+            cols_ = np.flatnonzero(d["shelf"].any(0))
+            near = lambda o: {"north": o["z"] <= 2, "south": o["z"] + o["d"] >= D - 2,
+                              "west": o["x"] <= 2, "east": o["x"] + o["w"] >= W - 2}[side]
+            span = lambda o: range(o["x"], o["x"] + o["w"]) if side in ("north", "south") else range(o["z"], o["z"] + o["d"])
+            before = len(plan["objects"])
+            plan["objects"] = [o for o in plan["objects"] if not (
+                (o["type"] == "bookshelf" or o.get("block") == "minecraft:bookshelf")
+                and near(o) and set(span(o)) & set(cols_.tolist()))]
+            if len(plan["objects"]) < before:
+                log(f"[plan] {side} wall: {before - len(plan['objects'])} bookcase(s) replaced by the built-in shelves")
+    for side, o in mirrored:
+        tex = plan.get("textures", {}).get("walls", {})
+        if o in tex:
+            tex[side] = dict(tex[o])          # same image and flip: the same picture at the same x (or z)
+        plan["walls"][side] = {"palette": list(plan["walls"][o]["palette"]), "grid": [r[:] for r in plan["walls"][o]["grid"]]}

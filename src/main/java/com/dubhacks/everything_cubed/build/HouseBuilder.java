@@ -82,8 +82,7 @@ public class HouseBuilder {
 		buildShell();
 		buildRoof();
 		buildOpenings();
-		buildObjects();
-		addLightsIfDark();
+		buildObjects(); // lights are only the ones detected in the photos: a dark room stays dark
 		finishShapes();
 		hangWallTextures();
 		return undo;
@@ -514,6 +513,19 @@ public class HouseBuilder {
 				}
 			}
 			case "plant" -> fill(x0, z0, 1, 1, 1, first(PLANTS[plantIndex++ % PLANTS.length], "flower_pot"));
+			case "chandelier" -> {
+				// Hangs from the ceiling: body rows y..y+h-1, rod up to the ceiling. The model's own height is H - 1
+				// so its light probe sits in the top air layer, not inside the ceiling.
+				int y = Math.max(1, Math.min(H, o.has("y") ? o.get("y").getAsInt() : H));
+				int body = Math.max(1, Math.min(H - y + 1, h));
+				int cx = x0 + (w - 1) / 2, cz = z0 + (d - 1) / 2;
+				if (inside(cx, cz) && claim(cx, y, cz)) {
+					FurnitureModel m = new FurnitureModel(x0, z0, w, d, H - 1, Direction.SOUTH);
+					FurnitureDesigns.chandelier(m, y - 1, y - 1 + body, H);
+					furnish(m, List.of());
+					set(cx, y, cz, Blocks.LIGHT.defaultBlockState().setValue(LightBlock.LEVEL, LightBlock.MAX_LEVEL));
+				}
+			}
 			case "ceiling_light" -> {
 				if (inside(x0, z0) && claim(x0, H, z0))
 					set(x0, H, z0, with(Blocks.LANTERN.defaultBlockState(), BlockStateProperties.HANGING, true));
@@ -524,7 +536,26 @@ public class HouseBuilder {
 					for (int z = z0; z < z0 + d; z++)
 						if (inside(x, z) && claim(x, 1, z)) set(x, 1, z, carpet);
 			}
-			default -> { }
+			case "vanilla" -> {
+				// A detected thing that is a vanilla block: a full cube fills the footprint (a bookshelf), anything
+				// else is one block at its place, facing into the room, hanging if it hangs (a lantern).
+				BlockState b = first(o.get("block").getAsString(), "stone");
+				boolean cube = o.has("cube") && o.get("cube").getAsBoolean();
+				int y = Math.max(1, Math.min(H, o.has("y") ? o.get("y").getAsInt() : 1));
+				if (cube) fill(x0, z0, w, d, h, b);
+				else if (inside(x0, z0) && claim(x0, y, z0)) {
+					b = with(b, BlockStateProperties.HORIZONTAL_FACING, facing);
+					if (o.has("hanging") && o.get("hanging").getAsBoolean()) b = with(b, BlockStateProperties.HANGING, true);
+					set(x0, y, z0, b);
+				}
+			}
+			// No template yet ("generic" from the detector, or a type this version does not know): a plain box
+			// over the object's footprint, so it is still there and shows which templates are missing.
+			default -> {
+				String name = o.has("name") ? o.get("name").getAsString() : type;
+				EverythingCubed.LOGGER.info("No template for '{}', building a plain {}x{}x{} box", name, w, d, h);
+				fill(x0, z0, w, d, h, first(color + "_concrete", "white_concrete"));
+			}
 		}
 	}
 
@@ -573,17 +604,6 @@ public class HouseBuilder {
 
 	// ------------------------------------------------------------------------------------- finishing
 
-	private void addLightsIfDark() {
-		for (JsonElement e : plan.getAsJsonArray("objects")) {
-			String t = e.getAsJsonObject().get("type").getAsString();
-			if (t.equals("ceiling_light") || t.equals("lamp") || t.equals("fireplace")) return;
-		}
-		BlockState lantern = with(Blocks.LANTERN.defaultBlockState(), BlockStateProperties.HANGING, true);
-		int step = 5;
-		for (int x = Math.min(W - 1, (W % step) / 2 + 2); x < W; x += step)
-			for (int z = Math.min(D - 1, (D % step) / 2 + 2); z < D; z += step)
-				if (claim(x, H, z) && isAir(x, H, z)) set(x, H, z, lantern);
-	}
 
 	// ------------------------------------------------------------------------------------- photo walls
 
@@ -612,7 +632,9 @@ public class HouseBuilder {
 			try {
 				// Inside faces of north/south walls point along Z (shaded x0.8), of west/east walls along X (x0.6).
 				float shade = northOrSouth ? 0.8f : 0.6f;
-				pixels = WallTextures.convert(dir.resolve(w.get("image").getAsString()), len * 128, H * 128, dither, shade);
+				// A wall may override the room's dithering (a patterned wall next to flat-colour wall items).
+				boolean wallDither = w.has("dither") ? w.get("dither").getAsBoolean() : dither;
+				pixels = WallTextures.convert(dir.resolve(w.get("image").getAsString()), len * 128, H * 128, wallDither, shade);
 			} catch (Exception ex) {
 				EverythingCubed.LOGGER.warn("Skipping photo texture for the {} wall", side, ex);
 				continue;

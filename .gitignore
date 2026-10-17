@@ -47,3 +47,5 @@ analyzer/surface_palette.json
 xcuserdata/
 *.xcuserstate
 ios/build/
+analyzer/vanilla_catalog.json
+.perceptron_cache/

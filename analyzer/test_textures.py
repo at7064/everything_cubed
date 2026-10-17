@@ -135,3 +135,113 @@ for side, wb in tex["wall_blocks"].items():
     assert {wb["palette"][i] for row in wb["grid"] for i in row} == {tex["wall_main"]}
 assert set(tex["walls"]) <= {side}
 print("unseen walls OK")
+
+# A hall (30 x 16 m, 12 m high) seen from far away, where the reconstruction's depth is off by up to 4%
+# (what Suzzallo's walls showed at 10-20 m). A fixed 24 cm depth tolerance rejected nearly all of it; the
+# tolerance that grows with distance must keep most of each wall without accepting surfaces far off it.
+import walltex  # noqa: E402
+
+W, H, D = 30.0, 12.0, 16.0
+hall = [render(np.array([15.0, 1.6, 15.5]), 0.0, f=150.0), render(np.array([15.0, 1.6, 0.5]), np.pi, f=150.0)]
+for v, _ in hall:
+    C = v["cam2world"][:3, 3]
+    ripple = 1 + 0.04 * np.sin(np.linspace(0, 6 * np.pi, v["points"].shape[1]))[None, :, None]
+    v["points"] = C + (v["points"] - C) * ripple
+hv, hl = zip(*hall)
+hp, hr, hc = fuse(hv, hl, ID2LABEL, ADE_TO_CATEGORY, voxel=0.06)
+hctx = {}
+build_plan(hp, hr, hc, Palette(builtin_surface_entries()), ctx=hctx, log=lambda m: None)
+hroom, hR, horigin, hf, hys = hctx["room"], hctx["R"], hctx["origin"], hctx["f"], hctx["y_shift"]
+h_to_world = lambda loc: horigin + (loc / hf + np.array([0, hys, 0])) @ hR
+lut = category_lut(ID2LABEL, ADE_TO_CATEGORY)
+far_wall = max(("north", "south", "west", "east"), key=lambda s: hroom.wall_len(s))  # the frame may swap axes
+cover = {rel: walltex.project_wall(far_wall, hroom, h_to_world, hR, hv, hl, lut, 4, 0.12 / hf, rel_tol=rel)[1].mean()
+         for rel in (0.0, walltex.REL_TOL)}
+print(f"far wall seen: fixed 24 cm {cover[0.0]:.0%}, relative {cover[walltex.REL_TOL]:.0%}")
+assert cover[walltex.REL_TOL] > 0.5 and cover[walltex.REL_TOL] > 2 * cover[0.0], cover
+# ... but a surface 25% off the wall (something in front of it) is still rejected.
+for v, _ in hall:
+    C = v["cam2world"][:3, 3]
+    v["points"] = C + (v["points"] - C) * 0.75
+off = walltex.project_wall(far_wall, hroom, h_to_world, hR, hv, hl, lut, 4, 0.12 / hf)[1].mean()
+assert off < 0.05, off
+print("relative depth tolerance OK")
+
+# Pattern mode: a plain wall is judged plain, a striped one patterned; filling keeps every photo pixel and
+# continues the stripes with their own two colours instead of averaging them into mush.
+px = 16
+yy, xx = np.mgrid[0:6 * px, 0:12 * px]
+cA, cB = np.array([170, 120, 80.0]), np.array([225, 210, 180.0])
+stripes = np.where(((xx // (px // 2)) % 2 == 0)[..., None], cA, cB) + np.random.default_rng(1).normal(0, 3, xx.shape + (3,))
+plain = np.full(xx.shape + (3,), 200.0) + np.random.default_rng(2).normal(0, 3, xx.shape + (3,))
+seen = xx < 5 * px                                      # the photos saw the left 5 of 12 blocks
+paint_lab = walltex.srgb_to_lab(np.array([[200.0, 200, 200], [190, 160, 120]]))
+off_p, grain_p = walltex.wall_pattern_stats(plain, seen, paint_lab, px)
+off_s, grain_s = walltex.wall_pattern_stats(stripes, seen, paint_lab, px)
+print(f"plain: off {off_p:.0%} grain {grain_p:.1f} | stripes: off {off_s:.0%} grain {grain_s:.1f}")
+assert not (off_p >= walltex.PATTERN_OFF or grain_p >= walltex.PATTERN_GRAIN), "plain wall must stay plain"
+assert off_s >= walltex.PATTERN_OFF or grain_s >= walltex.PATTERN_GRAIN, "striped wall must be patterned"
+rng = np.random.default_rng(0)
+pool = walltex._exemplars(stripes, seen, px, 1, 4, 500, rng)
+filled = walltex.synthesize_wall(np.where(seen[..., None], stripes, 0), seen, pool, px, rng)
+assert np.array_equal(filled[seen], stripes[seen].astype(np.float32)), "photo pixels must not change"
+near = np.minimum(np.abs(filled[~seen] - cA).max(-1), np.abs(filled[~seen] - cB).max(-1))
+share_a = (np.abs(filled[~seen] - cA).max(-1) < 30).mean()
+print(f"filled: {np.mean(near < 30):.0%} of pixels are one of the two stripe colours, {share_a:.0%} the darker one")
+assert np.mean(near < 30) > 0.85 and 0.3 < share_a < 0.7
+print("pattern walls OK")
+
+# Viewing angle and excluded pixels: the cosine of the chosen view stays in (0.2, 1]; pixels masked as
+# window or door in every view are never taken as wall.
+side0 = "north"
+img0, seen0, cos0 = walltex.project_wall(side0, room, to_world, R, views, labels, category_lut(ID2LABEL, ADE_TO_CATEGORY), 8, 0.12 / f)
+mid = cos0[cos0.shape[0] // 2, cos0.shape[1] // 2]
+print(f"{side0}: seen {seen0.mean():.0%}, head-on cosine at the centre {mid:.2f}, min seen {cos0[seen0].min():.2f}")
+assert seen0.mean() > 0.9 and cos0[seen0].min() > 0.2 and (cos0 <= 1.0001).all() and cos0.max() > 0.8
+masks = [np.ones(v["rgb"].shape[:2], bool) for v in views]   # every view: "all of this is a window"
+_, seen_x, _ = walltex.project_wall(side0, room, to_world, R, views, labels, category_lut(ID2LABEL, ADE_TO_CATEGORY), 8, 0.12 / f, exclude=masks)
+assert seen_x.mean() == 0, seen_x.mean()
+print("view angle + exclusion OK")
+
+# Wall features. Projection: the small room's walls are all seen, no window or shelf anywhere.
+from roomplan import apply_wall_features  # noqa: E402
+feat = walltex.project_features("north", room, to_world, R, views, labels, category_lut(ID2LABEL, ADE_TO_CATEGORY), f)
+assert feat["seen"].mean() > 0.9 and feat["window"].max() == 0 and feat["bookshelf"].max() == 0, feat["seen"].mean()
+
+# Decisions, on a hand-made 6 x 10 wall plan.
+rows, cols = 6, 10
+def fplan():
+    return {"size": {"x": cols, "z": 8, "y": rows},
+            "openings": [{"type": "window", "side": "north", "u": 0, "w": 10, "y": 0, "h": 6},   # a "whole wall" guess
+                         {"type": "window", "side": "south", "u": 0, "w": 10, "y": 1, "h": 4},
+                         {"type": "door", "side": "south", "u": 4, "w": 1, "y": 0, "h": 2}],
+            "objects": [{"type": "bookshelf", "x": 2, "z": 0, "w": 3, "d": 1, "h": 2},
+                        {"type": "bookshelf", "x": 2, "z": 4, "w": 3, "d": 1, "h": 2}],
+            "walls": {s: {"palette": ["minecraft:white_terracotta"], "grid": [[0] * cols for _ in range(rows)]}
+                      for s in ("north", "south")},
+            "textures": {"walls": {"north": {"image": "n.png", "flip": False, "tiles": [[1] * cols for _ in range(rows)]}}}}
+seen_all, none = np.ones((rows, cols)), np.zeros((rows, cols))
+glass = none.copy(); glass[2:5, 1:3] = 1; glass[2:5, 6:8] = 1            # two windows with stone between
+shelves = none.copy(); shelves[0:2, 2:5] = 1                              # a shelf band at the bottom
+p1 = fplan()
+apply_wall_features(p1, {"north": {"seen": seen_all, "window": glass, "bookshelf": shelves},
+                         "south": {"seen": none, "window": none, "bookshelf": none}}, log=print)
+nw = [o for o in p1["openings"] if o["side"] == "north" and o["type"] == "window"]
+assert sorted((o["u"], o["w"], o["y"], o["h"]) for o in nw) == [(1, 2, 2, 3), (6, 2, 2, 3)], nw
+sw = _grid = np.zeros((rows, cols), bool)
+for o in p1["openings"]:
+    if o["side"] == "south" and o["type"] == "window":
+        sw[o["y"]:o["y"] + o["h"], o["u"]:o["u"] + o["w"]] = True
+assert sw.mean() <= 0.6 and not sw[:, 3].any() and not sw[:2, 4].any(), sw.astype(int)   # piers; no glass in the door
+g = np.array(p1["walls"]["north"]["grid"]); b = p1["walls"]["north"]["palette"].index("minecraft:bookshelf")
+assert (g[0:2, 2:5] == b).all() and (g[2:] != b).all()
+assert np.array(p1["textures"]["walls"]["north"]["tiles"])[0:2, 2:5].sum() == 0, "no picture over real shelves"
+assert [o["z"] for o in p1["objects"]] == [4], "the bookcase at the shelf wall is a duplicate; the other stays"
+
+p2 = fplan()
+apply_wall_features(p2, {"north": {"seen": seen_all, "window": glass, "bookshelf": shelves},
+                         "south": {"seen": none, "window": none, "bookshelf": none}}, log=print, mirror=True)
+sw2 = sorted((o["u"], o["w"], o["y"], o["h"]) for o in p2["openings"] if o["side"] == "south" and o["type"] == "window")
+assert sw2 == [(1, 2, 2, 3), (6, 2, 2, 3)], sw2
+assert p2["textures"]["walls"]["south"]["image"] == "n.png" and p2["walls"]["south"]["grid"] == p2["walls"]["north"]["grid"]
+print("wall features OK")

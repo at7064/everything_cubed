@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -280,3 +281,390 @@ def fuse(views, label_maps, id2label, ade_to_category, voxel=0.03, conf_drop=20)
     labels = np.empty(n, int)
     labels[vox[order][first]] = lab[order][first]
     return pts, rgb, np.array(cat_names, dtype=object)[labels].astype(str)
+
+
+def detection_masks(report, views, templates=("window", "door")):
+    """Per-view masks of the detector's boxes for `templates` (from perceptron_pass's report), or None."""
+    if not report:
+        return None
+    masks = []
+    for v, photo in zip(views, report["photos"]):
+        m = np.zeros(v["rgb"].shape[:2], bool)
+        for d in photo["detections"]:
+            if d["template"] in templates:
+                x0, y0, x1, y1 = d["box"]
+                m[max(0, int(y0)):int(np.ceil(y1)), max(0, int(x0)):int(np.ceil(x1))] = True
+        masks.append(m)
+    return masks
+
+
+# ----------------------------------------------------------------------------------- open-vocabulary detection
+# Optional, opt-in (--perceptron): Perceptron Mk1.5 /v1/detect with no categories ("detect all objects").
+# Off by default because the photos leave the machine. Before upload each photo is cropped to the part the
+# reconstruction kept and pixels SegFormer calls "person" are blurred (best effort, not a guarantee).
+# API: https://docs.perceptron.inc/capabilities/detect.md (boxes in pixels of the uploaded image, no scores).
+
+PERCEPTRON_API = "https://api.perceptron.inc/v1"
+PERCEPTRON_MODEL = "perceptron-mk1.5"
+DET_PREFIX = "det:"           # id2label names of detector classes, kept apart from ADE20K names
+KEEP_SEGFORMER = {"wall", "floor", "ceiling"}
+# ...except where the detector found something that SegFormer usually calls wall or floor.
+# Not windows and doors: their boxes enclose a lot of real wall (a Gothic window's stone tracery took 28% of the
+# wall points in Suzzallo and stretched the room), and SegFormer finds them well itself.
+MAY_TAKE = {"painting": {"wall"}, "sconce": {"wall"}, "curtain": {"wall"}, "mirror": {"wall"}, "clock": {"wall"},
+            "rug": {"floor"}}
+# Detector names that only map by these synonyms when the model's mapping is unavailable. ADE_TO_CATEGORY
+# is tried first; IGNORE_NAMES are people and parts of the building, never furniture.
+SYNONYMS = {"office chair": "chair", "dining chair": "chair", "couch": "sofa", "loveseat": "sofa",
+            "bookshelf": "bookshelf", "bookshelves": "bookshelf", "book shelf": "bookshelf",
+            "nightstand": "cabinet", "dresser": "cabinet", "drawer": "cabinet", "filing cabinet": "cabinet",
+            "closet": "wardrobe", "end table": "table", "side table": "table", "dining table": "table",
+            "television": "tv", "tv": "tv", "laptop": "tv", "desk lamp": "lamp", "floor lamp": "lamp",
+            "table lamp": "lamp", "pendant light": "ceiling_light", "ceiling light": "ceiling_light",
+            "potted plant": "plant", "houseplant": "plant", "picture": "painting", "picture frame": "painting",
+            "artwork": "painting", "whiteboard": "painting", "carpet": "rug", "trash can": "trash",
+            "garbage can": "trash", "wastebasket": "trash", "bin": "trash", "stained glass window": "window",
+            "fridge": "fridge", "bathroom sink": "sink", "shower": "bathtub", "doorway": "door"}
+PERSON_WORDS = {"person", "people", "man", "men", "woman", "women", "boy", "girl", "child", "children", "student",
+                "students", "human", "face", "head", "hand", "arm", "leg"}
+IGNORE_NAMES = {"person", "people", "man", "woman", "boy", "girl", "child", "student", "human", "face", "head",
+                "hand", "arm", "leg", "wall", "floor", "ceiling", "column", "pillar", "arch", "beam", "roof",
+                "window frame", "door frame", "molding", "railing", "stairs", "staircase", "shadow", "reflection"}
+
+
+def _singular(name):
+    return name[:-1] if name.endswith("s") and not name.endswith("ss") and len(name) > 3 else name
+
+
+def synonym_template(name, templates, ade_to_category):
+    """Dictionary fallback: detector name -> template id, "ignore" or "generic"."""
+    n = " ".join(name.lower().replace("_", " ").split())
+    if PERSON_WORDS & set(n.split()):
+        return "ignore"
+    for k in (n, _singular(n)):
+        if k in IGNORE_NAMES:
+            return "ignore"
+        t = SYNONYMS.get(k) or ade_to_category.get(k) or (k.replace(" ", "_") if k.replace(" ", "_") in templates else None)
+        if t in templates:
+            return t
+    return "generic"
+
+
+def _post(path, body, key, timeout=300, tries=3):
+    import json
+    import time
+    import urllib.error
+    import urllib.request
+    key = key.strip()
+    if not key or any(c.isspace() or not c.isprintable() for c in key):
+        # Never let the key reach an error message (http.client would echo the whole header).
+        raise SystemExit("PERCEPTRON_API_KEY is malformed (whitespace or extra text in it); check how it is set")
+    req = urllib.request.Request(PERCEPTRON_API + path, data=json.dumps(body).encode(), method="POST",
+                                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}",
+                                          # Cloudflare in front of the API rejects the default Python-urllib agent (error 1010)
+                                          "User-Agent": "everything-cubed-analyzer/1.0"})
+    for attempt in range(tries):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as ex:  # the API explains itself in {"error": {"message": ...}}
+            err = RuntimeError(f"Perceptron {path} HTTP {ex.code}: {ex.read()[:400].decode(errors='replace')}")
+            if ex.code != 429 and ex.code < 500:
+                raise err from None
+        except (TimeoutError, urllib.error.URLError) as ex:  # slow reasoning or a dropped connection
+            err = RuntimeError(f"Perceptron {path}: {ex}")
+        if attempt + 1 < tries:
+            time.sleep(5 * 2 ** attempt)
+    raise err from None
+
+
+def map_names_with_model(names, templates, key, log):
+    """Ask Mk1.5 (text only, no image) to pick a template, "unknown" or "ignore" for each name. `templates`
+    maps template id -> what it is (a bare collection of ids also works). Returns {name: choice} for the
+    names it answered validly."""
+    import json
+    choices = sorted(templates) + ["unknown", "ignore"]
+    schema = {"type": "object", "additionalProperties": False, "required": ["mappings"],
+              "properties": {"mappings": {"type": "array", "items": {
+                  "type": "object", "additionalProperties": False, "required": ["name", "template"],
+                  "properties": {"name": {"type": "string"}, "template": {"type": "string", "enum": choices}}}}}}
+    prompt = ("An object detector found these things in photos of a room. Each will be rebuilt in Minecraft "
+              "from one furniture template. For every name, choose the template that the object is, or would "
+              "be built as. Choose \"unknown\" for a real piece of furniture or a standalone object that no "
+              "template fits. Choose \"ignore\" for people or their body parts, parts of the building itself "
+              "(walls, floor, ceiling, columns, arches, beams, railings), and things that are only a part of "
+              "another object. Answer for every name, spelled exactly as given.\n\nTemplates:"
+              + "".join(f"\n- {t}: {templates[t]}" if isinstance(templates, dict) else f"\n- {t}"
+                        for t in sorted(templates)) + "\n\nNames:\n" + "\n".join(names))
+    resp = _post("/chat/completions", {
+        "model": PERCEPTRON_MODEL, "messages": [{"role": "user", "content": prompt}], "n": 1,
+        "max_completion_tokens": 64 + 24 * len(names),
+        "response_format": {"type": "json_schema", "json_schema": {"name": "template_map", "strict": True, "schema": schema}},
+    }, key)
+    choice = resp["choices"][0]
+    if choice.get("finish_reason") != "stop":
+        raise RuntimeError(f"mapping incomplete (finish_reason={choice.get('finish_reason')})")
+    out = {}
+    for m in json.loads(choice["message"]["content"] or "")["mappings"]:
+        if m.get("name") in names and m.get("template") in choices:
+            out[m["name"]] = m["template"]
+    log(f"[det] model mapped {len(out)}/{len(names)} name(s)")
+    return out
+
+
+def map_names(names, templates, ade_to_category, key, log, use_model=True, vanilla_cat=None):
+    """{name: (template id | "vanilla:<id>:<cube|model>" | "generic" | "ignore", source)}. A name that is (nearly)
+    a vanilla block's name is that block; the model maps the rest to our templates, the synonym dict if it fails."""
+    import vanilla
+    out, rest = {}, []
+    for n in names:
+        hit = vanilla.match(n, vanilla_cat) if vanilla_cat else None
+        if hit and synonym_template(n, templates, ade_to_category) != "ignore":
+            out[n] = (f"vanilla:{hit[0]}:{'cube' if hit[1] else 'model'}", "vanilla")
+        else:
+            rest.append(n)
+    if out:
+        log(f"[det] vanilla blocks: " + ", ".join(f"{n} -> {t.split(':')[1]}" for n, (t, _) in sorted(out.items())))
+    names = rest
+    model = {}
+    if use_model and names:
+        try:
+            model = map_names_with_model(names, templates, key, log)
+        except Exception as ex:
+            log(f"[det] model mapping failed ({ex}); using the synonym dictionary")
+    for n in names:
+        if n in model:
+            out[n] = ("generic" if model[n] == "unknown" else model[n], "model")
+        else:
+            out[n] = (synonym_template(n, templates, ade_to_category), "synonyms")
+    return out
+
+
+def view_crop(photo_size, view_size):
+    """Box (l, t, r, b) in photo pixels that MapAnything / VGGT keep: uniform scale, then a centred crop."""
+    W0, H0 = photo_size
+    Wv, Hv = view_size
+    s = max(Wv / W0, Hv / H0)
+    cw, ch = Wv / s, Hv / s
+    l, t = (W0 - cw) / 2, (H0 - ch) / 2
+    return l, t, l + cw, t + ch
+
+
+def upload_image(path, view, person_mask, max_side=1536, log=print, find_people=None):
+    """The photo region seen by `view`, at up to `max_side` px, people blurred. Falls back to the view's own
+    (low-res) pixels when the photo does not line up with the view. `find_people(img)` -> boxes to blur too.
+    Returns (PIL image, view px per upload px)."""
+    from PIL import Image, ImageOps
+    Hv, Wv = view["rgb"].shape[:2]
+    img = None
+    try:
+        photo = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
+        crop = photo.crop(tuple(round(c) for c in view_crop(photo.size, (Wv, Hv))))
+        small = np.asarray(crop.resize((Wv, Hv), Image.BILINEAR), float)
+        err = np.abs(small - view["rgb"]).mean()
+        if err < 12:  # mean abs error per channel, 0..255; misaligned crops are typically > 30
+            img = crop
+            if max(img.size) > max_side:
+                img = img.resize((round(img.width * max_side / max(img.size)), round(img.height * max_side / max(img.size))), Image.LANCZOS)
+        else:
+            log(f"[det] {Path(path).name} does not line up with its view (error {err:.0f}); sending the view pixels")
+    except Exception as ex:
+        log(f"[det] {Path(path).name}: {ex}; sending the view pixels")
+    if img is None:
+        img = Image.fromarray(view["rgb"]).resize((Wv * 2, Hv * 2), Image.LANCZOS)
+    return blur_people(img, person_mask, find_people(img) if find_people else ()), Wv / img.width
+
+
+def jpeg_bytes(img):
+    import io
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=90)
+    return buf.getvalue()
+
+
+def detect_objects(img, key, reasoning="none", cache_dir=None):
+    """All objects in one image (PIL or JPEG bytes), as [(name, (x0, y0, x1, y1), mention)] in the image's pixels.
+    A mention can be a description ("wall, stone, with arched windows"); the name is its first clause.
+    With `cache_dir`, the API's answer is kept per exact upload and reasoning setting, so a re-run sends nothing."""
+    import base64
+    import hashlib
+    import json
+    data = img if isinstance(img, bytes) else jpeg_bytes(img)
+    cache = Path(cache_dir) / (hashlib.sha256(data + reasoning.encode()).hexdigest()[:32] + ".json") if cache_dir else None
+    if cache and cache.exists():
+        resp = json.loads(cache.read_text())
+    else:
+        url = "data:image/jpeg;base64," + base64.b64encode(data).decode()
+        resp = _post("/detect", {"media": {"type": "image", "image_url": url},
+                                 "config": {"output": "box", "reasoning_effort": reasoning}}, key)
+        if cache:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps(resp))
+    out = []
+    for d in resp.get("detections", []):
+        b = d.get("point_box")
+        if not b or not d.get("mention"):
+            continue
+        x0, y0, x1, y1 = b["top_left"]["x"], b["top_left"]["y"], b["bottom_right"]["x"], b["bottom_right"]["y"]
+        name = " ".join(d["mention"].split(",")[0].strip().lower().split())
+        if name:
+            out.append((name, (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)), d["mention"].strip()))
+    return out, resp.get("finish_reason")
+
+
+def camera_depth(view):
+    """Per-pixel distance along the camera axis; NaN where the reconstruction has no point (MapAnything
+    zeroes masked points, so those must not count as real depths)."""
+    w2c = np.linalg.inv(view["cam2world"])
+    d = view["points"] @ w2c[2, :3] + w2c[2, 3]
+    return np.where(view["mask"] & (d > 0), d, np.nan)
+
+
+def paint_detections(label_map, boxes, id2label, depth=None, band=(0.35, 0.15), pct=30):
+    """Paints boxes [(class id, (x0, y0, x1, y1) in label-map pixels[, labels it may take anyway])] into a copy
+    of `label_map`. Larger boxes go first so smaller ones stay on top; pixels SegFormer calls wall / floor /
+    ceiling are kept, unless the box lists that label (a painting takes wall pixels, a rug floor pixels).
+    With `depth` (metres, NaN = unknown), each box only takes pixels within band[0] + band[1] * d of the
+    object's depth d: the `pct` percentile depth of the box's central half, over pixels that are not wall /
+    floor / ceiling (the object stands in front of what shows through it). A pixel a smaller box rejects
+    stays with the larger box below it."""
+    from PIL import Image, ImageDraw
+    H, W = label_map.shape
+    structural = {name: label_map == k for k, name in id2label.items() if name in KEEP_SEGFORMER}
+    out = label_map.copy()
+    for b in sorted(boxes, key=lambda b: -(b[1][2] - b[1][0]) * (b[1][3] - b[1][1])):
+        cid, (x0, y0, x1, y1), may_take = b[0], b[1], (b[2] if len(b) > 2 else set())
+        if x1 - x0 < 1 or y1 - y0 < 1:
+            continue
+        keep = np.zeros(label_map.shape, bool)
+        for name, m in structural.items():
+            if name not in may_take:
+                keep |= m
+        rect = Image.new("1", (W, H), 0)
+        ImageDraw.Draw(rect).rectangle([round(x0), round(y0), round(x1) - 1, round(y1) - 1], fill=1)
+        take = np.asarray(rect, dtype=bool) & ~keep
+        if depth is not None:
+            cx0, cx1 = max(0, int((3 * x0 + x1) / 4)), int(np.ceil((x0 + 3 * x1) / 4))
+            cy0, cy1 = max(0, int((3 * y0 + y1) / 4)), int(np.ceil((y0 + 3 * y1) / 4))
+            core = depth[cy0:cy1, cx0:cx1][~keep[cy0:cy1, cx0:cx1]]
+            core = core[np.isfinite(core)]
+            if len(core):  # no usable depth: paint the whole box
+                d = np.percentile(core, pct)
+                with np.errstate(invalid="ignore"):
+                    take &= np.abs(depth - d) < band[0] + band[1] * d
+        out[take] = cid
+    return out
+
+
+_PERSON_MODEL = {}
+
+
+def person_boxes(img, device="cpu", score=0.15, pad=0.15):
+    """People in `img` (PIL) found locally by torchvision's COCO Faster R-CNN v2 at full upload resolution,
+    as padded (x0, y0, x1, y1). The threshold is low on purpose: a false alarm only blurs a chair."""
+    import torch
+    from torchvision.models.detection import FasterRCNN_ResNet50_FPN_V2_Weights, fasterrcnn_resnet50_fpn_v2
+    if device not in _PERSON_MODEL:
+        w = FasterRCNN_ResNet50_FPN_V2_Weights.DEFAULT
+        _PERSON_MODEL[device] = fasterrcnn_resnet50_fpn_v2(weights=w, box_score_thresh=score,
+                                                           min_size=min(img.size), max_size=max(img.size)).to(device).eval()
+    x = torch.from_numpy(np.asarray(img.convert("RGB"), np.float32) / 255).permute(2, 0, 1).to(device)
+    with torch.no_grad():
+        r = _PERSON_MODEL[device]([x])[0]
+    out = []
+    for (x0, y0, x1, y1), lab, sc in zip(_np(r["boxes"]), _np(r["labels"]), _np(r["scores"])):
+        if int(lab) == 1 and sc >= score:  # COCO 1 = person
+            px, py = pad * (x1 - x0), pad * (y1 - y0)
+            out.append((max(0, x0 - px), max(0, y0 - py), min(img.width, x1 + px), min(img.height, y1 + py)))
+    return out
+
+
+def blur_people(img, person_mask, boxes=()):
+    """Blurs `img` (PIL) where the label-map-sized `person_mask` is set (grown a little past the segment edge)
+    and inside every box in `boxes` (img pixels)."""
+    from PIL import Image, ImageDraw, ImageFilter
+    m = Image.new("L", img.size, 0)
+    if person_mask is not None and person_mask.any():
+        m = Image.fromarray(person_mask.astype(np.uint8) * 255).resize(img.size, Image.NEAREST).filter(ImageFilter.MaxFilter(9))
+    draw = ImageDraw.Draw(m)
+    for b in boxes:
+        draw.rectangle([round(c) for c in b], fill=255)
+    if not m.getbbox():
+        return img
+    return Image.composite(img.filter(ImageFilter.GaussianBlur(max(img.size) / 60)), img, m)
+
+
+def perceptron_pass(paths, views, label_maps, id2label, ade_to_category, templates, log,
+                    key_env="PERCEPTRON_API_KEY", reasoning="none", blur=True, depth_gate=True, use_model_map=True,
+                    device="cpu", find_people=None, cache_dir=None, workers=5, vanilla_cat=None):
+    """Adds open-vocabulary detections to the label maps. Returns (label maps, id2label, ade_to_category,
+    report); the inputs are not modified. Detector names become classes "det:<name>" that map to a template
+    id, to "generic:<name>" for things without a template, or to "other" when ignored."""
+    import os
+    key = os.environ.get(key_env)
+    if not key:
+        raise SystemExit(f"--perceptron needs an API key in ${key_env}")
+    if len(paths) != len(views):
+        log(f"[det] {len(paths)} photos but {len(views)} views; sending the view pixels")
+    person = [k for k, v in id2label.items() if v == "person"]
+    find = (find_people or (lambda img: person_boxes(img, device))) if blur else None
+    # Uploads are prepared one by one (the person detector shares the GPU), then sent concurrently: the
+    # API takes 20-120 s per photo, so the slowest photo sets the total instead of the sum of all of them.
+    uploads = []
+    for i, (v, lm) in enumerate(zip(views, label_maps)):
+        path = paths[i] if len(paths) == len(views) else None
+        pm = np.isin(lm, person) if blur else None
+        if path is None:
+            from PIL import Image
+            img = Image.fromarray(v["rgb"]).resize((v["rgb"].shape[1] * 2, v["rgb"].shape[0] * 2), Image.LANCZOS)
+            img, k = blur_people(img, pm, find(img) if find else ()), 0.5
+        else:
+            img, k = upload_image(path, v, pm, log=log, find_people=find)
+        uploads.append((path.name if path else f"view {i}", jpeg_bytes(img), k))
+
+    def run(u):
+        name, data, k = u
+        try:
+            dets, finish = detect_objects(data, key, reasoning, cache_dir)
+        except RuntimeError as ex:  # one photo failing must not cost the whole analysis
+            log(f"[det] {name}: detection failed ({ex}); SegFormer labels only")
+            return []
+        log(f"[det] {name}: {len(dets)} object(s)" + ("" if finish == "complete" else f" (finish_reason={finish})"))
+        return [(n, tuple(c * k for c in b), m) for n, b, m in dets]
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max(1, workers)) as ex:
+        per_view = list(ex.map(run, uploads))
+
+    names = sorted({d[0] for dets in per_view for d in dets})
+    mapping = map_names(names, templates, ade_to_category, key, log, use_model_map, vanilla_cat)
+    id2label, ade_to_category = dict(id2label), dict(ade_to_category)
+    cls = {}
+    for n in names:
+        cls[n] = max(id2label) + 1
+        id2label[cls[n]] = DET_PREFIX + n
+        t = mapping[n][0]
+        ade_to_category[DET_PREFIX + n] = ("other" if t == "ignore" else f"generic:{n}" if t == "generic"
+                                           else f"{t}:{n}" if t.startswith("vanilla:") else t)
+
+    out_maps, report = [], {"photos": [], "names": {}}
+    seg_cat = category_lut(id2label, ade_to_category)
+    for i, (v, lm, dets) in enumerate(zip(views, label_maps, per_view)):
+        boxes = [(cls[n], b, MAY_TAKE.get(mapping[n][0], set())) for n, b, _ in dets if mapping[n][0] != "ignore"]
+        out_maps.append(paint_detections(lm, boxes, id2label, camera_depth(v) if depth_gate else None))
+        rows = []
+        for n, (x0, y0, x1, y1), mention in dets:
+            t = mapping[n][0]
+            sub = lm[max(0, int(y0)):int(np.ceil(y1)), max(0, int(x0)):int(np.ceil(x1))]
+            cats = seg_cat(sub) if sub.size else np.array([])
+            # How much of the box SegFormer already gave the same category (0 = SegFormer missed it).
+            seg_share = float((cats == t).mean()) if sub.size and t not in ("ignore", "generic") else None
+            top = Counter(c for c in cats.ravel() if c not in KEEP_SEGFORMER | {"other"}).most_common(1) if sub.size else []
+            rows.append({"name": n, "mention": mention, "template": t, "box": [round(c, 1) for c in (x0, y0, x1, y1)],
+                         "segformer_share": None if seg_share is None else round(seg_share, 3),
+                         "segformer_top": top[0][0] if top else None})
+        report["photos"].append({"photo": paths[i].name if len(paths) == len(views) else f"view {i}", "detections": rows})
+    for n in names:
+        report["names"][n] = {"template": mapping[n][0], "source": mapping[n][1],
+                              "count": sum(n == d[0] for dets in per_view for d in dets)}
+    return out_maps, id2label, ade_to_category, report
