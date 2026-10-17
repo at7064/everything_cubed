@@ -1,0 +1,24 @@
+{
+	"schemaVersion": 1,
+	"id": "everything_cubed",
+	"version": "${version}",
+	"name": "Everything Cubed",
+	"description": "Builds a Minecraft house that matches a real room from a few photos. /everything_cubed build <folder>",
+	"authors": [
+		"Me!"
+	],
+	"license": "CC0-1.0",
+	"icon": "assets/everything_cubed/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"com.dubhacks.everything_cubed.EverythingCubed"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}
