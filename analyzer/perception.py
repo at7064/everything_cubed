@@ -4,6 +4,8 @@
     - MapAnything (Meta, https://github.com/facebookresearch/map-anything) - metric scale, preferred
     - VGGT (Meta, https://github.com/facebookresearch/vggt) - fallback; its up-to-scale output is made
       metric with Depth Anything V2 Metric-Indoor (via Hugging Face transformers)
+* LiDAR scans streamed from the iOS scanner app (capture.json): ARKit already gives metric depth and
+  camera poses per photo, so no reconstruction model is needed
 * Semantic segmentation: SegFormer fine-tuned on ADE20K (150 indoor/outdoor classes incl. wall, floor,
   ceiling, bed, window, door, table, sofa, ...) via Hugging Face transformers.
 """
@@ -129,11 +131,86 @@ def metric_scale(views, rel_depth, device, model_name, log):
     return s
 
 
+ARKIT_WIDTH = 640           # working resolution for LiDAR views (depth itself is 256x192)
+ARKIT_MAX_DEPTH = 5.0       # metres; LiDAR is unreliable beyond this
+ARKIT_MAX_VIEWS = 60
+# ARKit cameras look down -Z with +Y up; OpenCV-style cameras (used everywhere here) look down +Z with +Y down.
+ARKIT_TO_CV = np.diag([1.0, -1.0, -1.0, 1.0])
+
+
+def _upright(view):
+    """Rotates a view by quarter turns so the world's up (+Y in ARKit) points to the top of the image.
+    ARKit images are always in the sensor's landscape orientation, whatever way the phone was held."""
+    for _ in range(4):
+        up = view["cam2world"][:3, :3].T @ np.array([0.0, 1.0, 0.0])   # world up in camera axes
+        if -up[1] >= abs(up[0]):                                       # already points to -v (image top)
+            return view
+        # Turn the image a quarter turn counterclockwise: new (u, v) = (v, W-1-u).
+        h, w = view["rgb"].shape[:2]
+        K = view["K"]
+        view["K"] = np.array([[K[1, 1], 0, K[1, 2]], [0, K[0, 0], w - 1 - K[0, 2]], [0, 0, 1]])
+        rot = np.eye(4); rot[:3, :3] = [[0, 1, 0], [-1, 0, 0], [0, 0, 1]]   # new camera axes from old
+        view["cam2world"] = view["cam2world"] @ rot.T
+        for k in ("points", "rgb", "conf", "mask"):
+            view[k] = np.ascontiguousarray(np.rot90(view[k]))
+    return view
+
+
+def reconstruct_arkit(folder: Path, log, max_views=ARKIT_MAX_VIEWS):
+    """Views from a capture.json written by the mod for a scan from the iOS app: per photo, the LiDAR depth
+    is unprojected with ARKit's intrinsics and camera pose. Metric, gravity-aligned, no ML needed."""
+    import json
+    from PIL import Image
+
+    cap = json.loads((folder / "capture.json").read_text())
+    frames = [f for f in cap["frames"] if "depth" in f]
+    if not frames:
+        raise ImportError("the scan has no LiDAR depth")
+    if len(frames) > max_views:  # evenly thinned; explicit photos are always kept
+        keep = set(np.linspace(0, len(frames) - 1, max_views).round().astype(int))
+        frames = [f for i, f in enumerate(frames) if i in keep or f.get("kind") == "photo"]
+    log(f"[recon] LiDAR scan from {cap.get('device', 'iPhone')}: {len(frames)} posed photo(s) with depth")
+    out = []
+    for f in frames:
+        img = Image.open(folder / f["image"]).convert("RGB")
+        iw, ih = f.get("imageSize", img.size)
+        s = ARKIT_WIDTH / iw
+        W, H = ARKIT_WIDTH, round(ih * s)
+        rgb = np.asarray(img.resize((W, H), Image.BILINEAR))
+        K = np.array(f["K"], dtype=np.float64).reshape(3, 3)
+        K[:2] *= s
+
+        dw, dh = f["depthSize"]
+        fmt = f["depth"].get("format", "f16")
+        depth = np.fromfile(folder / f["depth"]["file"], dtype="<f2" if fmt == "f16" else "<f4").reshape(dh, dw)
+        conf = (np.fromfile(folder / f["confidence"]["file"], dtype=np.uint8).reshape(dh, dw)
+                if "confidence" in f else np.full((dh, dw), 2, np.uint8))
+        # Nearest-neighbour upsampling: blending depth across an object edge would make points in mid-air.
+        yi = np.minimum((np.arange(H) + 0.5) * dh / H, dh - 1).astype(int)
+        xi = np.minimum((np.arange(W) + 0.5) * dw / W, dw - 1).astype(int)
+        d = depth[yi][:, xi].astype(np.float64)
+        c = conf[yi][:, xi].astype(np.float32)
+
+        u, v = np.meshgrid(np.arange(W, dtype=np.float64), np.arange(H, dtype=np.float64))
+        cam = np.stack([(u - K[0, 2]) / K[0, 0] * d, (v - K[1, 2]) / K[1, 1] * d, d], -1)
+        c2w = np.array(f["cam2world"], dtype=np.float64).reshape(4, 4) @ ARKIT_TO_CV
+        pts = cam @ c2w[:3, :3].T + c2w[:3, 3]
+        mask = np.isfinite(d) & (d > 0.1) & (d < ARKIT_MAX_DEPTH) & (c >= 1)
+        out.append(_upright({"points": pts.astype(np.float32), "K": K, "cam2world": c2w, "conf": c,
+                             "mask": mask, "rgb": rgb}))
+    return out, True
+
+
 def reconstruct(paths, backend, device, opts, log):
     errors = []
-    order = [backend] if backend != "auto" else ["mapanything", "vggt"]
+    order = [backend] if backend != "auto" else ["arkit", "mapanything", "vggt"]
     for b in order:
         try:
+            if b == "arkit":
+                folder = paths[0].parent
+                if not (folder / "capture.json").is_file():
+                    raise ImportError(f"no capture.json in {folder}")
+                return reconstruct_arkit(folder, log)
             if b == "mapanything":
                 return reconstruct_mapanything(paths, device, opts.mapanything_model, log)
             if b == "vggt":

@@ -4,7 +4,9 @@ import com.dubhacks.everything_cubed.analyzer.AnalyzerRunner;
 import com.dubhacks.everything_cubed.build.FurnitureInteractions;
 import com.dubhacks.everything_cubed.command.EverythingCubedCommand;
 import net.fabricmc.api.ModInitializer;
+import com.dubhacks.everything_cubed.stream.PhoneServer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,6 +22,7 @@ public class EverythingCubed implements ModInitializer {
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
 				EverythingCubedCommand.register(dispatcher));
 		FurnitureInteractions.register();
+		ServerLifecycleEvents.SERVER_STOPPING.register(server -> PhoneServer.stop());
 		// Where `/everything_cubed build <name>` looks for photo folders.
 		try {
 			Files.createDirectories(AnalyzerRunner.photosDir());

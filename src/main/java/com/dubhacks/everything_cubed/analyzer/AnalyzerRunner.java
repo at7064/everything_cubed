@@ -1,6 +1,7 @@
 package com.dubhacks.everything_cubed.analyzer;
 
 import com.dubhacks.everything_cubed.EverythingCubed;
+import com.dubhacks.everything_cubed.stream.PhoneServer;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
@@ -121,6 +122,16 @@ public final class AnalyzerRunner {
 			throw new IOException("analyzer exited with code " + code + ": " + String.join(" | ", tail)
 					+ " (python: " + cmd.getFirst() + ", see " + scripts.resolve("README.md") + ")");
 		return readPlan(plan);
+	}
+
+	/** TCP port for the iOS scanner app, {@code "phonePort"} in the config. */
+	public static int phonePort() {
+		try {
+			JsonObject cfg = config();
+			return cfg.has("phonePort") ? cfg.get("phonePort").getAsInt() : PhoneServer.DEFAULT_PORT;
+		} catch (IOException | RuntimeException e) {
+			return PhoneServer.DEFAULT_PORT;
+		}
 	}
 
 	private static Optional<Path> minecraftJar() {

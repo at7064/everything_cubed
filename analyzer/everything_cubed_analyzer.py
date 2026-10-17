@@ -2,7 +2,10 @@
 
 Usage:
   python everything_cubed_analyzer.py --images <folder> [--out <folder>/plan.json] [--mc-jar client.jar]
-                                [--scale BLOCKS_PER_METRE] [--backend auto|mapanything|vggt]
+                                [--scale BLOCKS_PER_METRE] [--backend auto|arkit|mapanything|vggt]
+
+A folder streamed from the iOS scanner app has a capture.json with LiDAR depth and camera poses;
+`auto` then uses it directly (backend `arkit`) instead of reconstructing the room from the photos.
 """
 from __future__ import annotations
 
@@ -30,7 +33,7 @@ def main(argv=None):
     ap.add_argument("--out", type=Path, help="output plan (default: <images>/plan.json)")
     ap.add_argument("--mc-jar", help="Minecraft client jar, used to read real block texture colours")
     ap.add_argument("--scale", type=float, help="blocks per metre (default: automatic)")
-    ap.add_argument("--backend", default="auto", choices=["auto", "mapanything", "vggt"])
+    ap.add_argument("--backend", default="auto", choices=["auto", "arkit", "mapanything", "vggt"])
     ap.add_argument("--device", help="torch device (default: cuda > mps > cpu)")
     ap.add_argument("--mapanything-model", default="facebook/map-anything-apache")
     ap.add_argument("--vggt-model", default="facebook/VGGT-1B-Commercial")

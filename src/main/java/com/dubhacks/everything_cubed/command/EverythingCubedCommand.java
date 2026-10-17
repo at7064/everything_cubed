@@ -4,11 +4,13 @@ import com.dubhacks.everything_cubed.EverythingCubed;
 import com.dubhacks.everything_cubed.analyzer.AnalyzerRunner;
 import com.dubhacks.everything_cubed.build.HouseBuilder;
 import com.dubhacks.everything_cubed.build.UndoLog;
+import com.dubhacks.everything_cubed.stream.PhoneServer;
 import com.google.gson.JsonObject;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -17,6 +19,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 
 import java.io.IOException;
@@ -32,6 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * /everything_cubed build <folder or plan.json>        analyse the photos (if needed) and build in front of you
  * /everything_cubed buildscaled <blocksPerMetre> <...> same, with a fixed scale
  * /everything_cubed undo                               revert the last build
+ * /everything_cubed phone                              pair the iOS scanner app, which then builds in front of you
  */
 public final class EverythingCubedCommand {
 	private static final ExecutorService WORKER = Executors.newSingleThreadExecutor(r -> {
@@ -56,12 +60,16 @@ public final class EverythingCubedCommand {
 						.then(Commands.argument("blocksPerMetre", DoubleArgumentType.doubleArg(0.5, 4.0))
 								.then(Commands.argument("path", StringArgumentType.greedyString())
 										.executes(ctx -> start(ctx, DoubleArgumentType.getDouble(ctx, "blocksPerMetre"))))))
-				.then(Commands.literal("undo").executes(EverythingCubedCommand::undo)));
+				.then(Commands.literal("undo").executes(EverythingCubedCommand::undo))
+				.then(Commands.literal("phone").executes(EverythingCubedCommand::phone)));
 	}
 
 	private static int start(CommandContext<CommandSourceStack> ctx, Double scale) {
-		CommandSourceStack src = ctx.getSource();
-		Path input = AnalyzerRunner.resolveInput(StringArgumentType.getString(ctx, "path"));
+		return start(ctx.getSource(), AnalyzerRunner.resolveInput(StringArgumentType.getString(ctx, "path")), scale);
+	}
+
+	/** Analyses {@code input} (if needed) in the background and builds it in front of {@code src}. */
+	public static int start(CommandSourceStack src, Path input, Double scale) {
 		if (!Files.exists(input)) {
 			src.sendFailure(Component.literal("Not found: " + input + " (relative paths are looked up in "
 					+ AnalyzerRunner.photosDir() + ")"));
@@ -138,6 +146,24 @@ public final class EverythingCubedCommand {
 		}
 		log.revert();
 		ctx.getSource().sendSuccess(() -> Component.literal("Reverted " + log.size() + " blocks."), true);
+		return 1;
+	}
+
+	private static int phone(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+		CommandSourceStack src = ctx.getSource();
+		ServerPlayer player = src.getPlayerOrException();
+		int port;
+		try {
+			port = PhoneServer.start(src.getServer(), AnalyzerRunner.phonePort());
+		} catch (IOException e) {
+			src.sendFailure(Component.literal("Could not open the phone port: " + e.getMessage()));
+			return 0;
+		}
+		String code = PhoneServer.pair(player.getUUID());
+		String addr = String.join(", ", PhoneServer.addresses().stream().map(a -> a + ":" + port).toList());
+		src.sendSuccess(() -> Component.literal("Open Everything Cubed Scanner on your iPhone (same Wi-Fi). Pairing code: ")
+				.append(Component.literal(code).withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD)), false);
+		info(src, "If the app does not list this game, enter " + (addr.isEmpty() ? "this computer's IP and port " + port : addr) + ".");
 		return 1;
 	}
 
