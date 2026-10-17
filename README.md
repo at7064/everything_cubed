@@ -15,6 +15,12 @@ bookshelves that hold items, cauldron sinks, ...), and the build gets a gable ro
    - `/everything_cubed buildscaled 1.5 bedroom` forces 1.5 blocks per metre.
    - `/everything_cubed undo` reverts the last build (up to 5).
 
+### From an iPhone with LiDAR
+
+Run `/everything_cubed phone` and scan the room with the iOS app in [ios/](ios/README.md). The scan streams straight
+into the game and is built in front of you. LiDAR gives depth and camera positions directly, so the 3D
+reconstruction step is skipped.
+
 Furniture is drawn as detailed models (legs, drawers, cushions, burners, ...) around the real blocks that do the work:
 open cabinets, wardrobes and fridges, sleep in beds, cook on stoves, fill bottles at sinks. Right-click a chair, sofa
 or toilet to sit (sneak to stand up), and right-click a lamp to switch it on or off. Breaking the block inside a model,
