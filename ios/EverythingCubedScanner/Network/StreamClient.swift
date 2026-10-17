@@ -47,7 +47,17 @@ final class StreamClient {
         }
         emit(.connecting)
         c.start(queue: queue)
+        // NWConnection keeps "preparing" for a long time when the address is unreachable
+        // (for example a stale Bonjour entry from another network); give up instead of hanging.
+        queue.asyncAfter(deadline: .now() + connectTimeout) { [weak self] in
+            guard let self, c.state != .ready, c.state != .cancelled, c === self.connection else { return }
+            print("[stream] connect timed out")
+            self.emit(.failed("Couldn't reach the game. Check that the phone and computer are on the same network, or type the address shown in chat."))
+        }
     }
+
+    /// Seconds before an attempt that hasn't connected is reported as failed.
+    var connectTimeout: TimeInterval = 8
 
     func send(_ message: WireMessage, completion: (() -> Void)? = nil) {
         guard let c = connection, let data = try? message.encoded() else {

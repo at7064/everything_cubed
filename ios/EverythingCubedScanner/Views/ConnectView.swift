@@ -61,7 +61,8 @@ struct ConnectView: View {
                             if model.phase == .connecting { Spacer(); ProgressView() }
                         }
                     }
-                    .disabled(endpoint == nil || code.count != 6 || model.phase == .connecting)
+                    // Stays enabled while connecting: a new attempt replaces a stuck one.
+                    .disabled(endpoint == nil || code.count != 6)
                 }
             }
             .navigationTitle("Everything Cubed")
