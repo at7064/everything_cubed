@@ -30,22 +30,25 @@ ADE_TO_CATEGORY = {
     "door": "door", "screen door": "door",
     "table": "table", "desk": "desk", "coffee table": "coffee_table", "pool table": "table",
     "counter": "counter", "countertop": "counter", "kitchen island": "counter", "bar": "counter",
-    "cabinet": "cabinet", "chest of drawers": "cabinet", "buffet": "cabinet", "case": "cabinet",
+    "cabinet": "cabinet", "chest of drawers": "dresser", "buffet": "cabinet", "case": "cabinet",
+    "nightstand": "nightstand", "dresser": "dresser",
     "wardrobe": "wardrobe", "bookcase": "bookshelf", "shelf": "shelf",
     "chair": "chair", "armchair": "chair", "swivel chair": "chair", "seat": "chair", "stool": "chair",
     "ottoman": "chair", "sofa": "sofa", "bench": "sofa",
     "lamp": "lamp", "light": "ceiling_light", "chandelier": "chandelier", "sconce": "sconce",
     "plant": "plant", "flower": "plant", "pot": "plant", "vase": "plant",
-    "painting": "painting", "poster": "painting", "bulletin board": "painting",
-    "rug": "rug", "television receiver": "tv", "screen": "tv", "crt screen": "tv", "monitor": "tv",
-    "computer": "tv", "refrigerator": "fridge", "stove": "stove", "oven": "stove", "microwave": "microwave",
+    "painting": "painting", "poster": "painting", "bulletin board": "bulletin_board",
+    "rug": "rug", "television receiver": "tv", "screen": "tv", "crt screen": "monitor", "monitor": "monitor",
+    "computer": "monitor", "refrigerator": "fridge", "stove": "stove", "oven": "stove", "microwave": "microwave",
     "sink": "sink", "bathtub": "bathtub", "toilet": "toilet", "fireplace": "fireplace",
     "box": "storage", "basket": "storage", "barrel": "storage", "ashcan": "trash",
     "washer": "washer", "dishwasher": "washer", "curtain": "curtain", "blind": "curtain",
-    "mirror": "mirror", "clock": "clock", "fan": "fan",
+    "mirror": "mirror", "clock": "clock", "fan": "fan", "radiator": "radiator", "piano": "piano",
+    "hood": "range_hood",
 }
 # Templates only the open-vocabulary detector (perception.perceptron_pass) finds: ADE20K has no such class.
-DETECTOR_ONLY = {"whiteboard", "projector", "exit_sign", "fire_extinguisher"}
+DETECTOR_ONLY = {"whiteboard", "projector", "exit_sign", "fire_extinguisher", "podium", "student_desk",
+                 "projection_screen", "ceiling_fan", "chair_stack", "shower", "coat_rack", "wall_hooks"}
 CATEGORIES = sorted(set(ADE_TO_CATEGORY.values()) | DETECTOR_ONLY | {"other"})
 # Detected things without a template are "generic:<detected name>" (see perception.perceptron_pass); they are
 # built as a plain box and keep their name in the plan, so missing templates show up.
@@ -65,41 +68,53 @@ TEMPLATE_INFO = {
     "bed": "a bed", "window": "a window, including stained glass", "door": "a door or doorway",
     "table": "a table: dining, reading or library table, or a long bench-like table people sit at",
     "desk": "a desk or writing table", "coffee_table": "a low table in front of a sofa",
-    "counter": "a kitchen counter or island", "cabinet": "a cabinet, chest of drawers, dresser or nightstand",
+    "counter": "a kitchen counter or island", "cabinet": "a cabinet", "dresser": "a chest of drawers",
+    "nightstand": "a small bedside table with drawers", "podium": "a lecture podium or lectern",
+    "student_desk": "a classroom chair with an attached writing arm", "chair_stack": "several chairs stacked together",
     "wardrobe": "a wardrobe or closet", "bookshelf": "a bookcase or shelving unit full of books",
     "shelf": "one wall-mounted shelf board", "chair": "any chair, armchair or stool",
     "sofa": "a sofa, couch or upholstered bench", "lamp": "a floor or table lamp standing on something",
     "ceiling_light": "a small light fixed flat on the ceiling",
     "chandelier": "a chandelier, pendant or any light hanging down from the ceiling on chains or rods",
     "sconce": "a light fixed to a wall", "plant": "a potted plant or flowers", "painting": "a painting, poster, "
-    "picture, board or framed thing on a wall", "rug": "a rug or carpet on the floor", "tv": "a TV, monitor or "
-    "computer screen", "fridge": "a refrigerator", "stove": "a stove or oven", "microwave": "a microwave",
-    "sink": "a sink", "bathtub": "a bathtub or shower", "toilet": "a toilet", "fireplace": "a fireplace",
+    "picture or poster on a wall", "bulletin_board": "a cork or bulletin board with pinned papers",
+    "rug": "a rug or carpet on the floor", "tv": "a television", "monitor": "a computer monitor on a desk",
+    "projection_screen": "a pull-down projection screen on a wall",
+    "fridge": "a refrigerator", "stove": "a stove or oven", "microwave": "a microwave",
+    "sink": "a sink", "bathtub": "a bathtub", "shower": "a glass shower stall",
+    "toilet": "a toilet", "fireplace": "a fireplace", "piano": "a piano",
     "storage": "a box, basket or crate", "trash": "a trash can", "washer": "a washing machine or dishwasher",
-    "curtain": "a curtain or blind", "mirror": "a mirror", "clock": "a clock",
+    "curtain": "a curtain or blind", "mirror": "a mirror", "clock": "a wall clock",
+    "radiator": "a wall radiator or heater", "range_hood": "a kitchen range or extractor hood above a stove",
+    "coat_rack": "a freestanding coat rack", "wall_hooks": "coat hooks mounted on a wall",
     "whiteboard": "a whiteboard, dry-erase board or chalkboard on a wall",
     "projector": "a video projector, usually hanging from the ceiling",
     "exit_sign": "an exit sign, usually lit and mounted above a door",
     "fire_extinguisher": "a fire extinguisher or its wall cabinet",
-    "fan": "a floor, tower or pedestal fan",
+    "fan": "a floor, tower or pedestal fan", "ceiling_fan": "a ceiling fan with blades",
 }
 assert set(TEMPLATE_INFO) == TEMPLATES, set(TEMPLATE_INFO) ^ TEMPLATES
 WALL_MOUNTED = {"window", "door", "painting", "sconce", "curtain", "mirror", "clock", "whiteboard", "exit_sign",
-                "fire_extinguisher"}
+                "fire_extinguisher", "bulletin_board", "projection_screen", "radiator", "range_hood", "wall_hooks"}
 # Things that never stand on the floor grid.
-NO_FOOTPRINT = WALL_MOUNTED | {"ceiling_light", "chandelier", "projector", "rug"}
+NO_FOOTPRINT = WALL_MOUNTED | {"ceiling_light", "chandelier", "ceiling_fan", "projector", "rug", "monitor"}
 # Placement priority (earlier wins collisions).
-PRIORITY = ["bed", "counter", "fridge", "stove", "sink", "bathtub", "toilet", "wardrobe", "bookshelf",
-            "cabinet", "fireplace", "sofa", "desk", "table", "coffee_table", "shelf", "washer", "tv",
-            "chair", "lamp", "fan", "storage", "trash", "microwave", "plant"]
+PRIORITY = ["bed", "counter", "fridge", "stove", "sink", "bathtub", "shower", "toilet", "wardrobe", "bookshelf",
+            "cabinet", "dresser", "nightstand", "piano", "podium", "fireplace", "sofa", "desk", "student_desk",
+            "table", "coffee_table", "shelf", "washer", "tv", "chair", "chair_stack", "coat_rack",
+            "lamp", "fan", "storage", "trash", "microwave", "plant"]
 # Max height in blocks per category (None = up to the ceiling).
 MAX_HEIGHT = {"bed": 1, "table": 1, "desk": 1, "coffee_table": 1, "counter": 1, "chair": 1, "sofa": 1,
               "cabinet": 2, "storage": 1, "trash": 1, "washer": 1, "sink": 1, "bathtub": 1, "toilet": 1,
-              "stove": 1, "microwave": 1, "plant": 1, "lamp": 2, "fireplace": 2, "tv": 2, "shelf": 3, "fan": 2}
+              "stove": 1, "microwave": 1, "plant": 1, "lamp": 2, "fireplace": 2, "tv": 2, "shelf": 3, "fan": 2,
+              "podium": 2, "student_desk": 1, "chair_stack": 2, "nightstand": 1, "dresser": 2,
+              "piano": 2, "shower": 2, "coat_rack": 2}
 # Smallest believable cluster (points after 3 cm voxelisation) per category.
 MIN_POINTS = {"window": 60, "door": 120, "bed": 200, "rug": 150, "painting": 40, "plant": 25,
               "lamp": 25, "ceiling_light": 15, "chandelier": 25, "sconce": 10, "microwave": 30, "clock": 10,
-              "whiteboard": 40, "exit_sign": 8, "fire_extinguisher": 12, "projector": 12, "fan": 20}
+              "whiteboard": 40, "exit_sign": 8, "fire_extinguisher": 12, "projector": 12, "fan": 20,
+              "bulletin_board": 35, "projection_screen": 40, "radiator": 30, "range_hood": 20,
+              "mirror": 20, "curtain": 25, "ceiling_fan": 20, "monitor": 15, "wall_hooks": 12}
 
 SIDES = ("north", "south", "west", "east")
 AUTO_SCALE = 1.25  # default blocks per metre
@@ -487,7 +502,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             continue
         m = np.flatnonzero(cats == cat)
         # Chandeliers are open metalwork alone in the air: a wider radius keeps one from splitting into parts.
-        for idx in cluster_category(loc[m], eps=(0.35 if cat == "chandelier" else 0.12) * f):
+        for idx in cluster_category(loc[m], eps=(0.35 if cat in ("chandelier", "ceiling_fan") else 0.12) * f):
             small = cat.startswith(VANILLA) and not vanilla_parts(cat)[1]  # a lantern or candle is small
             if len(idx) < MIN_POINTS.get(cat, 15 if small else 60):
                 continue
@@ -553,14 +568,19 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
         elif cat == "tv" and _is_whiteboard_colour(cl["rgb"]):
             # ADE20K has no whiteboard: SegFormer calls one a "screen". A TV that is off is dark; a bright, colourless
             # "screen" on the wall is a whiteboard or projection screen.
-            entry.update(type="whiteboard", y=y0, h=max(1, y1 - y0 + 1), color="white")
+            width_m = max(0.1, (hi - lo)[0 if side in ("north", "south") else 2])
+            kind = "projection_screen" if (hi[1] - lo[1]) / width_m > 0.55 else "whiteboard"
+            entry.update(type=kind, y=y0, h=max(1, y1 - y0 + 1), color="white")
         elif cat in ("painting", "tv"):
             entry.update(type=cat, y=y0, h=max(1, y1 - y0 + 1))
         elif cat == "sconce":
             entry.update(type="sconce", y=min(H - 1, max(1, y1)), w=1, h=1)
-        elif cat == "whiteboard":
+        elif cat in ("whiteboard", "bulletin_board", "projection_screen", "curtain", "mirror", "clock",
+                     "radiator", "range_hood", "wall_hooks"):
             # Its real extent; a white board or a green/black chalkboard.
-            entry.update(type="whiteboard", y=y0, h=max(1, y1 - y0 + 1), color=DYE_PALETTE.nearest(cl["rgb"]))
+            entry.update(type=cat, y=y0, h=max(1, y1 - y0 + 1), color=DYE_PALETTE.nearest(cl["rgb"]))
+            if cat in ("clock", "wall_hooks", "range_hood"):
+                entry.update(w=1, u=(u0 + u1) // 2, h=1)
         elif cat == "exit_sign":
             # Mounted high, above a door (NFPA 101 7.10.1.9 caps it at 6 ft 8 in above the opening).
             entry.update(type="exit_sign", y=min(H - 1, max(1, y1)), w=1, h=1)
@@ -568,7 +588,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             # Low on the wall (NFPA 10: top at most 5 ft, bottom at least 4 in above the floor).
             entry.update(type="fire_extinguisher", y=min(y0, max(0, H - 2)), w=1, h=1)
         else:
-            continue  # curtains / mirrors / clocks only inform us, they are not built
+            continue
         entry["u"] = int(np.clip(entry["u"], 0, L - 1))
         entry["w"] = int(min(entry["w"], L - entry["u"]))
         openings.append(entry)
@@ -594,10 +614,11 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
     floor_objs = sorted([(c, cl) for c, cl in obj_clusters if c not in NO_FOOTPRINT and not is_wall_tv(c, cl)],
                         key=lambda t: (PRIORITY.index(t[0]) if t[0] in PRIORITY else 99, -t[1]["n"]))
     for cat, cl in floor_objs:
+        # A detector sometimes labels an entire vertical stack as one ordinary chair.
+        if cat == "chair" and cl["hi"][1] - cl["lo"][1] > 1.25 and max(cl["hi"][0] - cl["lo"][0],
+                                                                  cl["hi"][2] - cl["lo"][2]) < 1.3:
+            cat = "chair_stack"
         if cat == "tv" and cl["lo"][1] > 0.4:
-            # A screen on a desk or shelf (laptop, monitor) can't stand on it in the block grid, and on the
-            # floor it would become a black pillar.
-            log("[plan] screen resting on furniture, skipped")
             continue
         if cat.startswith(GENERIC) and cl["lo"][1] > 0.4:
             log(f"[plan] {cat[len(GENERIC):]} is not standing on the floor, skipped")
@@ -620,6 +641,18 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             obj["estimated_center_m"] = [round(float(x), 3) for x in cl["c"]]
         objects.append(obj)
 
+    # A monitor shares its desk's floor cell and sits one block above it. It must not compete with the desk
+    # in the floor occupancy pass. SegFormer labels desk screens as either monitor or TV.
+    for cat, cl in obj_clusters:
+        if cat not in ("monitor", "tv") or (cat == "tv" and (is_wall_tv(cat, cl) or cl["lo"][1] <= 0.4)):
+            continue
+        x, z = int(room.bx(cl["c"][0])), int(room.bz(cl["c"][2]))
+        support = next((o for o in objects if o["type"] in ("desk", "table", "counter", "student_desk")
+                        and o["x"] <= x < o["x"] + o["w"] and o["z"] <= z < o["z"] + o["d"]), None)
+        if support:
+            objects.append({"type": "monitor", "x": x, "z": z, "w": 1, "d": 1, "h": 1, "y": 2,
+                            "facing": support.get("facing", "south")})
+
     screens = [o for o in openings if o["type"] in ("whiteboard", "tv")]
     for cat, cl in obj_clusters:
         if cat == "projector":
@@ -628,7 +661,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             facing = screens[0]["side"] if screens else OPPOSITE[nearest_side(cl["c"][0], cl["c"][2])[0]]
             objects.append({"type": "projector", "x": cx, "z": cz, "w": 1, "d": 1, "h": 1, "facing": facing,
                             "y": int(np.clip(int(room.by(min(cl["hi"][1], hm - 1e-3))) + 1, 1, H))})
-        elif cat == "chandelier":
+        elif cat in ("chandelier", "ceiling_fan"):
             # Footprint and hanging height from its real extent; the mod hangs it from the ceiling on a chain.
             x0, x1 = int(room.bx(cl["lo"][0])), int(room.bx(cl["hi"][0]))
             z0, z1 = int(room.bz(cl["lo"][2])), int(room.bz(cl["hi"][2]))
@@ -636,7 +669,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             cx, cz = int(room.bx(cl["c"][0])), int(room.bz(cl["c"][2]))
             y0, y1 = int(room.by(max(cl["lo"][1], 0))) + 1, int(room.by(min(cl["hi"][1], hm - 1e-3))) + 1
             h = int(np.clip(y1 - y0 + 1, 1, 3))
-            objects.append({"type": "chandelier", "x": int(np.clip(cx - (w - 1) // 2, 0, W - w)),
+            objects.append({"type": cat, "x": int(np.clip(cx - (w - 1) // 2, 0, W - w)),
                             "z": int(np.clip(cz - (d - 1) // 2, 0, D - d)), "w": w, "d": d,
                             "y": int(np.clip(y1 - h + 1, 1, H)), "h": h})
         elif cat == "ceiling_light":
@@ -674,16 +707,15 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
 
 
 def surface_grid(ij, rgb, shape, palette, default_rgb):
+    """One block over the whole surface: the material covering most of what was seen. Shadows under tables and sun
+    by a window once split one carpet into a patchwork of two blocks; rugs are separate objects."""
     mean, cnt = cell_colours(ij, rgb, shape) if len(ij) else (np.zeros((shape[0] * shape[1], 3)), np.zeros(shape[0] * shape[1]))
     obs = cnt > 0
     if obs.sum() == 0:
         return np.zeros(shape, int), [palette.nearest(default_rgb)]
     labels, blocks = quantize(mean[obs], cnt[obs].astype(float), palette)
-    g = np.full(shape[0] * shape[1], -1)
-    g[obs] = labels
-    g = g.reshape(shape)
     dominant = int(np.bincount(labels, weights=cnt[obs]).argmax())
-    return fill_unknown(mode_filter(g), dominant), blocks
+    return np.zeros(shape, int), [blocks[dominant]]
 
 
 def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
@@ -720,7 +752,7 @@ def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
             x0 = int(np.clip(round(room.bx(c[0]) - (n_beds - 1) / 2), 0, W - n_beds))
         obj["facing"], h = head, 1
         obj["color"] = DYE_PALETTE.nearest(cl["rgb"])
-    elif cat in ("chair", "sofa"):
+    elif cat in ("chair", "sofa", "student_desk", "chair_stack"):
         if dist < 0.8:
             obj["facing"] = side  # back against the wall
         elif tables:
@@ -731,18 +763,24 @@ def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
         obj["material"] = WOOD_PALETTE.nearest(cl["rgb"])
         if cat == "sofa":
             obj["color"] = DYE_PALETTE.nearest(cl["rgb"])  # upholstery
-        if cat == "chair":
+        if cat in ("chair", "chair_stack", "student_desk"):
             w = d = 1
-    elif cat in ("table", "desk", "coffee_table", "shelf", "bookshelf", "wardrobe", "cabinet", "counter"):
+    elif cat in ("table", "desk", "coffee_table", "shelf", "bookshelf", "wardrobe", "cabinet", "dresser",
+                 "nightstand", "counter", "podium", "piano"):
         obj["material"] = WOOD_PALETTE.nearest(cl["rgb"])
-    elif cat in ("lamp", "plant", "trash", "toilet", "microwave", "fridge", "stove", "sink", "washer", "fan"):
-        if cat in ("lamp", "plant", "trash", "toilet", "microwave", "fan"):
+        if cat in ("nightstand", "podium"):
+            w = d = 1
+        if cat == "piano":
+            w, d = max(2, w), 1
+    elif cat in ("lamp", "plant", "trash", "toilet", "microwave", "fridge", "stove", "sink", "washer", "fan",
+                 "shower", "coat_rack"):
+        if cat in ("lamp", "plant", "trash", "toilet", "microwave", "fan", "coat_rack"):
             w = d = 1
         if cat == "trash":
             obj["color"] = DYE_PALETTE.nearest(cl["rgb"])  # black trash, blue recycling, green compost, ...
         if cat == "fridge":
             h = min(H - 1, max(2, h))
-        if cat in ("fridge", "stove", "sink", "washer", "toilet") and w * d > 2:
+        if cat in ("fridge", "stove", "sink", "washer", "toilet", "shower") and w * d > 2:
             w, d = (min(w, 2), 1) if front in ("north", "south") else (1, min(d, 2))
     elif cat == "tv":
         w, d = (max(1, w), 1) if front in ("north", "south") else (1, max(1, d))

@@ -117,6 +117,33 @@ final class FurnitureDesigns {
 		}
 	}
 
+	/** Podium: a slanted reading stand for presentations with a base and angled top. */
+	static void podium(FurnitureModel m, BlockState wood) {
+
+		double w = m.w, d = m.d;
+
+		double cx = w / 2.0;
+
+		// Central vertical pillar/base (using dynamic depth 'd')
+
+		m.box(cx - 0.25, 0, d * 0.25, cx + 0.25, 0.9, d * 0.75, wood);
+
+		// Flat base plate on the floor for stability
+
+		m.box(cx - 0.35, 0, d * 0.15, cx + 0.35, 0.08, d * 0.85, DARK_STEEL);
+
+		// Slanted reading surface / desktop on top
+
+		m.box(cx - 0.35, 0.9, d * 0.15, cx + 0.35, 1.05, d * 0.85, wood);
+
+		// Small lip/ledge at the bottom of the slant so notes don't slide off
+
+		m.box(cx - 0.35, 0.92, d * 0.12, cx + 0.35, 1.02, d * 0.18, IRON);
+		m.box(cx - 0.22, 1.04, d * 0.32, cx + 0.22, 1.32, d * 0.36, BLACK);
+		m.box(cx - 0.19, 1.07, d * 0.36, cx + 0.19, 1.29, d * 0.37, first("cyan_concrete"));
+
+	}
+
 	/** Kitchen counter around barrels: cupboard doors with handles under a stone worktop. */
 	static void counter(FurnitureModel m, BlockState body, BlockState doors) {
 		double w = m.w, d = m.d;
@@ -283,6 +310,150 @@ final class FurnitureDesigns {
 		m.box(0.33, 0.06, 0.33, 0.67, h - 0.05, 0.67, BLACK);
 		m.box(0.38, 0.15, 0.67, 0.62, h - 0.15, 0.69, DARK_STEEL);
 		m.box(0.35, h - 0.05, 0.35, 0.65, h, 0.65, STEEL);
+	}
+
+	static void wallClock(FurnitureModel m, double y) {
+		double cx = m.w / 2, cy = y + 0.5, r = 0.36;
+		for (int row = -4; row <= 4; row++) {
+			double dy = row * 0.08, half = Math.sqrt(Math.max(0, 0.4 * 0.4 - dy * dy));
+			m.box(cx - half, cy + dy - 0.04, 0, cx + half, cy + dy + 0.04, 0.06, BLACK);
+			if (Math.abs(dy) < 0.32) {
+				double inner = Math.sqrt(0.32 * 0.32 - dy * dy);
+				m.box(cx - inner, cy + dy - 0.035, 0.06, cx + inner, cy + dy + 0.035, 0.08, WHITE);
+			}
+		}
+		for (int i = 0; i < 12; i++) {
+			double a = i * Math.PI / 6, px = cx + r * Math.sin(a), py = cy + r * Math.cos(a);
+			m.box(px - 0.018, py - 0.018, 0.08, px + 0.018, py + 0.018, 0.095, BLACK);
+		}
+		m.box(cx - 0.018, cy, 0.09, cx + 0.018, cy + 0.24, 0.11, BLACK);
+		m.box(cx, cy - 0.018, 0.11, cx + 0.17, cy + 0.018, 0.13, BLACK);
+		m.box(cx - 0.035, cy - 0.035, 0.13, cx + 0.035, cy + 0.035, 0.15, GOLD);
+	}
+
+	static void curtain(FurnitureModel m, double y0, double y1, BlockState fabric) {
+		m.box(0, y1 - 0.06, 0, m.w, y1, 0.1, IRON);
+		for (int i = 0; i < (int) m.w * 4; i++) {
+			double a = i * 0.25;
+			m.box(a, y0, 0.08 + (i % 2) * 0.025, Math.min(m.w, a + 0.24), y1 - 0.06,
+					0.15 + (i % 2) * 0.025, fabric);
+		}
+	}
+
+	static void bulletinBoard(FurnitureModel m, double y0, double y1) {
+		m.box(0, y0, 0, m.w, y1, 0.06, planks("oak"));
+		m.box(0.06, y0 + 0.06, 0.06, m.w - 0.06, y1 - 0.06, 0.08, first("brown_terracotta"));
+		for (int i = 0; i < Math.max(1, (int) m.w * 2); i++) {
+			double x = 0.15 + i * 0.42, top = y1 - 0.18 - (i % 2) * 0.12;
+			if (x + 0.27 >= m.w) break;
+			m.box(x, top - 0.35, 0.08, x + 0.27, top, 0.09, WHITE);
+			m.box(x + 0.12, top - 0.02, 0.09, x + 0.16, top + 0.02, 0.11, RED);
+		}
+	}
+
+	static void mirror(FurnitureModel m, double y0, double y1) {
+		m.box(0, y0, 0, m.w, y1, 0.05, planks("spruce"));
+		m.box(0.06, y0 + 0.06, 0.05, m.w - 0.06, y1 - 0.06, 0.07, first("light_blue_stained_glass"));
+	}
+
+	static void projectionScreen(FurnitureModel m, double y0, double y1) {
+		m.box(0, y1 - 0.12, 0, m.w, y1, 0.14, DARK_STEEL);
+		m.box(0.06, y0 + 0.07, 0.08, m.w - 0.06, y1 - 0.12, 0.1, WHITE);
+		m.box(0.02, y0, 0.09, m.w - 0.02, y0 + 0.07, 0.15, BLACK);
+	}
+
+	static void radiator(FurnitureModel m, double y0, double y1) {
+		double top = Math.min(y1, y0 + 0.8);
+		m.box(0.04, y0 + 0.12, 0, m.w - 0.04, top, 0.08, DARK_STEEL);
+		for (int i = 0; i < (int) m.w * 5; i++) {
+			double x = i * 0.2 + 0.04;
+			m.box(x, y0 + 0.06, 0.08, Math.min(m.w, x + 0.12), top, 0.18, STEEL);
+		}
+	}
+
+	static void rangeHood(FurnitureModel m, double y) {
+		m.box(0.04, y + 0.12, 0, m.w - 0.04, y + 0.32, 0.55, STEEL);
+		m.box(m.w / 2 - 0.2, y + 0.32, 0.05, m.w / 2 + 0.2, y + 0.95, 0.42, STEEL);
+		m.box(0.1, y + 0.1, 0.1, m.w - 0.1, y + 0.13, 0.48, BLACK);
+	}
+
+	static void wallHooks(FurnitureModel m, double y) {
+		m.box(0.06, y + 0.55, 0, m.w - 0.06, y + 0.67, 0.09, planks("oak"));
+		for (int i = 0; i < (int) m.w * 3; i++) {
+			double x = 0.2 + i * 0.3;
+			if (x >= m.w) break;
+			m.box(x, y + 0.4, 0.09, x + 0.04, y + 0.59, 0.26, IRON);
+		}
+	}
+
+	static void monitor(FurnitureModel m) {
+		m.box(0.22, 1.02, 0.25, 0.78, 1.08, 0.75, BLACK);
+		m.box(0.47, 1.08, 0.46, 0.53, 1.25, 0.54, STEEL);
+		m.box(0.14, 1.25, 0.42, 0.86, 1.78, 0.48, BLACK);
+		m.box(0.18, 1.29, 0.48, 0.82, 1.73, 0.49, first("cyan_concrete"));
+	}
+
+	static void studentDesk(FurnitureModel m, BlockState wood) {
+		chair(m, wood, DARK_STEEL);
+		m.box(0.78, 0.45, 0.15, 0.88, 0.95, 0.22, DARK_STEEL);
+		m.box(0.45, 0.84, 0.12, 1.28, 0.94, 0.73, wood);
+	}
+
+	static void chairStack(FurnitureModel m, BlockState wood) {
+		for (int i = 0; i < 3; i++) {
+			double y = i * 0.4;
+			m.box(0.13, y + 0.35, 0.13, 0.87, y + 0.44, 0.87, wood);
+			m.box(0.13, y + 0.44, 0.13, 0.87, y + 0.95, 0.21, wood);
+		}
+		legs(m, 0.45, 0.1, DARK_STEEL);
+	}
+
+	static void nightstand(FurnitureModel m, BlockState wood) {
+		m.box(0.08, 0, 0.07, 0.92, 0.77, 0.92, wood);
+		drawers(m, 0.15, 0.85, 0.12, 0.68, 2, planks("spruce"));
+		m.box(0, 0.77, 0, 1, 0.86, 1, wood);
+	}
+
+	static void dresser(FurnitureModel m, BlockState wood) {
+		m.box(0, 0, 0, m.w, m.h, m.d, wood);
+		for (int i = 0; i < (int) m.w; i++) drawers(m, i + 0.08, i + 0.92, 0.08, m.h - 0.08, 3, planks("spruce"));
+		m.box(0, m.h - 0.05, 0, m.w, m.h + 0.04, m.d + 0.04, wood);
+	}
+
+	static void piano(FurnitureModel m) {
+		m.box(0, 0, 0, m.w, 1.05, m.d, BLACK);
+		m.box(0.05, 0.8, m.d, m.w - 0.05, 0.88, m.d + 0.34, WHITE);
+		for (int i = 0; i < (int) (m.w * 8); i++) {
+			double x = 0.08 + i * 0.12;
+			m.box(x, 0.83, m.d + 0.13, x + 0.04, 0.9, m.d + 0.3, BLACK);
+		}
+		m.box(0.13, 1.05, 0.08, m.w - 0.13, 1.45, 0.18, BLACK);
+	}
+
+	static void shower(FurnitureModel m) {
+		m.box(0, 0, 0, m.w, 0.2, m.d, PORCELAIN);
+		m.box(0, 0.2, 0, 0.05, m.h, m.d, first("light_blue_stained_glass"));
+		m.box(m.w - 0.05, 0.2, 0, m.w, m.h, m.d, first("light_blue_stained_glass"));
+		m.box(0, 0.2, m.d - 0.05, m.w, m.h, m.d, first("light_blue_stained_glass"));
+		m.box(m.w / 2 - 0.04, m.h - 0.35, 0.06, m.w / 2 + 0.04, m.h - 0.03, 0.12, IRON);
+		m.box(m.w / 2 - 0.22, m.h - 0.4, 0.12, m.w / 2 + 0.22, m.h - 0.32, 0.3, IRON);
+	}
+
+	static void coatRack(FurnitureModel m) {
+		m.box(0.18, 0, 0.18, 0.82, 0.08, 0.82, planks("dark_oak"));
+		m.box(0.45, 0.08, 0.45, 0.55, m.h, 0.55, planks("dark_oak"));
+		for (double x : new double[]{0.15, 0.58})
+			m.box(x, m.h - 0.25, 0.45, x + 0.27, m.h - 0.17, 0.55, IRON);
+		for (double z : new double[]{0.15, 0.58})
+			m.box(0.45, m.h - 0.4, z, 0.55, m.h - 0.32, z + 0.27, IRON);
+	}
+
+	static void ceilingFan(FurnitureModel m, double y, double top) {
+		double cx = m.w / 2, cz = m.d / 2;
+		m.box(cx - 0.04, y + 0.18, cz - 0.04, cx + 0.04, top, cz + 0.04, DARK_STEEL);
+		m.box(cx - 0.18, y, cz - 0.18, cx + 0.18, y + 0.2, cz + 0.18, BLACK);
+		m.box(0.04, y + 0.12, cz - 0.12, m.w - 0.04, y + 0.18, cz + 0.12, planks("oak"));
+		m.box(cx - 0.12, y + 0.12, 0.04, cx + 0.12, y + 0.18, m.d - 0.04, planks("oak"));
 	}
 
 	// ------------------------------------------------------------------------------------- parts

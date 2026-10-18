@@ -48,8 +48,10 @@ def main(argv=None):
     ap.add_argument("--vggt-model", default="facebook/VGGT-1B-Commercial")
     ap.add_argument("--depth-model", default="depth-anything/Depth-Anything-V2-Metric-Indoor-Base-hf")
     ap.add_argument("--seg-model", default="nvidia/segformer-b5-finetuned-ade-640-640")
-    ap.add_argument("--wall-detail", default="style", choices=["style", "pattern", "items", "photo", "none"],
-                    help="style (default): one wall style for the whole room on every wall; "
+    ap.add_argument("--wall-detail", default="uniform", choices=["uniform", "style", "pattern", "items", "photo", "none"],
+                    help="uniform (default): every wall block is a map in the wall's measured paint colour, with the "
+                         "things on the wall (posters, clocks, switches, boards) copied from the photos on top; "
+                         "style: one wall style for the whole room on every wall; "
                          "pattern: plain walls are blocks, patterned walls get their own pattern on every block; "
                          "items: plain walls + things hanging on them; photo: full photos; none: blocks only")
     ap.add_argument("--texture-px", type=int, help="texture pixels per block (default 128 for photo, else 64)")
@@ -107,13 +109,15 @@ def main(argv=None):
     if opts.wall_detail != "none":
         try:
             from walltex import render_walls
+            from wallitems import wall_item_masks
             px = opts.texture_px or (128 if opts.wall_detail == "photo" else 64)
             from perception import detection_masks
             # Detected windows and doors are never wall paint or pattern, even where SegFormer says wall
             # (big stained-glass windows); their boxes do not change the room's geometry, only the textures.
             tex = render_walls(views, label_maps, category_lut(id2label, ade_to_category), ctx,
                                out.parent, px=px, detail=opts.wall_detail, log=log,
-                               exclude=detection_masks(detections, views))
+                               exclude=detection_masks(detections, views),
+                               item_masks=wall_item_masks(opts, views, device, log))
             # Wall blocks follow the paint, so bare blocks and framed ones are the same colour.
             plan["walls"] = tex.pop("wall_blocks")
             plan["wall_main"] = tex.pop("wall_main")

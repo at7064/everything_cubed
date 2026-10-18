@@ -263,7 +263,7 @@ light[2 * px:5 * px, 10 * px:13 * px] *= 0.45                               # a 
 lit = (base * light[..., None]).clip(0, 255)
 lit[0:px // 2, 0:px // 2] = 255                                             # a glare spot
 seen_l = np.ones(xx.shape, bool)
-even, seen_e = walltex.even_lighting(lit, seen_l, px)
+even, seen_e = walltex.even_wall_lighting(lit, seen_l, px)
 Yb = lambda im: ndimage_gauss(im @ np.array([0.299, 0.587, 0.114]), 2 * px)
 from scipy.ndimage import gaussian_filter as ndimage_gauss  # noqa: E402
 spread_before = np.std(Yb(lit)[seen_e]); spread_after = np.std(Yb(even)[seen_e])

@@ -49,3 +49,4 @@ xcuserdata/
 ios/build/
 analyzer/vanilla_catalog.json
 .perceptron_cache/
+/Images/

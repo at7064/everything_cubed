@@ -18,6 +18,7 @@ pixel is (SegFormer). A LiDAR scan already carries metric depth, the camera pose
      never sees the floor through (a row of pillars or a glass railing is not a wall);
    - windows: the LiDAR sees through glass, so depth *behind* a wall plane can only come through a window (or
      an opening). Those pixels are labelled window and moved onto the wall where their ray crossed it;
+   - ceiling lights: the near-white, much-brighter-than-the-rest patches of the ceiling plane;
    - furniture: RoomPlan's object boxes (beds, tables, sofas, chairs, storage, appliances, ...) and its
      doors / windows / openings; plus table tops found as flat horizontal surfaces at table height;
    - everything else (people, clutter) stays unlabelled and is not built.
@@ -60,6 +61,8 @@ ROOMPLAN_OPENINGS = {"doors": "door", "openings": "door", "windows": "window"}
 FAR_DEPTH = 10.0       # metres: high-confidence LiDAR depth is kept this far (medium only up to ARKIT_MAX_DEPTH)
 MIN_WALL_AREA = 1.5    # m^2 of surface (summed over views) for a vertical plane to be a wall candidate
 MIN_WALL_SPAN = 1.2    # metres: a wall rises at least this high (or 60% of the room), furniture sides do not
+WALL_SURFACE_TOL = (0.06, 0.02)  # wall pictures only from photo pixels whose depth is this close to the wall
+LIGHT_LUMA = 235  # ceiling pixels this bright (and well above the rest of the ceiling) are light fixtures
 TABLE_BAND = (0.6, 0.95)  # metres above the floor where table tops are looked for
 TABLE_AREA = (0.15, 8.0)   # m^2 (tables far away or at a grazing angle are seen in pieces)
 
@@ -322,6 +325,12 @@ def label_frame(fr, ex, ez, floor_y, ceil_y, walls, room, tables):
     lab[valid & (np.abs(y - floor_y) < tol) & (~has_n | (n[..., 1] > 0.7))] = L["floor"]
     if ceil_y is not None:
         lab[valid & (np.abs(y - ceil_y) < tol) & (~has_n | (n[..., 1] < -0.7))] = L["ceiling"]
+        # Light fixtures sit flush in the ceiling: the brightest, near-white part of it (no ML needed).
+        ceil = lab == L["ceiling"]
+        if ceil.sum() >= 200:
+            luma = fr["rgb_d"].astype(np.float32) @ np.array([0.299, 0.587, 0.114], np.float32)
+            bright = ceil & (luma >= max(LIGHT_LUMA, np.median(luma[ceil]) + 40)) & (fr["rgb_d"].min(-1) >= LIGHT_LUMA - 20)
+            lab[bright] = L["ceiling_light"]
 
     moved = P.copy()
     axes = (ex, ez)
@@ -544,8 +553,9 @@ def main(argv=None):
                          "transformers and is much slower")
     ap.add_argument("--device", help="torch device for --segformer (default: cuda > mps > cpu)")
     ap.add_argument("--seg-model", default="nvidia/segformer-b5-finetuned-ade-640-640")
-    ap.add_argument("--wall-detail", default="style", choices=["style", "pattern", "items", "photo", "none"])
-    ap.add_argument("--texture-px", type=int, help="texture pixels per block (default 128 for photo, else 64)")
+    # uniform: every wall block is a map in the room's one paint colour, with the things on the wall on top.
+    ap.add_argument("--wall-detail", default="uniform", choices=["uniform", "style", "pattern", "items", "photo", "none"])
+    ap.add_argument("--texture-px", type=int, help="texture pixels per block (default 64 for items, 128 for photo)")
     ap.add_argument("--save-cloud", action="store_true", help="also write the labelled point cloud (.npz)")
     ap.add_argument("--mirror-walls", action="store_true",
                     help="a wall the scan hardly saw copies the opposite wall (halls, libraries, churches)")
@@ -592,18 +602,19 @@ def main(argv=None):
 
     cache = Path(__file__).resolve().parent
     ctx = {}
-    # LiDAR measures the room itself: built at its measured size (photo rooms are enlarged, see --enlarge).
     plan = build_plan(pts, rgb, cats, surface_palette(opts.mc_jar, cache), scale=opts.scale, metric=True, log=log,
-                      ctx=ctx, known_height=opts.known_height, enlarge=1.0)
+                      ctx=ctx, known_height=opts.known_height)
     plan["source"] = {"photos": [v_name for v_name in (f.get("image") for f in cap["frames"]) if v_name],
                       "metric": True, "lidar": True, "roomplan": room is not None}
     out = opts.out or opts.images / "plan.json"
     if opts.wall_detail != "none":
         try:
             from walltex import render_walls
+            from wallitems import wall_item_masks
             px = opts.texture_px or (128 if opts.wall_detail == "photo" else 64)
             tex = render_walls(views, label_maps, category_lut(ID2LABEL, IDENTITY), ctx, out.parent, px=px,
-                               detail=opts.wall_detail, log=log)
+                               detail=opts.wall_detail, log=log,
+                               surface_tol=WALL_SURFACE_TOL, item_masks=wall_item_masks(opts, views, None, log))
             plan["walls"] = tex.pop("wall_blocks")
             plan["wall_main"] = tex.pop("wall_main")
             plan["textures"] = tex

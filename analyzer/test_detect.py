@@ -153,6 +153,11 @@ def test_mapping(monkeypatch_post):
     assert P.synonym_template("backpack", TEMPLATES, ADE_TO_CATEGORY) == "generic"
     assert P.synonym_template("man sitting", TEMPLATES, ADE_TO_CATEGORY) == "ignore"
     assert P.synonym_template("students at desk", TEMPLATES, ADE_TO_CATEGORY) == "ignore"
+    for name, expected in {"podium": "podium", "cork board": "bulletin_board", "computer monitor": "monitor",
+                           "ceiling fan": "ceiling_fan", "stack of chairs": "chair_stack", "shower": "shower",
+                           "range hood": "range_hood", "coat hooks": "wall_hooks", "nightstand": "nightstand",
+                           "dresser": "dresser", "projection screen": "projection_screen"}.items():
+        assert P.synonym_template(name, TEMPLATES, ADE_TO_CATEGORY) == expected, name
 
     # The model answers for some names, with one invalid choice; the rest fall back to synonyms.
     def post(path, body, key):

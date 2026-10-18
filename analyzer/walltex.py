@@ -76,22 +76,25 @@ PAINT_DE = 22.0     # two paints must differ at least this much (CIELAB, lightne
 PAINT_SHARE = 0.25  # ... and each cover at least this share of the seen wall area
 ITEM_DE = 18.0      # a pixel this far from its paint is part of something on the wall
 REL_TOL = 0.08      # photo surface may be this fraction of the camera distance off the fitted wall plane
-PATTERN_OFF = 0.25  # a wall is patterned when this share of what was seen is far from its paint ...
-PATTERN_GRAIN = 6.0  # ... or its block-scale lightness detail has this standard deviation (CIELAB L)
+PATTERN_OFF = 0.4   # a wall is patterned when this share of what was seen is far from its paint ...
+PATTERN_GRAIN = 9.0  # ... or its block-scale lightness detail has this standard deviation (CIELAB L)
+# (Both measured after even_lighting. Windows, blinds and a few posters are wall items, not a pattern.)
+PATTERN_COLOURS = 8      # a patterned wall is drawn in at most this many flat colours
+LIGHT_GAIN = (0.6, 1.7)  # how far even_lighting may brighten or darken a pixel
 PATTERN_MIN_SEEN = 0.05  # below this share seen, a wall follows the rest of the room
 PATTERN_OWN_POOL = 0.2   # below this share seen, a patterned wall grows from the whole room's patches
 PATTERN_HEAD_ON = 0.5    # a patterned wall only keeps and learns from pixels seen within ~60 deg of straight on
 LIGHT_SCALE = 2.0        # blocks: brightness changes slower than this are the photo's lighting, not the wall
 LIGHT_STRENGTH = 0.85    # how much of that lighting is removed (1 = all)
-GLARE, SHADOW = 235, 22  # luminance (0-255) beyond which a photo pixel is glare or deep shadow, not wall
+LUMA_GLARE, LUMA_SHADOW = 235, 22  # luminance (0-255) beyond which a photo pixel is glare or deep shadow, not wall
 
 
-def even_lighting(img, seen, px):
+def even_wall_lighting(img, seen, px):
     """Removes the photos' own lighting from a wall image: sun bands, cast shadows and fall-off become an even
     brightness, while colour and detail finer than LIGHT_SCALE blocks stay. Blown-out glare and near-black
     shadow carry no wall at all and become unseen (the pattern fill replaces them). Returns (image, seen)."""
     Y = img @ np.array([0.299, 0.587, 0.114], np.float32)
-    seen = seen & (Y < GLARE) & (Y > SHADOW)
+    seen = seen & (Y < LUMA_GLARE) & (Y > LUMA_SHADOW)
     if seen.sum() < px * px:
         return img, seen
     sigma = LIGHT_SCALE * px
@@ -107,16 +110,22 @@ def _de(lab, ref):
     return np.sqrt((d ** 2).sum(-1))
 
 
-def project_wall(side, room, to_world, R, views, label_maps, cat_names_of_pixel, px, tol, rel_tol=REL_TOL, exclude=None):
+def project_wall(side, room, to_world, R, views, label_maps, cat_names_of_pixel, px, tol, rel_tol=REL_TOL, exclude=None,
+                 return_source=False, items=None):
     """Resample one wall from the photos. `exclude`: optional per-view masks of pixels that are never wall (e.g.
     detected windows). Returns (rgb image, seen mask, cosine between the chosen view ray and the wall normal:
-    1 = seen straight on)."""
+    1 = seen straight on), plus the index of the view each pixel came from (-1 unseen) with return_source, plus
+    with `items` (per-view masks of detected wall items) the share of the photos seeing each pixel that put it
+    inside an item."""
     loc, n_room, shape = wall_pixels(side, room, px)
     P = to_world(loc)
     n_world = n_room @ R
     best = np.full(len(P), -np.inf)
     rgb = np.zeros((len(P), 3), np.float32)
     head_on = np.zeros(len(P), np.float32)
+    source = np.full(len(P), -1, np.int32)
+    looks = np.zeros(len(P), np.float32)
+    hits = np.zeros(len(P), np.float32)
     for vi_, (v, lm) in enumerate(zip(views, label_maps)):
         if "K" not in v:
             continue
@@ -149,12 +158,23 @@ def project_wall(side, room, to_world, R, views, label_maps, cat_names_of_pixel,
             visible &= ~exclude[vi_][vi, ui]
         cos = np.abs(((P[idx] - C) / d_wall[:, None]) @ n_world)
         score = np.where(visible & (cos > 0.2), cos / d_wall, -np.inf)
+        if items is not None and items[vi_] is not None:
+            # Detectors miss small things in far, steep shots: those count for less.
+            wgt = np.where(np.isfinite(score), cos, 0.0)
+            looks[idx] += wgt
+            hits[idx] += wgt * items[vi_][vi, ui]
         better = score > best[idx]
         sel = idx[better]
         best[sel] = score[better]
         head_on[sel] = cos[better]
+        source[sel] = vi_
         rgb[sel] = _bilinear(v["rgb"], u[sel], vv[sel])
-    return rgb.reshape(shape + (3,)), np.isfinite(best).reshape(shape), head_on.reshape(shape)
+    out = rgb.reshape(shape + (3,)), np.isfinite(best).reshape(shape), head_on.reshape(shape)
+    if return_source:
+        out += (source.reshape(shape),)
+    if items is not None:
+        out += ((hits / np.maximum(looks, 1e-6)).reshape(shape),)
+    return out
 
 
 FEATURE_FRONT = 1.2   # metres: built-in shelving can stand this far in front of the fitted wall plane
@@ -341,23 +361,262 @@ def compose_wall(img, seen, paints_rgb, paints_lab, default_paint, px, detail):
     return out, lbl, tiles
 
 
+def _luma(rgb):
+    return rgb @ np.array([0.299, 0.587, 0.114], np.float32)
+
+
+def even_lighting(proj, px):
+    """Takes the lighting out of the projected walls, so one paint is one colour and only real things on the
+    wall stand out. proj: {side: (img, seen, head_on, source view)}; returns the same with corrected images.
+
+    1. Exposure: every photo's paint-coloured pixels are brought to the same median brightness (the phone
+       exposes each shot differently, which made hard seams where the chosen photo changes).
+    2. Shading: what is left of slow brightness changes across each wall (lamps, sun, glare, shadow) is divided
+       out, estimated from the paint-coloured pixels only, blurred over about 1.5 blocks."""
+    seen_all = [(img[seen], src[seen]) for img, seen, _, src in proj.values() if seen.any()]
+    if not seen_all:
+        return proj
+    pix = np.concatenate([p for p, _ in seen_all]).astype(np.float32)
+    srcs = np.concatenate([s for _, s in seen_all])
+    lab = srgb_to_lab(pix[:: max(1, len(pix) // 40000)])
+    ref_ab = np.median(lab[:, 1:], axis=0)
+
+    def paintlike(rgb):  # near the walls' main colour in hue; any brightness (that is what we correct)
+        return np.linalg.norm(srgb_to_lab(rgb)[..., 1:] - ref_ab, axis=-1) < 10
+
+    pl = paintlike(pix)
+    if pl.sum() < 100:
+        return proj
+    target = float(np.median(_luma(pix[pl])))
+    gain_of_view = {}
+    for k in np.unique(srcs):
+        m = pl & (srcs == k)
+        if m.sum() >= 200:
+            gain_of_view[int(k)] = float(np.clip(target / max(np.median(_luma(pix[m])), 1.0), *LIGHT_GAIN))
+
+    out = {}
+    for side, (img, seen, head_on, src) in proj.items():
+        img = img.astype(np.float32).copy()
+        g = np.ones(seen.shape, np.float32)
+        for k, gk in gain_of_view.items():
+            g[seen & (src == k)] = gk
+        img *= g[..., None]
+        w = (seen & paintlike(img)).astype(np.float32)
+        if w.sum() >= px * px:
+            Y = ndimage.median_filter(_luma(img), size=max(3, px // 4) | 1)  # small items do not count
+            sig = 1.5 * px
+            wb = ndimage.gaussian_filter(w, sig, mode="nearest")
+            illum = ndimage.gaussian_filter(Y * w, sig, mode="nearest") / np.maximum(wb, 1e-6)
+            # Where no paint was seen nearby, keep the exposure-corrected photo as it is.
+            k = np.clip(target / np.maximum(illum, 1.0), *LIGHT_GAIN)
+            k = np.where(wb > 0.05, k, 1.0)
+            img *= k[..., None]
+        out[side] = (img.clip(0, 255), seen, head_on, src)
+    return out
+
+
+UNIFORM_MIN_ITEM = 16  # in "uniform" mode, detected things at least (px / this) pixels square are kept
+UNIFORM_ITEM_DE = 12.0  # ... and pixels this far from the paint around them (after balancing) are part of one
+UNIFORM_BG_DE = 25.0    # pixels this close to the wall's paint tell what the paint looks like locally
+UNIFORM_DETECT_SHARE = 0.3  # a pixel is a detected wall item when this share of the photos seeing it say so
+UNIFORM_DETECT_MARKS = 0.03  # ... and a detected region is kept when this share of it differs from the paint
+UNIFORM_EDGE = 3.0      # CIELAB L per pixel: an edge (a frame, a switch plate's outline)
+UNIFORM_BLEND_DE = (4.0, 12.0)  # an item pixel this close to the local paint is paint ... this far, all item
+UNIFORM_FEATHER = 2.0   # pixels: an item's outer edge fades into the paint over this width
+UNIFORM_HALO = 0.15     # blocks: at most this far in from an item's outline, paint-like pixels fade into the paint
+GLARE = 245             # pixels with every channel above this are blown out: never a thing on the wall
+
+
+def room_paint(proj, paints_lab, default_paint, fallback_rgb):
+    """The one colour the room's walls are painted, as measured: the median of every seen wall pixel close to the
+    main paint (after even_lighting), so posters, switches and shadows do not shift it."""
+    pix = np.concatenate([img[seen] for img, seen, *_ in proj.values() if seen.any()]) if proj else np.zeros((0, 3))
+    if len(pix) < 50:
+        return np.array(fallback_rgb, float)
+    pix = pix[:: max(1, len(pix) // 200000)]
+    near = _de(srgb_to_lab(pix), paints_lab[default_paint]) < ITEM_DE
+    return np.median(pix[near] if near.sum() >= 50 else pix, axis=0)
+
+
+def balance_photos(proj, paint_rgb):
+    """Every photo's own white balance and exposure: per source photo and colour channel, the gain that turns the
+    paint as that photo saw it (over all walls) into the room's paint. Returns {side: balanced image}."""
+    gains = {}
+    srcs = np.unique(np.concatenate([src[seen] for img, seen, _, src in proj.values()]))
+    for k in srcs:
+        pix = np.concatenate([img[seen & (src == k)] for img, seen, _, src in proj.values()])
+        pix = pix[pix.min(-1) < GLARE]
+        if len(pix) < 50:
+            continue
+        med = np.median(pix, axis=0)
+        near = _de(srgb_to_lab(pix), srgb_to_lab(med)) < 25   # the paint in this photo, not what hangs on it
+        if near.sum() >= 50:
+            med = np.median(pix[near], axis=0)
+        gains[int(k)] = np.clip(np.asarray(paint_rgb) / np.maximum(med, 1.0), *LIGHT_GAIN)
+    out = {}
+    for side, (img, seen, _, src) in proj.items():
+        b = img.astype(np.float32).copy()
+        for k, g in gains.items():
+            m = seen & (src == k)
+            b[m] = img[m] * g
+        out[side] = b.clip(0, 255)
+    return out
+
+
+def _edges(lab_l, looked, src):
+    """Lightness edges on the wall, without the seams where the picture switches from one photo to another."""
+    L = ndimage.median_filter(lab_l, 3)
+    edge = (np.hypot(ndimage.sobel(L, 0), ndimage.sobel(L, 1)) / 8 > UNIFORM_EDGE) & looked
+    if src is not None:
+        seam = ndimage.maximum_filter(src, 3) != ndimage.minimum_filter(src, 3)
+        edge &= ~ndimage.binary_dilation(seam, iterations=2)
+    return edge
+
+
+def wall_paint(img, seen, room_rgb):
+    """This wall's own paint colour: the median of its seen pixels close to the room's paint (so what hangs on
+    it does not shift it). Falls back to the room's paint when the wall was hardly seen."""
+    pix = img[seen & (img.min(-1) < GLARE)]
+    if len(pix) >= 50:
+        near = _de(srgb_to_lab(pix), srgb_to_lab(np.asarray(room_rgb, float))) < ITEM_DE
+        if near.sum() >= 50:
+            return np.median(pix[near], axis=0)
+    return np.asarray(room_rgb, float)
+
+
+def _local_paint(img, looked, paint_rgb, px):
+    """What the paint looks like around each pixel in the photo (seams between photos and leftover shading move it
+    a little): a blur over the pixels close to the wall's paint. Returns (the lightly smoothed photo's CIELAB -
+    sensor grain does not count -, local paint CIELAB)."""
+    smooth = np.stack([ndimage.median_filter(img[..., c], size=3) for c in range(3)], -1)
+    lab = srgb_to_lab(smooth)
+    paint_lab = srgb_to_lab(np.asarray(paint_rgb, float))
+    w = (looked & (_de(lab, paint_lab) < UNIFORM_BG_DE)).astype(np.float32)
+    sig = px / 2
+    wb = ndimage.gaussian_filter(w, sig, mode="nearest")
+    blur = lambda ch: ndimage.gaussian_filter(ch * w, sig, mode="nearest") / np.maximum(wb, 1e-6)
+    bg_lab = np.where(wb[..., None] > 0.05, np.stack([blur(lab[..., c]) for c in range(3)], -1), paint_lab)
+    return lab, bg_lab
+
+
+def _blend_items(img, keep, paint_rgb, lab, looked, edge, px):
+    """The things on the wall, blended into the flat paint so no photo-coloured halo shows around them:
+    1. each thing is recoloured by one gain, so the photo's wall in a thin ring just around it becomes exactly the
+       flat colour and the thing keeps its look relative to the wall (one gain per thing: no blotches inside);
+    2. near its outline (a band a fifth of its size, at most UNIFORM_HALO of a block), what still looks like that
+       ring fades into the flat paint - the loose edges of the detector's box -, while the rest of the thing, and
+       the inside of a closed shape (a painting's frame, a clock's rim), stays solid: a whiteboard's own shading
+       never punches holes into it;
+    3. the outer edge is feathered over UNIFORM_FEATHER pixels.
+    Returns the blended pixels (h, w, 3) and their opacity."""
+    paint = np.asarray(paint_rgb, np.float32)
+    paint_lab = srgb_to_lab(paint.astype(float))
+    wall = looked & ~keep & (_de(lab, paint_lab) < UNIFORM_BG_DE)
+    corrected = img.astype(np.float32).copy()
+    alpha = np.zeros(keep.shape, np.float32)
+    dist = ndimage.distance_transform_edt(keep)
+    comp, _ = ndimage.label(keep)
+    r = max(3, px // 16)
+    h, w = keep.shape
+    for i, sl in enumerate(ndimage.find_objects(comp), start=1):
+        win = slice(max(sl[0].start - r, 0), min(sl[0].stop + r, h)), slice(max(sl[1].start - r, 0), min(sl[1].stop + r, w))
+        region = comp[win] == i
+        ring = ndimage.binary_dilation(region, iterations=r) & wall[win]
+        ring_rgb, ring_lab = paint, paint_lab
+        if ring.sum() >= 10:
+            ring_rgb = np.median(img[win][ring], axis=0)
+            ring_lab = srgb_to_lab(ring_rgb.astype(float))
+        gain = np.clip(paint / np.maximum(ring_rgb, 1.0), *LIGHT_GAIN)
+        corrected[win][region] = (img[win][region] * gain).clip(0, 255)
+        a = np.clip((_de(lab[win], ring_lab) - UNIFORM_BLEND_DE[0]) / (UNIFORM_BLEND_DE[1] - UNIFORM_BLEND_DE[0]), 0, 1)
+        a = np.maximum(a, edge[win])                          # plate outlines stay
+        solid = ndimage.binary_fill_holes(ndimage.binary_closing(a > 0.5, np.ones((3, 3)))) & region
+        band = np.clip(0.2 * min(sl[0].stop - sl[0].start, sl[1].stop - sl[1].start), 1, UNIFORM_HALO * px)
+        a = np.where(solid | (dist[win] > band), 1.0, a)
+        alpha[win][region] = a[region]
+    alpha = ndimage.gaussian_filter(alpha, 0.7)               # no hard single-pixel flecks
+    alpha *= np.clip(dist / UNIFORM_FEATHER, 0, 1)
+    alpha = np.where(keep, alpha, 0.0)[..., None]
+    return paint * (1 - alpha) + corrected * alpha, alpha[..., 0]
+
+
+def _fit_detections(detected, off, edge, px):
+    """Detector boxes, projected from several photos, are loose and sometimes wrong. A region with (almost)
+    nothing in it that differs from the paint (colour, or an outline) - a blank wall panel taken for a whiteboard -
+    is dropped; a big one is cut down to the box around what does differ."""
+    marks = ndimage.binary_opening(detected & (off | edge), np.ones((2, 2)))
+    comp, _ = ndimage.label(detected)
+    keep = np.zeros_like(detected)
+    for i, sl in enumerate(ndimage.find_objects(comp), start=1):
+        region = comp[sl] == i
+        m = marks[sl] & region
+        if m.sum() < max(4, UNIFORM_DETECT_MARKS * region.sum()):
+            continue
+        if region.sum() < (px / 2) ** 2:   # switches, sockets, signs: their plate is the paint's colour; keep it all
+            keep[sl] |= region
+            continue
+        ys, xs = np.nonzero(m)
+        y0, y1 = max(ys.min() - 2, 0), ys.max() + 3
+        x0, x1 = max(xs.min() - 2, 0), xs.max() + 3
+        fit = np.zeros_like(region)
+        fit[y0:y1, x0:x1] = True
+        keep[sl] |= region & fit
+    comp, n = ndimage.label(keep)
+    sizes = ndimage.sum(keep, comp, np.arange(1, n + 1))
+    return keep & np.isin(comp, 1 + np.flatnonzero(sizes >= (px / UNIFORM_MIN_ITEM) ** 2))
+
+
+def compose_uniform(img, seen, paint_rgb, px, src=None, detected=None):
+    """One flat paint colour over the whole wall, with the things on it (posters, clocks, switches, boards) copied
+    straight from the (balanced) photo on top. Nothing is snapped to blocks (every block is a map). Returns
+    (image, mask of the things on the wall).
+
+    `detected`: the share of photos whose detector (wallitems) put each pixel inside a wall item; the detector
+    alone decides what is an item (fitted to what differs from the paint), so sun patches, glare and chair backs
+    leaning on the wall stay paint. Items are blended into the paint (_blend_items). None (no detector): the plain paint only. `src`: which photo each pixel came
+    from, so the seams between photos are not taken for outlines."""
+    out = np.empty(img.shape, np.float32)
+    out[:] = paint_rgb
+    looked = seen & (img.min(-1) < GLARE)
+    if detected is None or not looked.any():
+        return out, np.zeros(seen.shape, bool)
+    lab, bg_lab = _local_paint(img, looked, paint_rgb, px)
+    off = looked & (_de(lab, bg_lab) > UNIFORM_ITEM_DE)
+    edge = _edges(lab[..., 0], looked, src)
+    keep = _fit_detections(seen & (detected >= UNIFORM_DETECT_SHARE), off, edge, px)
+    out, alpha = _blend_items(img, keep, paint_rgb, lab, looked, edge, px)
+    return out, alpha > 0.05
+
+
 def render_walls(views, label_maps, cat_names_of_pixel, ctx, out_dir: Path, px=64, detail="items",
-                 fallback_rgb=(225, 222, 215), log=print, exclude=None):
+                 fallback_rgb=(225, 222, 215), log=print, exclude=None, surface_tol=None, item_masks=None):
     """Writes tex_<side>.png for every wall and returns the plan's "textures" entry. `exclude`: optional per-view
-    masks of pixels that are never wall surface (detected windows and doors)."""
+    masks of pixels that are never wall surface (detected windows and doors). `surface_tol`: (metres, share of the
+    camera distance) a photo's surface may be off the wall plane; measured depth (LiDAR) can be much tighter than
+    the default, so furniture and people standing in front of a wall are not painted onto it. `item_masks`:
+    optional per-view masks of detected wall items (wallitems.detect_wall_items), used by detail="uniform"
+    (without them, uniform walls are plain paint)."""
     room, origin, R, y_shift, f = ctx["room"], ctx["origin"], ctx["R"], ctx["y_shift"], ctx["f"]
     to_world = lambda loc: origin + (loc / f + np.array([0, y_shift, 0])) @ R
     tol = 0.12 / f  # 12 cm, in reconstruction units
+    rel_tol = REL_TOL
+    if surface_tol:
+        tol, rel_tol = surface_tol[0] / (2 * f), surface_tol[1]   # project_wall allows 2 * tol
     sides = ("north", "south", "west", "east")
-    proj3 = {s: project_wall(s, room, to_world, R, views, label_maps, cat_names_of_pixel, px, tol, exclude=exclude)
-             for s in sides}
+    items = item_masks if detail == "uniform" else None
+    raw = {s: project_wall(s, room, to_world, R, views, label_maps, cat_names_of_pixel, px, tol, rel_tol=rel_tol,
+                           exclude=exclude, return_source=True, items=items) for s in sides}
+    detected = {s: p[4] for s, p in raw.items()} if items is not None else {s: None for s in sides}
+    proj3 = {s: p[:4] for s, p in raw.items()}
+    if detail == "uniform":  # the others keep the photo's colours ("pattern" evens each wall on its own below)
+        proj3 = even_lighting(proj3, px)
     proj = {s: p[:2] for s, p in proj3.items()}
     if detail in ("pattern", "style"):
         # Pixels seen at a grazing angle are smeared along the wall: a patterned wall neither keeps them nor
         # learns its pattern from them; the pattern grown from the clean part replaces them.
         proj = {s: (img, seen & (proj3[s][2] >= PATTERN_HEAD_ON)) for s, (img, seen) in proj.items()}
     if detail == "pattern":  # "photo" stays the raw photo: evening out cannot tell slow paint changes from light
-        proj = {s: even_lighting(img, seen, px) for s, (img, seen) in proj.items()}
+        proj = {s: even_wall_lighting(img, seen, px) for s, (img, seen) in proj.items()}
     paints_rgb, paints_lab, paint_blocks = find_paints([p for p in proj.values() if p[1].any()], fallback_rgb)
     # The paint unseen walls get: the one covering most of what was seen.
     seen_lab = [_lab_sample(img[seen]) for img, seen in proj.values() if seen.any()]
@@ -370,6 +629,33 @@ def render_walls(views, label_maps, cat_names_of_pixel, ctx, out_dir: Path, px=6
     unique_blocks = list(dict.fromkeys(paint_blocks))
     block_of_paint = np.array([unique_blocks.index(b) for b in paint_blocks])
     log("[tex] wall paint: " + ", ".join(b.split(":")[1] for b in unique_blocks))
+
+    if detail == "uniform":
+        # Every wall block is a map: the room's one measured paint colour, things on the wall drawn on top.
+        # The blocks behind (seen only where no frame fits) are the closest wall block to that colour.
+        paint = room_paint(proj3, paints_lab, default_paint, fallback_rgb)
+        balanced = balance_photos(proj3, paint)
+        block = WALL_PALETTE.nearest(paint)
+        log(f"[tex] uniform wall colour rgb{tuple(int(round(c)) for c in paint)} (blocks behind: {block.split(':')[1]})")
+        walls, wall_blocks = {}, {}
+        (out_dir / "textures").mkdir(exist_ok=True)
+        for side in sides:
+            seen = proj[side][1]
+            own = wall_paint(balanced[side], seen, paint)   # each wall its own flat colour
+            out, items = compose_uniform(balanced[side], seen, own, px, src=proj3[side][3], detected=detected[side])
+            rows, cols = room.H, room.wall_len(side)
+            name = f"textures/tex_{side}.png"
+            Image.fromarray(out.clip(0, 255).astype(np.uint8)).save(out_dir / name)
+            walls[side] = {"image": name, "flip": FLIP[side], "tiles": np.ones((rows, cols), int).tolist(),
+                           "dither": False}
+            wall_blocks[side] = {"palette": [block], "grid": np.zeros((rows, cols), int).tolist()}
+            n_items = int(items.reshape(rows, px, cols, px).any(axis=(1, 3)).sum())
+            log(f"[tex] {side} wall: {seen.mean():.0%} seen in photos, colour rgb{tuple(int(round(c)) for c in own)}, "
+                f"things on the wall in {n_items} block(s)")
+        features = {s: project_features(s, room, to_world, R, views, label_maps, cat_names_of_pixel, f) for s in sides}
+        # "lit": the mod puts a full light in front of every frame, so all maps show at the same brightness.
+        return {"px": px, "dither": False, "lit": True, "walls": walls, "features": features,
+                "wall_blocks": wall_blocks, "wall_main": block}
 
     patterned = {}
     if detail == "pattern":
@@ -395,8 +681,8 @@ def render_walls(views, label_maps, cat_names_of_pixel, ctx, out_dir: Path, px=6
     style = None
     if detail == "style":
         # Glare and deep shadow carry no wall; everything else is averaged over the whole room.
-        clean = {s: (img, seen & ((img @ np.array([0.299, 0.587, 0.114], np.float32) < GLARE)
-                                   & (img @ np.array([0.299, 0.587, 0.114], np.float32) > SHADOW)))
+        clean = {s: (img, seen & ((img @ np.array([0.299, 0.587, 0.114], np.float32) < LUMA_GLARE)
+                                   & (img @ np.array([0.299, 0.587, 0.114], np.float32) > LUMA_SHADOW)))
                  for s, (img, seen) in proj.items()}
         style = room_style([clean[s] for s in sides if clean[s][1].any()], px) if any(c[1].any() for c in clean.values()) else None
         if style is None:
@@ -425,6 +711,9 @@ def render_walls(views, label_maps, cat_names_of_pixel, ctx, out_dir: Path, px=6
             if len(pool[0]) >= 8:
                 out, lbl, tiles = compose_wall(img, seen, paints_rgb, paints_lab, default_paint, px, "photo")
                 out = synthesize_wall(np.where(seen[..., None], img, out), seen, pool, px, rng)
+                # A few flat colours, blocky like a Minecraft texture, not a photo.
+                flat = np.stack([ndimage.median_filter(out[..., c], size=max(3, px // 16) | 1) for c in range(3)], -1)
+                out = posterise(flat.reshape(-1, 3), PATTERN_COLOURS).reshape(out.shape)
             else:
                 log(f"[tex] {side} wall: too few clean patches to grow a pattern from; plain")
                 patterned[side] = False
@@ -441,7 +730,7 @@ def render_walls(views, label_maps, cat_names_of_pixel, ctx, out_dir: Path, px=6
                 grid = grid[:, ::-1]
             walls[side] = {"image": name, "flip": FLIP[side], "tiles": grid.astype(int).tolist()}
             if detail == "pattern":
-                walls[side]["dither"] = bool(patterned.get(side))  # photo-like walls dither, flat items do not
+                walls[side]["dither"] = False  # flat map colours: dithering speckles them
             if detail == "style":
                 walls[side]["dither"] = style is not None
         # The wall itself is the paint block everywhere (under the items too), so it is continuous.
