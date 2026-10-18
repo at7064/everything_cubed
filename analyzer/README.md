@@ -16,7 +16,7 @@ Then `roomplan.py`:
 1. Fits the floor plane (gravity) and the dominant wall direction, so the room is axis-aligned.
 2. Measures each wall. Walls that never appear in a photo are inferred from the floor and furniture extents,
    and get the room's dominant wall material.
-3. Picks a scale (1.25 blocks per metre, enlarged so the short side is at least 6.25 blocks, max 2.5 blocks/m)
+3. Picks a scale (1.5625 blocks per metre, enlarged so the short side is at least 7.8 blocks, max 3.125 blocks/m)
    unless you pass one.
 4. Colours each wall/floor cell from the photos. Up to 3 distinct materials are kept per surface, so you don't
    get a blotchy result. They are matched in CIELAB to the real average texture colours read from your
@@ -49,7 +49,9 @@ Then `roomplan.py`:
    once from Hugging Face, needs torch + transformers), run on every photo; its boxes are projected onto the
    walls and kept where enough of the photos seeing that spot agree, and where something in them really differs
    from the paint (a blank panel taken for a whiteboard is dropped). Sun patches, glare and chairs against the
-   wall stay paint. Without torch the walls are plain paint. The paint's own grain never shows. Blown-out glare is never an item. With LiDAR scans only photo pixels within 6 cm
+   wall stay paint. Each thing is blended into the flat paint: recoloured so the photo's wall just around it
+   becomes exactly the flat colour, loose box edges that are really wall fade into the paint, and the outline is
+   feathered, so no photo-coloured halo shows. Without torch the walls are plain paint. The paint's own grain never shows. Blown-out glare is never an item. With LiDAR scans only photo pixels within 6 cm
    of the wall plane count, so chairs and people in front of a wall are not painted onto it.
 
    **Room style** (`--wall-detail style`): one wall style for the whole room, so every wall

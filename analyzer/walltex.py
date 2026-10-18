@@ -420,6 +420,9 @@ UNIFORM_BG_DE = 25.0    # pixels this close to the wall's paint tell what the pa
 UNIFORM_DETECT_SHARE = 0.3  # a pixel is a detected wall item when this share of the photos seeing it say so
 UNIFORM_DETECT_MARKS = 0.03  # ... and a detected region is kept when this share of it differs from the paint
 UNIFORM_EDGE = 3.0      # CIELAB L per pixel: an edge (a frame, a switch plate's outline)
+UNIFORM_BLEND_DE = (4.0, 12.0)  # an item pixel this close to the local paint is paint ... this far, all item
+UNIFORM_FEATHER = 2.0   # pixels: an item's outer edge fades into the paint over this width
+UNIFORM_HALO = 0.15     # blocks: at most this far in from an item's outline, paint-like pixels fade into the paint
 GLARE = 245             # pixels with every channel above this are blown out: never a thing on the wall
 
 
@@ -480,19 +483,60 @@ def wall_paint(img, seen, room_rgb):
     return np.asarray(room_rgb, float)
 
 
-def _off_paint(img, looked, paint_rgb, px):
-    """Pixels that clearly differ from the paint as it looks around them (seams between photos and leftover
-    shading move that a little), judged on a lightly smoothed photo so sensor grain does not count. Also returns
-    the smoothed photo's CIELAB."""
+def _local_paint(img, looked, paint_rgb, px):
+    """What the paint looks like around each pixel in the photo (seams between photos and leftover shading move it
+    a little): a blur over the pixels close to the wall's paint. Returns (the lightly smoothed photo's CIELAB -
+    sensor grain does not count -, local paint CIELAB)."""
     smooth = np.stack([ndimage.median_filter(img[..., c], size=3) for c in range(3)], -1)
     lab = srgb_to_lab(smooth)
     paint_lab = srgb_to_lab(np.asarray(paint_rgb, float))
     w = (looked & (_de(lab, paint_lab) < UNIFORM_BG_DE)).astype(np.float32)
     sig = px / 2
     wb = ndimage.gaussian_filter(w, sig, mode="nearest")
-    bg = np.stack([ndimage.gaussian_filter(lab[..., c] * w, sig, mode="nearest") for c in range(3)], -1)
-    bg = np.where(wb[..., None] > 0.05, bg / np.maximum(wb, 1e-6)[..., None], paint_lab)
-    return looked & (_de(lab, bg) > UNIFORM_ITEM_DE), lab
+    blur = lambda ch: ndimage.gaussian_filter(ch * w, sig, mode="nearest") / np.maximum(wb, 1e-6)
+    bg_lab = np.where(wb[..., None] > 0.05, np.stack([blur(lab[..., c]) for c in range(3)], -1), paint_lab)
+    return lab, bg_lab
+
+
+def _blend_items(img, keep, paint_rgb, lab, looked, edge, px):
+    """The things on the wall, blended into the flat paint so no photo-coloured halo shows around them:
+    1. each thing is recoloured by one gain, so the photo's wall in a thin ring just around it becomes exactly the
+       flat colour and the thing keeps its look relative to the wall (one gain per thing: no blotches inside);
+    2. near its outline (a band a fifth of its size, at most UNIFORM_HALO of a block), what still looks like that
+       ring fades into the flat paint - the loose edges of the detector's box -, while the rest of the thing, and
+       the inside of a closed shape (a painting's frame, a clock's rim), stays solid: a whiteboard's own shading
+       never punches holes into it;
+    3. the outer edge is feathered over UNIFORM_FEATHER pixels.
+    Returns the blended pixels (h, w, 3) and their opacity."""
+    paint = np.asarray(paint_rgb, np.float32)
+    paint_lab = srgb_to_lab(paint.astype(float))
+    wall = looked & ~keep & (_de(lab, paint_lab) < UNIFORM_BG_DE)
+    corrected = img.astype(np.float32).copy()
+    alpha = np.zeros(keep.shape, np.float32)
+    dist = ndimage.distance_transform_edt(keep)
+    comp, _ = ndimage.label(keep)
+    r = max(3, px // 16)
+    h, w = keep.shape
+    for i, sl in enumerate(ndimage.find_objects(comp), start=1):
+        win = slice(max(sl[0].start - r, 0), min(sl[0].stop + r, h)), slice(max(sl[1].start - r, 0), min(sl[1].stop + r, w))
+        region = comp[win] == i
+        ring = ndimage.binary_dilation(region, iterations=r) & wall[win]
+        ring_rgb, ring_lab = paint, paint_lab
+        if ring.sum() >= 10:
+            ring_rgb = np.median(img[win][ring], axis=0)
+            ring_lab = srgb_to_lab(ring_rgb.astype(float))
+        gain = np.clip(paint / np.maximum(ring_rgb, 1.0), *LIGHT_GAIN)
+        corrected[win][region] = (img[win][region] * gain).clip(0, 255)
+        a = np.clip((_de(lab[win], ring_lab) - UNIFORM_BLEND_DE[0]) / (UNIFORM_BLEND_DE[1] - UNIFORM_BLEND_DE[0]), 0, 1)
+        a = np.maximum(a, edge[win])                          # plate outlines stay
+        solid = ndimage.binary_fill_holes(ndimage.binary_closing(a > 0.5, np.ones((3, 3)))) & region
+        band = np.clip(0.2 * min(sl[0].stop - sl[0].start, sl[1].stop - sl[1].start), 1, UNIFORM_HALO * px)
+        a = np.where(solid | (dist[win] > band), 1.0, a)
+        alpha[win][region] = a[region]
+    alpha = ndimage.gaussian_filter(alpha, 0.7)               # no hard single-pixel flecks
+    alpha *= np.clip(dist / UNIFORM_FEATHER, 0, 1)
+    alpha = np.where(keep, alpha, 0.0)[..., None]
+    return paint * (1 - alpha) + corrected * alpha, alpha[..., 0]
 
 
 def _fit_detections(detected, off, edge, px):
@@ -528,17 +572,19 @@ def compose_uniform(img, seen, paint_rgb, px, src=None, detected=None):
 
     `detected`: the share of photos whose detector (wallitems) put each pixel inside a wall item; the detector
     alone decides what is an item (fitted to what differs from the paint), so sun patches, glare and chair backs
-    leaning on the wall stay paint. None (no detector): the plain paint only. `src`: which photo each pixel came
+    leaning on the wall stay paint. Items are blended into the paint (_blend_items). None (no detector): the plain paint only. `src`: which photo each pixel came
     from, so the seams between photos are not taken for outlines."""
     out = np.empty(img.shape, np.float32)
     out[:] = paint_rgb
     looked = seen & (img.min(-1) < GLARE)
     if detected is None or not looked.any():
         return out, np.zeros(seen.shape, bool)
-    off, lab = _off_paint(img, looked, paint_rgb, px)
-    keep = _fit_detections(seen & (detected >= UNIFORM_DETECT_SHARE), off, _edges(lab[..., 0], looked, src), px)
-    out[keep] = img[keep]
-    return out, keep
+    lab, bg_lab = _local_paint(img, looked, paint_rgb, px)
+    off = looked & (_de(lab, bg_lab) > UNIFORM_ITEM_DE)
+    edge = _edges(lab[..., 0], looked, src)
+    keep = _fit_detections(seen & (detected >= UNIFORM_DETECT_SHARE), off, edge, px)
+    out, alpha = _blend_items(img, keep, paint_rgb, lab, looked, edge, px)
+    return out, alpha > 0.05
 
 
 def render_walls(views, label_maps, cat_names_of_pixel, ctx, out_dir: Path, px=64, detail="items",
@@ -560,7 +606,9 @@ def render_walls(views, label_maps, cat_names_of_pixel, ctx, out_dir: Path, px=6
     raw = {s: project_wall(s, room, to_world, R, views, label_maps, cat_names_of_pixel, px, tol, rel_tol=rel_tol,
                            exclude=exclude, return_source=True, items=items) for s in sides}
     detected = {s: p[4] for s, p in raw.items()} if items is not None else {s: None for s in sides}
-    proj3 = even_lighting({s: p[:4] for s, p in raw.items()}, px)
+    proj3 = {s: p[:4] for s, p in raw.items()}
+    if detail == "uniform":  # the others keep the photo's colours ("pattern" evens each wall on its own below)
+        proj3 = even_lighting(proj3, px)
     proj = {s: p[:2] for s, p in proj3.items()}
     if detail in ("pattern", "style"):
         # Pixels seen at a grazing angle are smeared along the wall: a patterned wall neither keeps them nor

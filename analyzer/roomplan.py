@@ -93,7 +93,7 @@ MIN_POINTS = {"window": 60, "door": 120, "bed": 200, "rug": 150, "painting": 40,
               "lamp": 25, "ceiling_light": 15, "chandelier": 25, "sconce": 10, "microwave": 30, "clock": 10}
 
 SIDES = ("north", "south", "west", "east")
-AUTO_SCALE = 1.25  # default blocks per metre
+AUTO_SCALE = 1.5625  # default blocks per metre (1.25, then 25% bigger)
 OPPOSITE = {"north": "south", "south": "north", "west": "east", "east": "west"}
 
 
@@ -394,8 +394,8 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
 
     wm, dm = bounds["xmax"] - bounds["xmin"], bounds["zmax"] - bounds["zmin"]
     if scale is None:
-        # 1.25 blocks per metre (rooms felt a bit small at 1:1), enlarged so the short side has at
-        # least 6.25 blocks, at most 2.5 blocks per metre.
+        # 1.5625 blocks per metre (rooms felt small at 1:1, and still at 1.25), enlarged so the short side has at
+        # least 7.8 blocks, at most 3.125 blocks per metre.
         scale = AUTO_SCALE
         if min(wm, dm) * scale < 5 * AUTO_SCALE:
             scale = min(2 * AUTO_SCALE, 5 * AUTO_SCALE / min(wm, dm))
