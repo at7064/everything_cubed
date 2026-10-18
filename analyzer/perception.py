@@ -567,6 +567,38 @@ def paint_detections(label_map, boxes, id2label, depth=None, band=(0.35, 0.15), 
     return out
 
 
+def match_object_observations(observations, max_distance=0.45):
+    """Group same-category detections whose reconstructed 3D footprints overlap across views.
+    A group needs two distinct views; uncertain single-view detections keep the ordinary cloud path."""
+    groups = []
+    for obs in sorted(observations, key=lambda o: -len(o["points"])):
+        center = np.median(obs["points"], axis=0)
+        lo, hi = np.percentile(obs["points"], [10, 90], axis=0)
+        best, best_dist = None, np.inf
+        for group in groups:
+            if group["category"] != obs["category"] or obs["view"] in group["views"]:
+                continue
+            dist = np.linalg.norm(center - group["center"])
+            overlap = np.minimum(hi, group["hi"]) - np.maximum(lo, group["lo"])
+            # A close centre alone can merge neighbouring chairs; require footprint overlap too.
+            if dist < max_distance and (overlap[[0, 2]] > -0.08).all() and dist < best_dist:
+                best, best_dist = group, dist
+        if best is None:
+            groups.append({"category": obs["category"], "views": {obs["view"]}, "parts": [obs],
+                           "center": center, "lo": lo, "hi": hi})
+        else:
+            best["views"].add(obs["view"])
+            best["parts"].append(obs)
+            best["center"] = np.median(np.stack([np.median(p["points"], axis=0) for p in best["parts"]]), axis=0)
+            best["lo"] = np.min(np.stack([np.percentile(p["points"], 10, axis=0) for p in best["parts"]]), axis=0)
+            best["hi"] = np.max(np.stack([np.percentile(p["points"], 90, axis=0) for p in best["parts"]]), axis=0)
+    return [{"category": g["category"], "views": sorted(g["views"]),
+             "center": g["center"],
+             "points": np.concatenate([p["points"] for p in g["parts"]]),
+             "colors": np.concatenate([p["colors"] for p in g["parts"]])}
+            for g in groups if len(g["views"]) >= 2]
+
+
 _PERSON_MODEL = {}
 
 
@@ -659,13 +691,25 @@ def perceptron_pass(paths, views, label_maps, id2label, ade_to_category, templat
                                            else f"{t}:{n}" if t.startswith("vanilla:") else t)
 
     out_maps, report = [], {"photos": [], "names": {}}
+    observations = []
     seg_cat = category_lut(id2label, ade_to_category)
     for i, (v, lm, dets) in enumerate(zip(views, label_maps, per_view)):
         boxes = [(cls[n], b, MAY_TAKE.get(mapping[n][0], set())) for n, b, _ in dets if mapping[n][0] != "ignore"]
-        out_maps.append(paint_detections(lm, boxes, id2label, camera_depth(v) if depth_gate else None))
+        depth = camera_depth(v) if depth_gate else None
+        out_maps.append(paint_detections(lm, boxes, id2label, depth))
         rows = []
         for n, (x0, y0, x1, y1), mention in dets:
             t = mapping[n][0]
+            cat = ade_to_category[DET_PREFIX + n]
+            if cat not in ("other", "window", "door"):
+                ys = slice(max(0, int(y0)), min(lm.shape[0], int(np.ceil(y1))))
+                xs = slice(max(0, int(x0)), min(lm.shape[1], int(np.ceil(x1))))
+                valid = ((out_maps[-1][ys, xs] == cls[n]) & v["mask"][ys, xs]
+                         & np.isfinite(v["points"][ys, xs]).all(-1))
+                if valid.sum() >= 20:
+                    pts, cols = v["points"][ys, xs][valid], v["rgb"][ys, xs][valid]
+                    step = max(1, len(pts) // 1500)
+                    observations.append({"category": cat, "view": i, "points": pts[::step], "colors": cols[::step]})
             sub = lm[max(0, int(y0)):int(np.ceil(y1)), max(0, int(x0)):int(np.ceil(x1))]
             cats = seg_cat(sub) if sub.size else np.array([])
             # How much of the box SegFormer already gave the same category (0 = SegFormer missed it).
@@ -678,4 +722,6 @@ def perceptron_pass(paths, views, label_maps, id2label, ade_to_category, templat
     for n in names:
         report["names"][n] = {"template": mapping[n][0], "source": mapping[n][1],
                               "count": sum(n == d[0] for dets in per_view for d in dets)}
+    report["_instances"] = match_object_observations(observations)
+    log(f"[det] {len(report['_instances'])} object(s) matched across views")
     return out_maps, id2label, ade_to_category, report

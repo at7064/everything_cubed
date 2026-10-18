@@ -43,6 +43,18 @@ flip = np.diag([1, -1, -1.0])  # OpenCV-ish: y down (keeps right-handedness)
 P_world = (P @ (flip @ Rx @ Ry).T) + np.array([0.3, 1.4, 2.0]) + rng.normal(0, 0.01, P.shape)
 
 plan = build_plan(P_world, np.concatenate(cols), np.array(cats), Palette(builtin_surface_entries()))
+# A two-view object estimate replaces the cloud cluster before block placement.
+chair_start = sum(len(p) for p in pts[:8])
+chair_world = P_world[chair_start:chair_start + len(pts[8])]
+shift = np.array([0, 0, -0.6]) @ (flip @ Rx @ Ry).T
+chair_match = {"category": "chair", "views": [0, 1], "points": chair_world + shift,
+               "center": np.median(chair_world, axis=0) + shift, "colors": cols[8]}
+matched_logs = []
+matched_plan = build_plan(P_world, np.concatenate(cols), np.array(cats), Palette(builtin_surface_entries()),
+                          object_instances=[chair_match], log=matched_logs.append)
+assert any("1 object(s) located from matching detections" in m for m in matched_logs)
+matched_chairs = [o for o in matched_plan["objects"] if o["type"] == "chair"]
+assert len(matched_chairs) == 1 and matched_chairs[0]["source_views"] == [0, 1]
 s = plan["size"]
 print(json.dumps({k: plan[k] for k in ("scale", "metres", "size", "wall_main", "ceiling", "roof")}, indent=1))
 print("floor:", plan["floor"]["palette"], "| walls:", plan["walls"]["north"]["palette"])

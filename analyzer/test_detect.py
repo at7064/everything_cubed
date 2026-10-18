@@ -133,6 +133,18 @@ def test_multiview_fusion():
     print("multi-view fusion OK")
 
 
+def test_object_matching():
+    def obs(view, center):
+        points = rng.normal(center, 0.04, (120, 3)).astype(np.float32)
+        return {"category": "chair", "view": view, "points": points,
+                "colors": np.full((120, 3), 80, np.uint8)}
+    groups = P.match_object_observations([obs(0, (1, 0.5, 1)), obs(1, (1.03, 0.5, 1.02)),
+                                          obs(0, (1.8, 0.5, 1))])
+    assert len(groups) == 1 and groups[0]["views"] == [0, 1]
+    assert np.linalg.norm(groups[0]["center"] - [1, 0.5, 1]) < 0.08
+    print("object matching OK")
+
+
 def test_mapping(monkeypatch_post):
     assert P.synonym_template("Office Chairs", TEMPLATES, ADE_TO_CATEGORY) == "chair"
     assert P.synonym_template("person", TEMPLATES, ADE_TO_CATEGORY) == "ignore"
@@ -425,6 +437,7 @@ if __name__ == "__main__":
         test_blur()
         test_paint()
         test_multiview_fusion()
+        test_object_matching()
         test_mapping(monkeypatch_post)
         test_retries()
         test_cache_and_prompt(monkeypatch_post)

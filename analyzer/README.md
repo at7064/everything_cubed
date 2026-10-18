@@ -81,6 +81,9 @@ benches, or its chandeliers).
   curtains may take wall pixels, rugs floor pixels). Each box only relabels pixels near the object's own depth.
 - Detections from all views meet in the reconstructed 3D space. Each view contributes one label vote per 3 cm
   voxel before furniture is clustered, so a close photo with more pixels does not outweigh several other views.
+- When the same object is detected in at least two views, its matching 3D observations give a more stable centre
+  and footprint for placement. Single-view objects keep the normal cluster path. Matched objects record their
+  source view indices and estimated centre in `plan.json`.
 - Photos are sent concurrently with `reasoning_effort` `none` (about 3x faster than `high`;
   `--perceptron-reasoning` changes it). Answers are cached per exact upload in `<photos>/.perceptron_cache/`, so
   re-runs send nothing. Delete that folder to detect again.

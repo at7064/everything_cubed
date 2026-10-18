@@ -84,8 +84,9 @@ def main(argv=None):
 
     cache = Path(__file__).resolve().parent
     ctx = {}
+    object_instances = detections.pop("_instances", []) if detections else []
     plan = build_plan(pts, rgb, cats, surface_palette(opts.mc_jar, cache), scale=opts.scale, metric=metric, log=log, ctx=ctx,
-                      known_height=opts.known_height)
+                      known_height=opts.known_height, object_instances=object_instances)
     plan["source"] = {"photos": [p.name for p in paths], "metric": metric}
     out = opts.out or opts.images / "plan.json"
     if detections:

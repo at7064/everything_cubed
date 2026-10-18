@@ -300,7 +300,7 @@ def cluster_category(p, eps=0.12, min_samples=8):
 # ----------------------------------------------------------------------------------- main entry
 
 def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metric=True, log=print, ctx=None,
-               known_height=None):
+               known_height=None, object_instances=None):
     """ctx: optional dict that receives the room frame (origin, R, y_shift, f, room) for texture projection.
     known_height: the room's real floor-to-ceiling height in metres; rescales the whole reconstruction to it."""
     points = np.asarray(points, float)
@@ -472,6 +472,33 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             if len(idx) < MIN_POINTS.get(cat, 15 if small else 60):
                 continue
             obj_clusters.append((cat, summarize_cluster(loc[m][idx], colors[m][idx])))
+    matched = 0
+    used_clusters = set()
+    for inst in object_instances or []:
+        p = (np.asarray(inst["points"], float) - origin) @ R.T
+        p[:, 1] -= y_shift
+        p *= f
+        center = (np.asarray(inst["center"], float) - origin) @ R.T
+        center[1] -= y_shift
+        center *= f
+        if len(p) < 20 or not np.isfinite(p).all() or not np.isfinite(center).all():
+            continue
+        cl = {"lo": np.percentile(p, 5, axis=0), "hi": np.percentile(p, 95, axis=0),
+              "c": center, "rgb": np.median(inst["colors"], axis=0), "n": len(p),
+              "source_views": inst["views"]}
+        candidates = [(np.linalg.norm(old["c"] - center), j) for j, (cat, old) in enumerate(obj_clusters)
+                      if cat == inst["category"] and j not in used_clusters]
+        if candidates:
+            dist, j = min(candidates)
+            if dist < 0.8 * stretch:
+                obj_clusters[j] = (inst["category"], cl)
+                used_clusters.add(j)
+                matched += 1
+                continue
+        obj_clusters.append((inst["category"], cl))
+        matched += 1
+    if matched:
+        log(f"[plan] {matched} object(s) located from matching detections in multiple views")
     log("[plan] detected: " + ", ".join(f"{n}x {c}" for c, n in Counter(c for c, _ in obj_clusters).items()))
 
     def nearest_side(cx, cz):
@@ -555,6 +582,9 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
         if obj is None:
             log(f"[plan] no room for {cat}, skipped")
             continue
+        if "source_views" in cl:
+            obj["source_views"] = cl["source_views"]
+            obj["estimated_center_m"] = [round(float(x), 3) for x in cl["c"]]
         objects.append(obj)
 
     for cat, cl in obj_clusters:
