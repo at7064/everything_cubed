@@ -275,3 +275,36 @@ c_before = np.abs(np.diff(lit[yl, 8 * px:9 * px].mean(-1)[::px // 2])).mean()
 c_after = np.abs(np.diff(even[yl, 8 * px:9 * px].mean(-1)[::px // 2])).mean()
 assert c_after > 0.5 * c_before, (c_before, c_after)
 print("even lighting OK")
+
+# Room style: walls with a white upper part, a wood trim line and a grey wainscot below, each wall seen only in
+# pieces. The style must put the trim at its real height, average out a lighting difference between walls,
+# and give a seamless tile; a plain room has no bands and no grain.
+px = 16
+rows_w = 6 * px
+yy, xx = np.mgrid[0:rows_w, 0:10 * px]
+def wainscot(light, seed):
+    img = np.where((yy < 3 * px)[..., None], np.array([235, 232, 225.0]), np.array([190, 190, 185.0]))
+    img[(yy >= 3 * px) & (yy < 3 * px + px // 4)] = np.array([170, 120, 70.0])   # trim line, a quarter block high
+    return (img * light + np.random.default_rng(seed).normal(0, 4, img.shape)).clip(0, 255)
+w1, w2 = wainscot(0.9, 1), wainscot(1.1, 2)
+m1 = xx < 4 * px; m2 = (xx > 5 * px) & (yy > px)
+prof, tile, st = walltex.room_style([(w1, m1), (w2, m2)], px)
+trim_row = 3 * px + px // 8
+print(f"style: trim colour {prof[trim_row].round()}, upper {prof[2 * px].round()}, lower {prof[5 * px].round()}, {st}")
+assert prof[trim_row][0] - prof[trim_row][2] > 40, "the trim line (brown) is at its real height"
+assert abs(prof[2 * px].mean() - 229) < 8 and abs(prof[5 * px].mean() - 188) < 8, "lighting between walls averages out"
+inner_x = np.abs(np.diff(tile, axis=1)).mean(); inner_y = np.abs(np.diff(tile, axis=0)).mean()
+assert np.abs(tile[:, 0] - tile[:, -1]).mean() < 1.5 * inner_x and np.abs(tile[0] - tile[-1]).mean() < 1.5 * inner_y, "seamless"
+assert not (st["height_spread"] < walltex.STYLE_PLAIN_DE and st["grain"] < walltex.STYLE_PLAIN_GRAIN), "banded: not plain"
+flat = np.full(yy.shape + (3,), 228.0) + np.random.default_rng(3).normal(0, 1.5, yy.shape + (3,))
+_, _, st_flat = walltex.room_style([(flat, m1)], px)
+assert st_flat["height_spread"] < walltex.STYLE_PLAIN_DE and st_flat["grain"] < walltex.STYLE_PLAIN_GRAIN, st_flat
+# An accent wall (dark panels) is not averaged into the style: it stays the white room's style.
+dark = np.full(yy.shape + (3,), 70.0) + np.random.default_rng(4).normal(0, 3, yy.shape + (3,))
+dark[:, :, 2] += 30   # purple-ish
+prof_a, _, st_a = walltex.room_style([(w1, m1), (w2, m2), (dark, np.ones(yy.shape, bool) & (xx < 3 * px))], px)
+assert st_a["walls"] == 2 and abs(prof_a[2 * px].mean() - 229) < 10, (st_a, prof_a[2 * px])
+# ... also when the accent wall is the one the photos saw most.
+prof_b, _, st_b = walltex.room_style([(w1, m1 & (xx < 2 * px)), (w2, m2 & (xx > 8 * px)), (dark, np.ones(yy.shape, bool))], px)
+assert st_b["walls"] == 2 and abs(prof_b[2 * px].mean() - 229) < 10, (st_b, prof_b[2 * px])
+print("room style OK")

@@ -7,6 +7,11 @@ so the same paint is the same block everywhere (unseen walls inferred). Item fra
 blend with smoothly lit blocks, so frames are only used for the things on the wall (posters, boards,
 clocks...): snapped to whole blocks, in a few flat colours, filling their frames completely.
 detail="photo": the actual photo on every block (paint where unseen).
+detail="style" (default): one wall style for the whole room, so every wall matches. Its vertical profile is the
+median colour at each height over all clean wall pixels of all walls (bands such as a wainscot and its trim
+line stay at their height; photo lighting averages out), and its fine texture is one typical block-sized
+patch made seamless and tiled. Every wall gets that same picture; a room with neither bands nor texture is
+built as plain blocks.
 detail="pattern": each wall is judged plain or patterned from what the photos show. A plain wall is built as in
 "items". A patterned wall (stone, panelling, wallpaper, brick) gets maps on every block: the photo where it was
 seen, and everywhere else patches of it grown outward (patch-based hole filling in the spirit of image quilting,
@@ -346,7 +351,7 @@ def render_walls(views, label_maps, cat_names_of_pixel, ctx, out_dir: Path, px=6
     proj3 = {s: project_wall(s, room, to_world, R, views, label_maps, cat_names_of_pixel, px, tol, exclude=exclude)
              for s in sides}
     proj = {s: p[:2] for s, p in proj3.items()}
-    if detail == "pattern":
+    if detail in ("pattern", "style"):
         # Pixels seen at a grazing angle are smeared along the wall: a patterned wall neither keeps them nor
         # learns its pattern from them; the pattern grown from the clean part replaces them.
         proj = {s: (img, seen & (proj3[s][2] >= PATTERN_HEAD_ON)) for s, (img, seen) in proj.items()}
@@ -386,10 +391,34 @@ def render_walls(views, label_maps, cat_names_of_pixel, ctx, out_dir: Path, px=6
         room_pool = (np.concatenate([p[0] for p in pools.values()]) if pools else np.zeros((0, B, B, 3), np.uint8),
                      np.concatenate([p[1] for p in pools.values()]) if pools else np.zeros((0, B // ds, B // ds, 3), np.float32))
 
+    style = None
+    if detail == "style":
+        # Glare and deep shadow carry no wall; everything else is averaged over the whole room.
+        clean = {s: (img, seen & ((img @ np.array([0.299, 0.587, 0.114], np.float32) < GLARE)
+                                   & (img @ np.array([0.299, 0.587, 0.114], np.float32) > SHADOW)))
+                 for s, (img, seen) in proj.items()}
+        style = room_style([clean[s] for s in sides if clean[s][1].any()], px) if any(c[1].any() for c in clean.values()) else None
+        if style is None:
+            log("[tex] too little clean wall seen for a room style; plain walls")
+        else:
+            st = style[2]
+            plain = st["height_spread"] < STYLE_PLAIN_DE and st["grain"] < STYLE_PLAIN_GRAIN
+            log(f"[tex] room style: {'plain' if plain else 'textured'} (heights differ {st['height_spread']:.1f} dE, "
+                f"grain {st['grain']:.1f}, from {st['patches']} clean patches)")
+            if plain:
+                style = None
+
     walls, wall_blocks = {}, {}
     for side in sides:
         img, seen = proj[side]
-        if patterned.get(side):
+        if style is not None:
+            profile, tile, _ = style
+            rows_px, cols_px = img.shape[:2]
+            reps = (rows_px // px + 1, cols_px // px + 1, 1)
+            out = profile[:, None, :] + np.tile(tile, reps)[:rows_px, :cols_px]
+            _, lbl, _ = compose_wall(img, seen, paints_rgb, paints_lab, default_paint, px, "items")
+            tiles = np.ones((rows_px // px, cols_px // px), bool)
+        elif patterned.get(side):
             use_own = side in pools and len(pools[side][0]) >= 30 and seen.mean() >= PATTERN_OWN_POOL
             pool = pools[side] if use_own else room_pool
             if len(pool[0]) >= 8:
@@ -398,9 +427,9 @@ def render_walls(views, label_maps, cat_names_of_pixel, ctx, out_dir: Path, px=6
             else:
                 log(f"[tex] {side} wall: too few clean patches to grow a pattern from; plain")
                 patterned[side] = False
-        if not patterned.get(side):
+        if style is None and not patterned.get(side):
             out, lbl, tiles = compose_wall(img, seen, paints_rgb, paints_lab, default_paint, px,
-                                           "items" if detail == "pattern" else detail)
+                                           "items" if detail in ("pattern", "style") else detail)
         rows, cols = room.H, room.wall_len(side)
         if tiles.any():
             name = f"textures/tex_{side}.png"  # kept out of the photo folder itself
@@ -412,6 +441,8 @@ def render_walls(views, label_maps, cat_names_of_pixel, ctx, out_dir: Path, px=6
             walls[side] = {"image": name, "flip": FLIP[side], "tiles": grid.astype(int).tolist()}
             if detail == "pattern":
                 walls[side]["dither"] = bool(patterned.get(side))  # photo-like walls dither, flat items do not
+            if detail == "style":
+                walls[side]["dither"] = style is not None
         # The wall itself is the paint block everywhere (under the items too), so it is continuous.
         blk = block_of_paint[lbl]
         counts = np.stack([(blk == i).reshape(rows, px, cols, px).sum(axis=(1, 3)) for i in range(len(unique_blocks))], -1)
@@ -509,6 +540,107 @@ def synthesize_wall(img, seen, pool, px, rng, top_k=5, reuse=0.0):
             win[~wk] = patch[~wk]
             known[y:y + B, x:x + B] = True
     return out
+
+
+STYLE_PLAIN_DE = 6.0     # a room style whose heights differ less than this (CIELAB) ...
+STYLE_PLAIN_GRAIN = 3.0  # ... and whose texture is weaker than this (std of luminance) is plain
+STYLE_SAME_DE = 12.0     # walls this close (CIELAB) to the most-seen wall share the room style; others are accents
+BAND_DE = 4.0            # rows within this of their band's colour (CIELAB) belong to it; finer is noise
+
+
+def _bands(lab, beta):
+    """Start indices of the optimal piecewise-constant segmentation of rows `lab` (n, 3): least squared error
+    plus `beta` per band (optimal partitioning, Jackson et al., IEEE Signal Processing Letters 2005)."""
+    n = len(lab)
+    c1 = np.vstack([np.zeros(3), np.cumsum(lab, 0)])
+    c2 = np.r_[0.0, np.cumsum((lab ** 2).sum(1))]
+    F = np.full(n + 1, np.inf)
+    F[0] = -beta
+    last = np.zeros(n + 1, int)
+    for t in range(1, n + 1):
+        s0 = np.arange(t)
+        cnt = t - s0
+        sse = (c2[t] - c2[s0]) - ((c1[t] - c1[s0]) ** 2).sum(1) / cnt
+        cost = F[s0] + sse + beta
+        j = int(np.argmin(cost))
+        F[t], last[t] = cost[j], s0[j]
+    out, t = [], n
+    while t > 0:
+        out.append(int(last[t]))
+        t = last[t]
+    return out[::-1]
+
+
+def room_style(walls, px):
+    """One wall style from all walls: (profile (rows, 3) colour per texture row, seamless px x px texture tile
+    (residual around the profile), stats dict). walls: [(image, clean mask)], all of the same height.
+    The style is the room's dominant one: the look shared by the most walls (seen area breaks ties), and every
+    wall that looks like it. An accent wall (dark acoustic panels, a feature colour) is left out instead of
+    averaged into a muddy mix - even when it is the wall the photos point at most."""
+    walls = [w for w in walls if w[1].sum() >= px * px]
+    if not walls:
+        return None
+    lab = [srgb_to_lab(np.median(img[m], axis=0)[None])[0] for img, m in walls]
+    near = [[j for j in range(len(walls)) if np.linalg.norm(lab[i] - lab[j]) < STYLE_SAME_DE] for i in range(len(walls))]
+    best = max(range(len(walls)), key=lambda i: (len(near[i]), sum(walls[j][1].sum() for j in near[i])))
+    walls = [walls[j] for j in near[best]]
+    rows = walls[0][0].shape[0]
+    med = np.full((rows, 3), np.nan)
+    for r in range(rows):
+        # Median within each wall (robust to a poster), then every wall an equal vote: walls lit differently in
+        # the photos average out instead of the wall seen most deciding the colour.
+        per_wall = [np.median(img[r][m[r]], axis=0) for img, m in walls if m[r].sum() >= max(2, px // 4)]
+        if per_wall:
+            med[r] = np.mean(per_wall, axis=0)
+    known = np.isfinite(med[:, 0])
+    if known.sum() < max(2, rows // 20):
+        return None
+    for c in range(3):  # heights nobody saw continue from the nearest heights that were seen
+        med[:, c] = np.interp(np.arange(rows), np.flatnonzero(known), med[known, c])
+    # Flat bands (white wall, trim, wainscot): the best piecewise-constant fit of the colour over height, where a
+    # new band must explain more than BAND_DE over half a block. A trim line (strong, thin) gets its own band;
+    # noise between heights (rows seen by different photos) does not, so every wall is smooth.
+    med = ndimage.median_filter(med, size=(max(3, px // 8) | 1, 1), mode="nearest")
+    ds = max(1, px // 16)
+    lab = srgb_to_lab(med)
+    n = rows // ds
+    starts = _bands(lab[:n * ds].reshape(n, ds, 3).mean(1), BAND_DE ** 2 * (px / 2) / ds)
+    bounds = [b * ds for b in starts] + [rows]
+    out = np.empty_like(med)
+    for a, b in zip(bounds[:-1], bounds[1:]):
+        out[a:b] = np.median(med[a:b], axis=0)
+    med = out
+    profile = ndimage.gaussian_filter1d(med, max(1.0, px / 32), axis=0, mode="nearest").astype(np.float32)
+    prof_lab = srgb_to_lab(profile)
+    cands = []
+    for img, m in walls:
+        frac = ndimage.uniform_filter(m.astype(np.float32), px, mode="constant")
+        for y in range(0, img.shape[0] - px + 1, max(1, px // 2)):
+            for x in range(0, img.shape[1] - px + 1, max(1, px // 2)):
+                if frac[y + px // 2, x + px // 2] >= 0.97:
+                    patch = img[y:y + px, x:x + px]
+                    # Only bare surface: no thermostat, outlet or poster (pixels far from the wall at that height).
+                    if (_de(srgb_to_lab(patch), prof_lab[y:y + px, None, :]) > ITEM_DE).mean() > 0.02:
+                        continue
+                    res = patch - profile[y:y + px, None, :]
+                    # Only fine grain: the patch's own brightness and slow gradients (its photo's lighting) would
+                    # repeat as stripes once tiled.
+                    cands.append(res - ndimage.gaussian_filter(res, (px / 4, px / 4, 0), mode="reflect"))
+    if cands:
+        energy = np.array([np.std(c @ np.array([0.299, 0.587, 0.114])) for c in cands])
+        # The surface's own grain: from the smoother part of the candidates, so edges and shading do not win.
+        tile = cands[int(np.argmin(np.abs(energy - np.percentile(energy, 30))))].astype(np.float32)
+        # Seamless: cross-fade with itself shifted half a block, weighted towards the original in the middle.
+        t = np.sin(np.pi * (np.arange(px) + 0.5) / px) ** 2
+        wy, wx = t[:, None, None], t[None, :, None]
+        half = px // 2
+        tile = wx * tile + (1 - wx) * np.roll(tile, half, axis=1)
+        tile = wy * tile + (1 - wy) * np.roll(tile, half, axis=0)
+        grain = float(np.percentile(energy, 30))
+    else:
+        tile, grain = np.zeros((px, px, 3), np.float32), 0.0
+    spread = float(np.percentile(_de(prof_lab, np.median(prof_lab, axis=0)), 95))
+    return profile, tile, {"height_spread": spread, "grain": grain, "patches": len(cands), "walls": len(walls)}
 
 
 def _lab_sample(rgb):

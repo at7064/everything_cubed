@@ -41,8 +41,9 @@ def main(argv=None):
     ap.add_argument("--vggt-model", default="facebook/VGGT-1B-Commercial")
     ap.add_argument("--depth-model", default="depth-anything/Depth-Anything-V2-Metric-Indoor-Base-hf")
     ap.add_argument("--seg-model", default="nvidia/segformer-b5-finetuned-ade-640-640")
-    ap.add_argument("--wall-detail", default="pattern", choices=["pattern", "items", "photo", "none"],
-                    help="pattern (default): plain walls are blocks, patterned walls get their pattern on every block; "
+    ap.add_argument("--wall-detail", default="style", choices=["style", "pattern", "items", "photo", "none"],
+                    help="style (default): one wall style for the whole room on every wall; "
+                         "pattern: plain walls are blocks, patterned walls get their own pattern on every block; "
                          "items: plain walls + things hanging on them; photo: full photos; none: blocks only")
     ap.add_argument("--texture-px", type=int, help="texture pixels per block (default 64 for items, 128 for photo)")
     ap.add_argument("--save-cloud", action="store_true", help="also write the labelled point cloud (.npz)")

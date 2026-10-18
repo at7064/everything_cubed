@@ -36,7 +36,15 @@ Then `roomplan.py`:
    completely. Frames are lit per entity and can never blend with smoothly lit blocks, so they are not used
    for plain paint. Players can punch the frames off and break the blocks.
 
-   Each wall is then judged **plain** or **patterned** (`--wall-detail pattern`, the default). A plain wall
+   **Room style** (`--wall-detail style`, the default): one wall style for the whole room, so every wall
+   matches. It is the look shared by the most walls (an accent wall, such as dark acoustic panels, is left
+   out rather than averaged in): its colour at each height is the median over all clean wall pixels of those
+   walls, posterised into a few flat bands (a white wall, a wood trim line, a wainscot) by an optimal
+   piecewise-constant fit, so noise between heights disappears. A block-sized patch of the surface's own fine
+   grain (no outlets or posters, lighting removed) is made seamless and tiled over it. Every wall gets this same
+   picture on maps; a room with neither bands nor grain is built as plain blocks.
+
+   With `--wall-detail pattern`, each wall is instead judged **plain** or **patterned** on its own. A plain wall
    is built as above: real blocks plus framed wall items. A patterned wall (stone, brick, panelling,
    wallpaper) gets a map on every block: the photo where a camera saw it well, and everywhere else patches of
    that same surface grown outward, brightness-matched and blended at the seams (patch-based filling in the
