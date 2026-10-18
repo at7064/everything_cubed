@@ -17,13 +17,17 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Mode {@code spectate}: the phone streams LiDAR frames continuously (about 5 a second) and the world around the
- * player follows the real room live. Frames go to {@code spectate_analyzer.py}, a worker process that runs the
+ * Mode {@code spectate}: starts from a room the player has scanned and built ({@code folder} in {@code begin}, their
+ * last build). The phone, relocalised to that scan, streams LiDAR frames continuously (about 5 a second) and the
+ * inside of the house follows the real room live. Frames go to {@code spectate_analyzer.py}, a worker process that runs the
  * LiDAR build's pipeline per frame and answers each with the block changes it is confident about and where people
  * are. Only the newest frame waits while the worker is busy, so the world never falls behind the phone.
  * Ends with {@code end} from the phone, a dropped connection or {@code /everything_cubed spectate stop}.
@@ -32,8 +36,9 @@ public final class SpectateSession implements StreamSession {
 	private static final Map<UUID, SpectateSession> ACTIVE = new ConcurrentHashMap<>();
 
 	private final PhoneConnection phone;
-	private final Process worker;
-	private final DataOutputStream toWorker;
+	/** Started on the server thread once the build is found; frames before that are dropped. */
+	private volatile Process worker;
+	private volatile DataOutputStream toWorker;
 	private final Object lock = new Object();
 	/** The newest frame not yet sent, while the worker works on the previous one. */
 	private StreamMessage waiting;
@@ -53,14 +58,9 @@ public final class SpectateSession implements StreamSession {
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> stop(handler.getPlayer().getUUID(), "you left the game"));
 	}
 
-	SpectateSession(PhoneConnection phone, StreamMessage begin) throws IOException {
+	SpectateSession(PhoneConnection phone, StreamMessage begin) {
 		this.phone = phone;
-		Double scale = begin.header().has("scale") && !begin.header().get("scale").isJsonNull()
-				? Math.max(0.5, Math.min(4.0, begin.header().get("scale").getAsDouble())) : null;
-		this.worker = AnalyzerRunner.startSpectate(scale);
-		this.toWorker = new DataOutputStream(new BufferedOutputStream(worker.getOutputStream(), 1 << 16));
-		thread("everything_cubed-spectate-out", this::readUpdates);
-		thread("everything_cubed-spectate-log", this::readLog);
+		String folder = begin.string("folder", "");
 		phone.onServer(p -> {
 			if (p.isEmpty()) {
 				phone.status("error", "You are not in the game; join it, then start spectating again.");
@@ -68,15 +68,43 @@ public final class SpectateSession implements StreamSession {
 				return;
 			}
 			ServerPlayer player = p.get();
+			Optional<EverythingCubedCommand.Built> built = EverythingCubedCommand.lastBuild(player.getUUID())
+					.filter(b -> folder.isEmpty() || b.plan().getParent().getFileName().toString().equals(folder));
+			if (built.isEmpty()) {
+				phone.status("error", "Spectate starts from a room you have scanned and built: finish a scan and wait for "
+						+ "\"Built a ... house\" first.");
+				close("there is no built scan to spectate", true);
+				return;
+			}
 			SpectateSession old = ACTIVE.put(player.getUUID(), this);
 			if (old != null) old.close("a new spectate session started", true);
 			if (closed) return;
-			world = new SpectateWorld(player);
-			player.sendSystemMessage(Component.literal("Spectating your phone's view. Hold still for the initial scan; "
-					+ "/everything_cubed spectate stop to exit.").withStyle(ChatFormatting.AQUA));
+			SpectateWorld w = new SpectateWorld(player, built.get());
+			try {
+				Path baseline = built.get().plan().resolveSibling("spectate_baseline.json");
+				Files.writeString(baseline, w.baseline().toString());
+				startWorker(built.get().plan(), baseline);
+			} catch (IOException e) {
+				EverythingCubed.LOGGER.warn("Could not start spectating", e);
+				phone.status("error", "Could not start the spectate analyzer: " + e.getMessage());
+				world = w;   // so close() gives the player their game mode back
+				close("the analyzer could not start", true);
+				return;
+			}
+			world = w;
+			player.sendSystemMessage(Component.literal("Spectating " + built.get().plan().getParent().getFileName()
+					+ ". Point the phone at the room; /everything_cubed spectate stop to exit.").withStyle(ChatFormatting.AQUA));
+			phone.send(StreamMessage.of("ready").with("mode", "spectate"));
 		});
-		phone.send(StreamMessage.of("ready").with("mode", "spectate"));
-		EverythingCubed.LOGGER.info("Spectate started for {}", phone.device());
+		EverythingCubed.LOGGER.info("Spectate requested by {} for '{}'", phone.device(), folder);
+	}
+
+	private void startWorker(Path plan, Path baseline) throws IOException {
+		Process p = AnalyzerRunner.startSpectate(plan, baseline);
+		toWorker = new DataOutputStream(new BufferedOutputStream(p.getOutputStream(), 1 << 16));
+		worker = p;
+		thread("everything_cubed-spectate-out", this::readUpdates);
+		thread("everything_cubed-spectate-log", this::readLog);
 	}
 
 	/** Ends the player's spectate session, if there is one. Server thread: the player is restored right away. */
@@ -89,7 +117,7 @@ public final class SpectateSession implements StreamSession {
 
 	@Override
 	public void onMessage(StreamMessage msg) throws IOException {
-		if (closed || !msg.type().equals("frame")) return;
+		if (closed || worker == null || !msg.type().equals("frame")) return;
 		synchronized (lock) {
 			if (workerBusy) {
 				waiting = msg;   // an older waiting frame is dropped: only the newest matters
@@ -181,10 +209,10 @@ public final class SpectateSession implements StreamSession {
 			waiting = null;
 		}
 		try {
-			toWorker.close();
+			if (toWorker != null) toWorker.close();
 		} catch (IOException ignored) {
 		}
-		worker.destroy();
+		if (worker != null) worker.destroy();
 		phone.send(StreamMessage.of("stopped").with("text", "Spectating ended: " + why + "."));
 		if (onServerThread) finishWorld(why);
 		else phone.onServer(p -> finishWorld(why));

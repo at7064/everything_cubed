@@ -135,17 +135,21 @@ public final class AnalyzerRunner {
 	}
 
 	/**
-	 * Starts the spectate worker ({@code spectate_analyzer.py}): it reads phone frames on stdin and writes one JSON
-	 * line of block changes per frame on stdout; stderr is its log. Same Python as the analyzer.
+	 * Starts the spectate worker ({@code spectate_analyzer.py}) for a built scan: {@code plan} is its plan.json, and
+	 * {@code baseline} lists the solid blocks inside the house now. It reads phone frames on stdin and writes one
+	 * JSON line of block changes per frame on stdout; stderr is its log. Same Python as the analyzer.
 	 */
-	public static Process startSpectate(Double scale) throws IOException {
+	public static Process startSpectate(Path plan, Path baseline) throws IOException {
 		Path scripts = unpackScripts();
 		List<String> cmd = new ArrayList<>();
 		cmd.add(config().get("python").getAsString());
 		cmd.add("-u");
 		cmd.add(scripts.resolve("spectate_analyzer.py").toString());
+		cmd.add("--plan");
+		cmd.add(plan.toString());
+		cmd.add("--baseline");
+		cmd.add(baseline.toString());
 		minecraftJar().ifPresent(j -> { cmd.add("--mc-jar"); cmd.add(j.toString()); });
-		if (scale != null) { cmd.add("--scale"); cmd.add(Double.toString(scale)); }
 		EverythingCubed.LOGGER.info("Starting spectate worker: {}", String.join(" ", cmd));
 		return new ProcessBuilder(cmd).directory(scripts.toFile()).start();
 	}

@@ -1,20 +1,23 @@
 package com.dubhacks.everything_cubed.stream;
 
+import com.dubhacks.everything_cubed.build.FurnitureInteractions;
 import com.dubhacks.everything_cubed.build.HouseBuilder;
 import com.dubhacks.everything_cubed.build.UndoLog;
+import com.dubhacks.everything_cubed.command.EverythingCubedCommand;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.npc.villager.Villager;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayDeque;
@@ -24,14 +27,14 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * The game side of one spectate session, used on the server thread only. Puts the player into spectator mode
- * (so nothing they do can disturb the mirrored blocks), applies the worker's block changes a few thousand per tick,
- * and shows the people the phone sees as villagers. {@link #finish()} gives the player their game mode and place
- * back; the mirrored blocks stay and {@code /everything_cubed undo} reverts them.
+ * The game side of one spectate session, on a room that was scanned and built (the build is the starting state),
+ * used on the server thread only. Puts the player into spectator mode (so nothing they do can disturb the mirrored
+ * blocks), applies the worker's changes inside the house a few thousand per tick, and shows the people the phone
+ * sees as villagers. {@link #finish()} gives the player their game mode and place back; the changes stay and
+ * {@code /everything_cubed undo} reverts them.
  *
- * <p>The worker's coordinates are blocks: y = 0 is the floor block, +z is where the phone looked first, +x is its
- * left. They are laid out from the player's position and facing when spectating started, so the phone's spot is
- * the player's spot and its view is theirs.
+ * <p>The worker's coordinates are the plan's: interior blocks x in [0, W), z in [0, D), y in [1, H], from the
+ * build's origin.
  */
 final class SpectateWorld {
 	static final String TAG = "everything_cubed_spectate";
@@ -40,12 +43,10 @@ final class SpectateWorld {
 
 	private final ServerLevel level;
 	private final ServerPlayer player;
+	private final EverythingCubedCommand.Built build;
 	private final GameType previousMode;
 	private final Vec3 returnPos;
 	private final float returnYaw, returnPitch;
-	private final double ox, oz;
-	private final int floorY;
-	private final Direction forward, left;
 	private final UndoLog undo;
 	private final ArrayDeque<Change> pending = new ArrayDeque<>();
 	private final Map<Integer, Villager> people = new HashMap<>();
@@ -55,18 +56,14 @@ final class SpectateWorld {
 	private record Change(BlockPos pos, String block) {
 	}
 
-	SpectateWorld(ServerPlayer player) {
+	SpectateWorld(ServerPlayer player, EverythingCubedCommand.Built build) {
 		this.player = player;
-		this.level = player.level();
+		this.build = build;
+		this.level = build.level();
 		this.previousMode = player.gameMode();
 		this.returnPos = player.position();
 		this.returnYaw = player.getYRot();
 		this.returnPitch = player.getXRot();
-		this.ox = player.getX();
-		this.oz = player.getZ();
-		this.floorY = player.blockPosition().getY() - 1;   // like build: the floor is level with your feet
-		this.forward = player.getDirection();
-		this.left = forward.getCounterClockWise();          // facing south, east is on your left
 		this.undo = new UndoLog(level);
 		player.setGameMode(GameType.SPECTATOR);
 	}
@@ -83,9 +80,34 @@ final class SpectateWorld {
 		return placed;
 	}
 
-	private Vec3 toWorld(double x, double y, double z) {
-		return new Vec3(ox + forward.getStepX() * z + left.getStepX() * x, floorY + y,
-				oz + forward.getStepZ() * z + left.getStepZ() * x);
+	/**
+	 * The blocks inside the house that hold something now, [[x, y, z], ...] in plan coordinates: solid blocks and
+	 * blocks with a furniture model in them (a bin or a monitor has no real block). The worker starts from this.
+	 */
+	JsonArray baseline() {
+		Set<BlockPos> solid = new HashSet<>();
+		BlockPos o = build.origin();
+		for (int x = 0; x < build.w(); x++)
+			for (int y = 1; y <= build.h(); y++)
+				for (int z = 0; z < build.d(); z++) {
+					BlockState s = level.getBlockState(o.offset(x, y, z));
+					if (!s.isAir() && !s.is(Blocks.LIGHT)) solid.add(new BlockPos(x, y, z));
+				}
+		AABB inside = new AABB(Vec3.atLowerCornerOf(o.offset(0, 1, 0)), Vec3.atLowerCornerOf(o.offset(build.w(), build.h() + 1, build.d())));
+		for (Display e : level.getEntitiesOfClass(Display.class, inside)) {
+			BlockPos p = e.blockPosition().subtract(o);
+			if (p.getX() >= 0 && p.getX() < build.w() && p.getY() >= 1 && p.getY() <= build.h() && p.getZ() >= 0 && p.getZ() < build.d())
+				solid.add(p);
+		}
+		JsonArray out = new JsonArray();
+		for (BlockPos p : solid) {
+			JsonArray c = new JsonArray();
+			c.add(p.getX());
+			c.add(p.getY());
+			c.add(p.getZ());
+			out.add(c);
+		}
+		return out;
 	}
 
 	/** Queues one worker update: {@code changes} [[x, y, z, block id], ...] and {@code people} [{id, x, y, z}]. */
@@ -94,8 +116,8 @@ final class SpectateWorld {
 		if (changes != null)
 			for (JsonElement e : changes) {
 				JsonArray c = e.getAsJsonArray();
-				Vec3 p = toWorld(c.get(0).getAsInt() + 0.5, c.get(1).getAsInt(), c.get(2).getAsInt() + 0.5);
-				pending.add(new Change(BlockPos.containing(p), c.get(3).getAsString()));
+				pending.add(new Change(build.origin().offset(c.get(0).getAsInt(), c.get(1).getAsInt(), c.get(2).getAsInt()),
+						c.get(3).getAsString()));
 			}
 		JsonArray ppl = msg.getAsJsonArray("people");
 		if (ppl != null) people(ppl);
@@ -105,8 +127,10 @@ final class SpectateWorld {
 	void tick() {
 		for (int n = 0; n < BLOCKS_PER_TICK && !pending.isEmpty(); n++) {
 			Change c = pending.poll();
-			BlockState s = states.computeIfAbsent(c.block(),
-					id -> id.equals("minecraft:air") ? Blocks.AIR.defaultBlockState() : HouseBuilder.first(id));
+			boolean air = c.block().equals("minecraft:air");
+			BlockState s = states.computeIfAbsent(c.block(), id -> air ? Blocks.AIR.defaultBlockState() : HouseBuilder.first(id));
+			// A piece of furniture that is gone (or that something new now stands in) goes as a whole.
+			FurnitureInteractions.removeModelsIn(level, c.pos());
 			if (level.getBlockState(c.pos()) == s) continue;
 			undo.remember(c.pos());
 			level.setBlock(c.pos(), s, Block.UPDATE_CLIENTS);
@@ -116,11 +140,12 @@ final class SpectateWorld {
 
 	private void people(JsonArray list) {
 		Set<Integer> seen = new HashSet<>();
+		BlockPos o = build.origin();
 		for (JsonElement e : list) {
 			JsonObject p = e.getAsJsonObject();
 			int id = p.get("id").getAsInt();
 			seen.add(id);
-			Vec3 at = toWorld(p.get("x").getAsDouble(), p.get("y").getAsDouble(), p.get("z").getAsDouble());
+			Vec3 at = new Vec3(o.getX() + p.get("x").getAsDouble(), o.getY() + p.get("y").getAsDouble(), o.getZ() + p.get("z").getAsDouble());
 			Villager v = people.get(id);
 			if (v == null || v.isRemoved()) {
 				v = new Villager(EntityTypes.VILLAGER, level);
@@ -129,7 +154,7 @@ final class SpectateWorld {
 				v.setNoGravity(true);
 				v.setPermanentlyInvulnerable(true);
 				v.addTag(TAG);
-				v.snapTo(at.x, at.y, at.z, player.getYRot() + 180, 0);   // facing the phone until they move
+				v.snapTo(at.x, at.y, at.z, 0, 0);
 				level.addFreshEntity(v);
 				people.put(id, v);
 				continue;

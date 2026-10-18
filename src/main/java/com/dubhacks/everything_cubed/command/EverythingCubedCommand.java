@@ -28,6 +28,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.IdentityHashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -48,6 +53,18 @@ public final class EverythingCubedCommand {
 	private static final AtomicBoolean BUSY = new AtomicBoolean();
 	private static final int MAX_UNDO = 5;
 	private static final Deque<UndoLog> HISTORY = new ArrayDeque<>();
+	/** Each player's last build, for spectate. */
+	private static final Map<UUID, Built> LAST = new ConcurrentHashMap<>();
+	private static final Map<UndoLog, UUID> BUILT_BY = new IdentityHashMap<>();
+
+	/** A build in the world: the plan file it came from and where its interior (0, 1, 0) block is, minus (0, 1, 0). */
+	public record Built(ServerLevel level, BlockPos origin, Path plan, int w, int d, int h) {
+	}
+
+	/** The player's last build, if it is still there (not undone). */
+	public static Optional<Built> lastBuild(UUID player) {
+		return Optional.ofNullable(LAST.get(player));
+	}
 
 	private EverythingCubedCommand() {
 	}
@@ -99,7 +116,8 @@ public final class EverythingCubedCommand {
 		WORKER.submit(() -> {
 			try {
 				JsonObject plan = loadPlan(src, input, scale);
-				server.execute(() -> build(src, level, at, facing, plan));
+				Path planFile = Files.isRegularFile(input) ? input : input.resolve("plan.json");
+				server.execute(() -> build(src, level, at, facing, plan, planFile));
 			} catch (Exception ex) {
 				EverythingCubed.LOGGER.error("everything_cubed failed", ex);
 				server.execute(() -> src.sendFailure(Component.literal("everything_cubed failed: " + ex.getMessage())));
@@ -127,7 +145,7 @@ public final class EverythingCubedCommand {
 		return AnalyzerRunner.analyze(input, scale, line -> server.execute(() -> progress(src, line)));
 	}
 
-	private static void build(CommandSourceStack src, ServerLevel level, BlockPos at, Direction facing, JsonObject plan) {
+	private static void build(CommandSourceStack src, ServerLevel level, BlockPos at, Direction facing, JsonObject plan, Path planFile) {
 		try {
 			JsonObject size = plan.getAsJsonObject("size");
 			int w = size.get("x").getAsInt(), d = size.get("z").getAsInt();
@@ -138,6 +156,11 @@ public final class EverythingCubedCommand {
 			BlockPos origin = new BlockPos(cx - w / 2, at.getY() - 1, cz - d / 2);
 			UndoLog log = new HouseBuilder(level, origin, plan).build();
 			remember(log);
+			if (src.getEntity() instanceof ServerPlayer p) {
+				Built b = new Built(level, origin, planFile, w, d, size.get("y").getAsInt());
+				LAST.put(p.getUUID(), b);
+				BUILT_BY.put(log, p.getUUID());
+			}
 			JsonObject m = plan.getAsJsonObject("metres");
 			String metres = m == null ? "" : String.format(" (room %.1f x %.1f m)", m.get("x").getAsDouble(), m.get("z").getAsDouble());
 			src.sendSuccess(() -> Component.literal("Built a " + w + " x " + d
@@ -172,6 +195,8 @@ public final class EverythingCubedCommand {
 			return 0;
 		}
 		log.revert();
+		UUID by = BUILT_BY.remove(log);
+		if (by != null) LAST.remove(by);   // that build is gone: nothing to spectate
 		ctx.getSource().sendSuccess(() -> Component.literal("Reverted " + log.size() + " blocks."), true);
 		return 1;
 	}
