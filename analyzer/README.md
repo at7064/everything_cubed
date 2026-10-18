@@ -2,6 +2,8 @@
 
 Turns a handful of photos of one room into `plan.json`, which the Everything Cubed mod builds.
 The mod runs this automatically; you only need to install the Python environment once.
+Every normal analysis also writes a standalone `view.html` beside `plan.json`, including scans started from
+Minecraft. Open it in a browser to rotate the room through a full vertical orbit.
 
 ## Video and LiDAR to 3D
 

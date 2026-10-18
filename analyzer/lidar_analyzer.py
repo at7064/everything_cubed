@@ -630,7 +630,10 @@ def main(argv=None):
             traceback.print_exc()
             log(f"[tex] wall pictures failed ({ex_}); building with plain wall blocks")
     out.write_text(json.dumps(plan, indent=1))
+    from plan_viewer import write_viewer
+    write_viewer(plan, out.with_name("view.html"), opts.mesh_out)
     log(f"[analyzer] wrote {out} in {time.time() - t0:.0f}s")
+    log(f"[analyzer] 3D viewer: {out.with_name('view.html')}")
 
 
 if __name__ == "__main__":

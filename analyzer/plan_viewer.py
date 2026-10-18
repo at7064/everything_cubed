@@ -171,7 +171,7 @@ function draw(){ctx.clearRect(0,0,innerWidth,innerHeight);ctx.fillStyle='#111820
  polys.sort((a,b)=>b.depth-a.depth);for(let f of polys){ctx.globalAlpha=f.alpha;ctx.beginPath();ctx.moveTo(f.pp[0][0],f.pp[0][1]);for(let p of f.pp.slice(1))ctx.lineTo(p[0],p[1]);ctx.closePath();ctx.fillStyle=f.color;ctx.fill();ctx.strokeStyle='#08101655';ctx.lineWidth=.35;ctx.stroke()}ctx.globalAlpha=1;
  if(hover[0]>=0){let best=null,dist=30;for(let p of hits){let d=Math.hypot(p[0]-hover[0],p[1]-hover[1]);if(d<dist){dist=d;best=p}}tip.style.display=best?'block':'none';if(best){tip.textContent=best[2];tip.style.left=(hover[0]+14)+'px';tip.style.top=(hover[1]+14)+'px'}}}
 canvas.addEventListener('pointerdown',e=>{drag=true;last=[e.clientX,e.clientY];canvas.setPointerCapture(e.pointerId)});
-canvas.addEventListener('pointerup',()=>drag=false);canvas.addEventListener('pointermove',e=>{hover=[e.clientX,e.clientY];if(drag){yaw+=(e.clientX-last[0])*.008;pitch=Math.max(.1,Math.min(1.45,pitch+(e.clientY-last[1])*.008));last=[e.clientX,e.clientY]}draw()});
+canvas.addEventListener('pointerup',()=>drag=false);canvas.addEventListener('pointermove',e=>{hover=[e.clientX,e.clientY];if(drag){yaw+=(e.clientX-last[0])*.008;pitch+=(e.clientY-last[1])*.008;last=[e.clientX,e.clientY]}draw()});
 canvas.addEventListener('wheel',e=>{e.preventDefault();zoom=Math.max(2,Math.min(100,zoom*Math.exp(e.deltaY*.001)));draw()},{passive:false});
 for(let id of ['walls','objects','alpha'])document.getElementById(id).addEventListener('input',draw);
 mode.addEventListener('change',()=>{if(mode.value==='mesh'&&scene.mesh){let [a,b]=scene.mesh.bounds;center=a.map((v,i)=>(v+b[i])/2);zoom=Math.max(...b.map((v,i)=>v-a[i]))*1.7}
