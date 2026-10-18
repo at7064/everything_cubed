@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from mesh_export import mesh_arrays, write_ply
+from photo_texture import photo_scene, write_photo_viewer
 from plan_viewer import scene_from_plan, write_obj, write_viewer
 from solid_export import write_solid
 
@@ -21,6 +22,8 @@ def test_export():
     view["rgb"][0, 0] = [255, 0, 0]
     vertices, faces = mesh_arrays([view], max_side=20)
     assert len(vertices) < 20 and len(faces) < 24
+    view["mask"][1, 1] = True
+    vertices, faces = mesh_arrays([view], max_side=20)
     plan = {"size": {"x": 3, "y": 3, "z": 2}, "floor": {"grid": [[0]*3 for _ in range(2)],
             "palette": ["minecraft:oak_planks"]}, "walls": {}, "wall_main": "minecraft:white_concrete",
             "openings": [{"type": "door", "side": "north", "u": 1, "w": 1, "y": 0, "h": 2},
@@ -39,6 +42,18 @@ def test_export():
                                                ("r", "u1"), ("g", "u1"), ("b", "u1"), ("pad", "u1")]))
         assert len(packed) == len(faces) * 3
         assert np.any((packed["r"] == 255) & (packed["g"] == 0))
+        from PIL import Image
+        photo = root / "frame_0001.jpg"
+        Image.fromarray(view["rgb"]).save(photo)
+        textured = photo_scene(ply, [photo], max_faces_per_frame=100)
+        assert textured["batches"][0]["grid"] == [5, 4]
+        assert 0 < textured["total_faces"] <= len(faces)
+        assert base64.b64decode(textured["batches"][0]["coarse_b64"])
+        photo_vertices = np.frombuffer(base64.b64decode(textured["batches"][0]["vertices_b64"]),
+                                       dtype="<f4").reshape(-1, 5)
+        assert np.all((photo_vertices[:, 3:] > 0) & (photo_vertices[:, 3:] < 1))
+        write_photo_viewer(ply, [photo], root / "photo_view.html", max_faces_per_frame=100)
+        assert "Original video frames" in (root / "photo_view.html").read_text()
         assert any(b[8] == "Fire Alarm" for b in scene["boxes"])
         assert all(p.is_file() for p in (ply, html, obj, obj.with_suffix(".mtl")))
         assert "Reconstructed surfaces" in html.read_text()

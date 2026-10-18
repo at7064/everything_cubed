@@ -18,11 +18,21 @@ The output contains `reconstruction.ply`, a full-resolution coloured triangle me
 `solid.ply`, a smoothed coloured surface that joins nearby points; `model.obj` and
 `model.mtl`, a simplified block room for Blender or other 3D editors; `plan.json`, the Minecraft build plan; and
 `view.html`, a standalone HTML viewer with orbit, zoom, and a switch between the room model and reconstructed
-surfaces. The HTML opens on the connected surface and draws vertex colours with WebGL. Open `view.html` directly in a browser. FFmpeg is used only to sample frames when the input is a video.
+surfaces. For videos and photo folders, `photo_view.html` maps cropped original frames onto the measured triangle
+lattices, with a combined view and a frame slider. The photo viewer uses WebGL for dense rendering and a smaller
+interactive Canvas preview when WebGL is unavailable. Both HTML files open directly in a browser. FFmpeg is used
+only to sample frames when the input is a video.
 Use `--frames 24` for more views, or `--perceptron` to detect additional small objects. A LiDAR `capture.json`
 uses its measured depths and camera poses; ordinary video is reconstructed from the sampled frames.
 Long videos run MapAnything in overlapping batches of six views, align the shared frames, and combine all views
 into one mesh. `--frames 64` uses the full supported frame count. For a detailed scan on a GPU with limited free memory, use `--model-resolution 728 --batch-views 3`. `--splat-radius 0.12` controls how far the smoothed surface reaches across gaps. Object labels are inferred from the original video frames and located by their reconstructed 3D pixels. A floor footprint mask lets Minecraft build alcoves and other non-rectangular outlines where the floor is sufficiently visible.
+
+For a higher quality video scan, record a sharp 4K clip while walking slowly around the room. Keep about 70% overlap
+between successive views, circle the room once at eye level, then make another pass showing floor, ceiling, corners,
+and close objects. Keep lighting, focus, and zoom steady. The modeller currently samples at most 64 frames, so a
+short deliberate clip gives better coverage than a long clip with repeated or blurred views. To preserve more photo
+detail in the textured viewer, raise `--max-width` (for example, `--max-width 2160` for portrait 4K video); the
+geometry still uses `--model-resolution` pixels on its longest side.
 
 ## Pipeline (all established open-source projects)
 
@@ -32,6 +42,7 @@ into one mesh. `--frames 64` uses the full supported frame count. For a detailed
 | Fallback reconstruction | [VGGT](https://github.com/facebookresearch/vggt) + [Depth Anything V2 Metric Indoor](https://huggingface.co/depth-anything/Depth-Anything-V2-Metric-Indoor-Base-hf) for scale |
 | What each pixel is (wall, floor, bed, window, door, sofa, ...) | [SegFormer-B5 fine-tuned on ADE20K](https://huggingface.co/nvidia/segformer-b5-finetuned-ade-640-640) via Hugging Face `transformers` |
 | Plane fitting, clustering, colour quantisation | scikit-learn (RANSAC, DBSCAN, KMeans), SciPy |
+| Photo-textured 3D view | Original frame crops mapped to the reconstructed per-frame triangle grid; WebGL with a Canvas fallback |
 
 Then `roomplan.py`:
 1. Fits the floor plane (gravity) and the dominant wall direction, so the room is axis-aligned.

@@ -58,6 +58,8 @@ def main(argv=None):
     ap.add_argument("--mesh-max-side", type=int, default=0, help="mesh downsampling limit; 0 retains all pixels")
     ap.add_argument("--splat-radius", type=float, default=0.12,
                     help="radius in metres used to join nearby reconstructed surfaces (default 0.12)")
+    ap.add_argument("--photo-faces", type=int, default=6000,
+                    help="textured triangles per frame in photo_view.html (default 6000)")
     ap.add_argument("--backend", choices=("auto", "arkit", "mapanything", "vggt"), default="auto")
     ap.add_argument("--device", help="torch device, e.g. cuda")
     ap.add_argument("--mc-jar", type=Path, help="Minecraft jar for block colour matching")
@@ -78,6 +80,8 @@ def main(argv=None):
         ap.error("--model-resolution must be between 224 and 1024")
     if not 0.02 <= opts.splat_radius <= 0.5:
         ap.error("--splat-radius must be between 0.02 and 0.5 metres")
+    if not 100 <= opts.photo_faces <= 50000:
+        ap.error("--photo-faces must be between 100 and 50000")
     out = (opts.out or source.with_name(source.stem + "_3d")).expanduser().resolve()
     if source.is_file() and source.suffix.lower() not in VIDEO_EXT:
         ap.error("input file must be a video; use a folder for photos or LiDAR captures")
@@ -109,9 +113,17 @@ def main(argv=None):
     from solid_export import write_solid
     nverts, nfaces = write_solid(out / "reconstruction.ply", out / "solid.ply", splat_radius=opts.splat_radius)
     print(f"[solid] wrote {out / 'solid.ply'}: {nverts} vertices, {nfaces} triangles", flush=True)
-    scene = write_viewer(plan, out / "view.html", out / "solid.ply")
+    photo_view = False
+    if not (images / "capture.json").exists():
+        from perception import list_images
+        from photo_texture import write_photo_viewer
+        write_photo_viewer(out / "reconstruction.ply", list_images(images), out / "photo_view.html",
+                           max_faces_per_frame=opts.photo_faces)
+        photo_view = True
+    scene = write_viewer(plan, out / "view.html", out / "solid.ply", photo_view=photo_view)
     write_obj(scene, out / "model.obj")
     print(f"[3d] {out / 'reconstruction.ply'}\n[3d] {out / 'solid.ply'}\n[3d] {out / 'view.html'}\n"
+          + (f"[3d] {out / 'photo_view.html'}\n" if photo_view else "") +
           f"[3d] {out / 'model.obj'}\n[3d] {plan_path}", flush=True)
 
 

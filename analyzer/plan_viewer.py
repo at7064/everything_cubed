@@ -163,15 +163,16 @@ HTML = r'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name
 canvas{display:block;width:100vw;height:100vh;cursor:grab;position:absolute;inset:0}canvas:active{cursor:grabbing}
 .panel{position:fixed;left:18px;top:18px;background:#17232ce8;border:1px solid #39505a;border-radius:12px;padding:16px;max-width:300px;box-shadow:0 8px 30px #0007}
 h1{font-size:17px;margin:0 0 7px}.muted{color:#acc0c7;font-size:12px;line-height:1.5}label{display:block;margin-top:12px}
-input[type=range]{width:100%}button{margin-top:9px;border:1px solid #5a7480;background:#243945;color:#eff;border-radius:7px;padding:7px 10px;cursor:pointer}
+input[type=range]{width:100%}button,a{margin-top:9px;border:1px solid #5a7480;background:#243945;color:#eff;border-radius:7px;padding:7px 10px;cursor:pointer;text-decoration:none;display:inline-block}
 #tip{position:fixed;pointer-events:none;background:#0d151bdb;padding:5px 8px;border-radius:6px;display:none}
 </style></head><body><canvas id="view"></canvas><canvas id="meshview" style="display:none"></canvas><div class="panel"><h1>Everything Cubed · 3D room</h1>
 <div id="stats" class="muted"></div><div class="muted">Drag to orbit · scroll to zoom · hover for names</div>
 <label>View <select id="mode"><option value="plan">Room model</option><option value="mesh">Reconstructed surfaces</option></select></label>
 <label><input id="walls" type="checkbox" checked> Show walls</label><label><input id="objects" type="checkbox" checked> Show objects</label>
 <label>Wall opacity <input id="alpha" type="range" min="0" max="100" value="40"></label>
-<button id="reset">Reset view</button></div><div id="tip"></div><script>
+<button id="reset">Reset view</button> <a id="photoLink" href="photo_view.html" style="display:none">Photo textures</a></div><div id="tip"></div><script>
 const scene = __SCENE__;
+if(scene.photo_view)document.getElementById('photoLink').style.display='inline-block';
 const canvas=document.getElementById('view'),ctx=canvas.getContext('2d'),tip=document.getElementById('tip');
 const meshCanvas=document.getElementById('meshview');let gl=null,meshProgram=null,meshCount=0;
 function shader(type,source){let s=gl.createShader(type);gl.shaderSource(s,source);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s}
@@ -217,9 +218,10 @@ document.getElementById('reset').onclick=()=>{yaw=-.65;pitch=.55;mode.dispatchEv
 </script></body></html>'''
 
 
-def write_viewer(plan, out, mesh_path=None):
+def write_viewer(plan, out, mesh_path=None, photo_view=False):
     scene = scene_from_plan(plan)
     scene["mesh"] = mesh_preview_from_ply(mesh_path)
+    scene["photo_view"] = photo_view
     encoded = json.dumps(scene, separators=(",", ":")).replace("<", "\\u003c")
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)

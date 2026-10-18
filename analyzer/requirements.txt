@@ -2,6 +2,7 @@
 numpy
 scipy
 scikit-image
+numba
 scikit-learn
 pillow
 torch
