@@ -116,13 +116,23 @@ def align_reconstruction(batch, reference, overlap=2):
     return float(np.median(error))
 
 
-def reconstruct_mapanything(paths, device, model_name, log, use_exif=True, batch_size=6, resolution=518):
+def reconstruct_mapanything(paths, device, model_name, log, use_exif=True, batch_size=6, resolution=518,
+                            low_gpu_memory=False):
     import torch
     from mapanything.models import MapAnything
     from mapanything.utils.image import load_images
 
     log(f"[recon] MapAnything ({model_name}) on {len(paths)} photo(s), device={device}")
-    model = MapAnything.from_pretrained(model_name).to(device)
+    model = MapAnything.from_pretrained(model_name)
+    if device == "cuda" and low_gpu_memory:
+        from accelerate import dispatch_model
+        device_map = {name: ("cpu" if name == "info_sharing" else "cuda")
+                      for name, _ in model.named_children()}
+        device_map["scale_token"] = "cuda"
+        model = dispatch_model(model, device_map=device_map)
+        log("[recon] CPU offload enabled for MapAnything sharing layers")
+    else:
+        model = model.to(device)
     if batch_size < 3:
         raise ValueError("MapAnything batch size must be at least 3")
     focals = [exif_focal_px(p) for p in paths] if use_exif else []
@@ -398,7 +408,8 @@ def reconstruct(paths, backend, device, opts, log):
                 return reconstruct_mapanything(paths, device, opts.mapanything_model, log,
                                                use_exif=not getattr(opts, "no_exif_camera", False),
                                                batch_size=getattr(opts, "batch_views", 6),
-                                               resolution=getattr(opts, "model_resolution", 518))
+                                               resolution=getattr(opts, "model_resolution", 518),
+                                               low_gpu_memory=getattr(opts, "low_gpu_memory", False))
             if b == "vggt":
                 return reconstruct_vggt(paths, device, opts.vggt_model, opts.depth_model, log)
         except ImportError as ex:
@@ -427,6 +438,60 @@ def segment(views, device, model_name, log, paths=None):
         seg = proc.post_process_semantic_segmentation(out, target_sizes=[v["rgb"].shape[:2]])[0]
         maps.append(seg.cpu().numpy().astype(np.int32))
     return maps, {int(k): v.strip().lower() for k, v in model.config.id2label.items()}
+
+
+def stabilize_upright_video(views, label_maps, id2label, log):
+    """Align an upright video's visible floors to one horizontal plane."""
+    floor_ids = [key for key, name in id2label.items() if name == "floor"]
+    if not floor_ids:
+        log("[recon] upright correction skipped: segmentation has no floor class")
+        return
+    normals, samples = [], []
+    for view, labels in zip(views, label_maps):
+        mask = np.isin(labels, floor_ids) & np.asarray(view["mask"])
+        points = np.asarray(view["points"])[mask]
+        points = points[np.isfinite(points).all(axis=1)]
+        points = points[::max(1, len(points) // 4000)]
+        samples.append(points if len(points) >= 200 else None)
+        if len(points) < 200:
+            continue
+        centre = np.median(points, axis=0)
+        _, singular, vt = np.linalg.svd(points - centre, full_matrices=False)
+        if singular[1] < 0.25 or singular[2] > 0.2 * singular[1]:
+            continue
+        up = vt[-1]
+        if np.dot(up, -np.asarray(view["cam2world"])[:3, 1]) < 0:
+            up = -up
+        normals.append(up)
+    if len(normals) < 3:
+        log("[recon] upright correction skipped: too few reliable floor planes")
+        return
+    up = np.median(normals, axis=0)
+    up /= np.linalg.norm(up)
+    target = np.array([0.0, 1.0, 0.0])
+    axis = np.cross(up, target)
+    sine, cosine = np.linalg.norm(axis), float(np.dot(up, target))
+    if sine > 1e-8:
+        axis /= sine
+        skew = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]],
+                         [-axis[1], axis[0], 0]])
+        rotation = np.eye(3) + sine * skew + (1 - cosine) * (skew @ skew)
+    else:
+        rotation = np.eye(3) if cosine > 0 else np.diag([1.0, -1.0, -1.0])
+    heights = np.full(len(views), np.nan)
+    for i, points in enumerate(samples):
+        if points is not None:
+            heights[i] = np.median(points @ rotation[1])
+    known = np.flatnonzero(np.isfinite(heights))
+    shifts = -np.interp(np.arange(len(views)), known, heights[known])
+    for view, shift in zip(views, shifts):
+        view["points"] = (np.asarray(view["points"]) @ rotation.T + [0, shift, 0]).astype(np.float32)
+        pose = np.asarray(view["cam2world"]).copy()
+        pose[:3, :3] = rotation @ pose[:3, :3]
+        pose[:3, 3] = rotation @ pose[:3, 3] + [0, shift, 0]
+        view["cam2world"] = pose
+    log(f"[recon] upright floor: {len(known)}/{len(views)} frames measured, "
+        f"vertical correction {shifts.min():.2f} to {shifts.max():.2f} m")
 
 
 # ----------------------------------------------------------------------------------- fusion

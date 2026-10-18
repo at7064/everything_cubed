@@ -63,6 +63,10 @@ def main(argv=None):
     ap.add_argument("--mesh-out", type=Path, help="write reconstructed coloured surface mesh as PLY")
     ap.add_argument("--mesh-max-side", type=int, default=0,
                     help="downsample each mesh view to this side length; 0 keeps every reconstructed pixel")
+    ap.add_argument("--upright-video", action="store_true",
+                    help="keep video reconstruction batches upright and at metric scale")
+    ap.add_argument("--low-gpu-memory", action="store_true",
+                    help="offload MapAnything sharing layers to CPU to reduce GPU memory use")
     ap.add_argument("--perceptron", action="store_true",
                     help="also detect every object with Perceptron Mk1.5 (sends the photos to api.perceptron.inc; people "
                          "found locally (SegFormer + a COCO person detector) are blurred first, best effort; key in "
@@ -96,11 +100,14 @@ def main(argv=None):
         views, metric, paths = reconstruct_tracked(opts.images, device, opts.mapanything_model, log)
     else:
         views, metric = reconstruct(paths, opts.backend, device, opts, log)
+    label_maps, id2label = segment(views, device, opts.seg_model, log, paths=paths)
+    if opts.upright_video:
+        from perception import stabilize_upright_video
+        stabilize_upright_video(views, label_maps, id2label, log)
     if opts.mesh_out:
         from mesh_export import write_ply
         vertices, faces = write_ply(views, opts.mesh_out, max_side=opts.mesh_max_side)
         log(f"[mesh] wrote {opts.mesh_out}: {vertices} vertices, {faces} triangles")
-    label_maps, id2label = segment(views, device, opts.seg_model, log, paths=paths)
     ade_to_category, detections = ADE_TO_CATEGORY, None
     if opts.perceptron:
         from perception import perceptron_pass

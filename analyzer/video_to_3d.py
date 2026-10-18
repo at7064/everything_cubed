@@ -62,6 +62,7 @@ def main(argv=None):
                     help="textured triangles per frame in photo_view.html (default 6000)")
     ap.add_argument("--backend", choices=("auto", "arkit", "mapanything", "vggt"), default="auto")
     ap.add_argument("--device", help="torch device, e.g. cuda")
+    ap.add_argument("--low-gpu-memory", action="store_true", help="offload model layers to CPU")
     ap.add_argument("--mc-jar", type=Path, help="Minecraft jar for block colour matching")
     ap.add_argument("--scale", type=float, help="blocks per metre")
     ap.add_argument("--perceptron", action="store_true", help="also detect small objects via the Perceptron API")
@@ -99,6 +100,8 @@ def main(argv=None):
             "--batch-views", str(opts.batch_views), "--model-resolution", str(opts.model_resolution),
             "--mesh-max-side", str(opts.mesh_max_side), "--backend", opts.backend,
             "--wall-detail", opts.wall_detail]
+    if source.is_file(): args += ["--upright-video"]
+    if opts.low_gpu_memory: args += ["--low-gpu-memory"]
     if opts.device: args += ["--device", opts.device]
     if opts.mc_jar: args += ["--mc-jar", str(opts.mc_jar)]
     if opts.scale is not None: args += ["--scale", str(opts.scale)]

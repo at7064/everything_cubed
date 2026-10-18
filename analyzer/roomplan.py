@@ -523,8 +523,32 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             if ncomp:
                 seen = labels == (1 + np.argmax(np.bincount(labels.ravel())[1:]))
             if seen.mean() >= 0.3 and seen.mean() < 0.97:
-                footprint = seen
-                log(f"[plan] traced non-rectangular floor: {int(seen.sum())}/{W * D} cells")
+                # Missing floor pixels often mean a bed or poor camera coverage.
+                # Cut out an alcove only when a vertical wall supports its edge.
+                wp = loc[wall_m]
+                supported = total_edges = 0
+                for row in range(D):
+                    for col in range(W):
+                        for dr, dc in ((0, 1), (1, 0)):
+                            rr, cc = row + dr, col + dc
+                            if rr >= D or cc >= W or seen[row, col] == seen[rr, cc]:
+                                continue
+                            total_edges += 1
+                            if dc:
+                                edge = room.xmin + (col + 1) / scale
+                                middle = room.zmin + (row + 0.5) / scale
+                                hit = (np.abs(wp[:, 0] - edge) < 0.12) & (np.abs(wp[:, 2] - middle) < 0.5 / scale)
+                            else:
+                                edge = room.zmin + (row + 1) / scale
+                                middle = room.xmin + (col + 0.5) / scale
+                                hit = (np.abs(wp[:, 2] - edge) < 0.12) & (np.abs(wp[:, 0] - middle) < 0.5 / scale)
+                            if hit.sum() >= 30 and np.ptp(np.percentile(wp[hit, 1], [10, 90])) > 0.8:
+                                supported += 1
+                if total_edges >= 2 and supported >= 2 and supported / total_edges >= 0.5:
+                    footprint = seen
+                    log(f"[plan] traced non-rectangular floor: {int(seen.sum())}/{W * D} cells")
+                else:
+                    log(f"[plan] kept flat wall outline: only {supported}/{total_edges} floor cut edges have wall support")
 
     # ---------------- walls (clustered jointly so the same paint maps to the same block everywhere)
     near = 0.35

@@ -595,6 +595,18 @@ def test_video_batch_alignment():
     assert error < 1e-5 and np.allclose(batch[0]["points"], target, atol=1e-5)
 
 
+def test_upright_video_floor():
+    xx, zz = np.meshgrid(np.linspace(-1, 1, 30), np.linspace(-1, 1, 20))
+    views, labels = [], []
+    for offset in (0.0, 0.3, -0.4, 0.5, -0.2):
+        points = np.stack([xx, np.full_like(xx, offset), zz], axis=-1).astype(np.float32)
+        views.append({"points": points, "mask": np.ones(xx.shape, bool), "cam2world": np.eye(4)})
+        labels.append(np.zeros(xx.shape, np.int32))
+    P.stabilize_upright_video(views, labels, {0: "floor"}, lambda _: None)
+    assert all(abs(np.median(v["points"][..., 1])) < 1e-5 for v in views)
+
+
+
 if __name__ == "__main__":
     real_post = REAL_POST = P._post
 
@@ -616,6 +628,7 @@ if __name__ == "__main__":
         test_exif_camera()
         test_hallway_templates()
         test_video_batch_alignment()
+        test_upright_video_floor()
         test_end_to_end(monkeypatch_post)
         test_plan_generic()
     finally:
