@@ -29,7 +29,10 @@ Then `roomplan.py`:
    lanterns, chandeliers hung from the ceiling, potted plants and paintings. Classroom and public-room things:
    whiteboards and chalkboards (their real size, white or green), exit signs high on the wall (a dim light),
    fire extinguishers low on the wall (heights follow NFPA 101 and NFPA 10), ceiling projectors aimed at the
-   whiteboard or screen wall, and floor fans. Things with no template yet (from
+   whiteboard or screen wall, and floor fans. The planner also builds wall clocks, curtains, bulletin boards,
+   projection screens, radiators, range hoods, mirrors and wall hooks; desk monitors, podiums, chair-desks,
+   chair stacks, ceiling fans, dressers, nightstands, pianos, showers and coat racks. Desk monitors are placed
+   on detected tables or desks. Things with no template yet (from
    `--perceptron`) become a plain box named after what was detected.
 6. Walls (`walltex.py`): every wall is resampled straight from the photos with the reconstructed cameras.
    Each pixel comes from the most head-on photo that shows the wall surface itself, not furniture in front

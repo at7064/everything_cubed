@@ -304,7 +304,8 @@ public class HouseBuilder {
 							if (claim(in[0], r + 1, in[1])) set(in[0], r + 1, in[1], first("black_concrete"));
 						}
 				}
-				case "whiteboard", "exit_sign", "fire_extinguisher" -> {
+				case "whiteboard", "exit_sign", "fire_extinguisher", "clock", "curtain", "mirror",
+						"bulletin_board", "projection_screen", "radiator", "range_hood", "wall_hooks" -> {
 					// Flat things on the wall: a model in the interior cells along it, its back against the wall.
 					int[] a = insideCell(side, u0), b = insideCell(side, u0 + w - 1);
 					int x0 = Math.min(a[0], b[0]), z0 = Math.min(a[1], b[1]);
@@ -321,6 +322,15 @@ public class HouseBuilder {
 							if (claim(a[0], y0 + 1, a[1]))
 								set(a[0], y0 + 1, a[1], Blocks.LIGHT.defaultBlockState().setValue(LightBlock.LEVEL, 6));
 						}
+						case "clock" -> FurnitureDesigns.wallClock(m, y0);
+						case "curtain" -> FurnitureDesigns.curtain(m, y0, y0 + Math.max(1, h),
+								first((o.has("color") ? o.get("color").getAsString() : "white") + "_wool", "white_wool"));
+						case "mirror" -> FurnitureDesigns.mirror(m, y0, y0 + Math.max(1, h));
+						case "bulletin_board" -> FurnitureDesigns.bulletinBoard(m, y0, y0 + Math.max(1, h));
+						case "projection_screen" -> FurnitureDesigns.projectionScreen(m, y0, y0 + Math.max(1, h));
+						case "radiator" -> FurnitureDesigns.radiator(m, y0, y0 + Math.max(1, h));
+						case "range_hood" -> FurnitureDesigns.rangeHood(m, y0);
+						case "wall_hooks" -> FurnitureDesigns.wallHooks(m, y0);
 						default -> FurnitureDesigns.fireExtinguisher(m, y0);
 					}
 					furnish(m, List.of());
@@ -389,6 +399,20 @@ public class HouseBuilder {
 					seat(x0, z0, 0.8f, 0.5f, furnish(m, List.of()));
 				}
 			}
+			case "student_desk" -> {
+				if (inside(x0, z0) && claim(x0, 1, z0)) {
+					FurnitureModel m = new FurnitureModel(x0, z0, 1, 1, 1, facing.getOpposite());
+					FurnitureDesigns.studentDesk(m, planks);
+					seat(x0, z0, 0.8f, 0.5f, furnish(m, List.of()));
+				}
+			}
+			case "chair_stack" -> {
+				if (inside(x0, z0) && claim(x0, 1, z0)) {
+					FurnitureModel m = new FurnitureModel(x0, z0, 1, 1, 2, facing);
+					FurnitureDesigns.chairStack(m, planks);
+					furnish(m, List.of());
+				}
+			}
 			case "sofa" -> {
 				// One row of stairs along the back of the footprint, each one a seat.
 				boolean rowAlongX = facing.getAxis() == Direction.Axis.Z;
@@ -439,16 +463,35 @@ public class HouseBuilder {
 					furnish(m, core);
 				}
 			}
-			case "cabinet", "wardrobe", "washer" -> {
+			case "cabinet", "dresser", "nightstand", "wardrobe", "washer" -> {
 				int height = Math.min(H, type.equals("wardrobe") ? Math.max(2, h) : h);
 				List<BlockPos> core = fill(x0, z0, w, d, height, with(Blocks.BARREL.defaultBlockState(), BlockStateProperties.FACING, facing));
 				if (core.size() == w * d * height) {
 					FurnitureModel m = new FurnitureModel(x0, z0, w, d, height, facing);
 					switch (type) {
 						case "cabinet" -> FurnitureDesigns.cabinet(m, planks, log);
+						case "dresser" -> FurnitureDesigns.dresser(m, planks);
+						case "nightstand" -> FurnitureDesigns.nightstand(m, planks);
 						case "wardrobe" -> FurnitureDesigns.wardrobe(m, planks, log);
 						default -> FurnitureDesigns.washer(m);
 					}
+					furnish(m, core);
+				}
+			}
+			case "podium" -> {
+				if (inside(x0, z0) && claim(x0, 1, z0)) {
+					BlockState lectern = with(first("lectern"), BlockStateProperties.HORIZONTAL_FACING, facing);
+					set(x0, 1, z0, lectern);
+					FurnitureModel m = new FurnitureModel(x0, z0, 1, 1, 1.2, facing);
+					FurnitureDesigns.podium(m, planks);
+					furnish(m, List.of(origin.offset(x0, 1, z0)));
+				}
+			}
+			case "piano" -> {
+				List<BlockPos> core = fill(x0, z0, w, d, 1, first("black_concrete"));
+				if (core.size() == w * d) {
+					FurnitureModel m = new FurnitureModel(x0, z0, w, d, 1.5, facing);
+					FurnitureDesigns.piano(m);
 					furnish(m, core);
 				}
 			}
@@ -530,6 +573,30 @@ public class HouseBuilder {
 							if (claim(x, y, z)) set(x, y, z, Blocks.BRICKS.defaultBlockState());
 			}
 			case "tv" -> fill(x0, z0, w, d, Math.min(2, h), first("black_concrete"));
+			case "monitor" -> {
+				int y = Math.max(2, Math.min(H, o.has("y") ? o.get("y").getAsInt() : 2));
+				if (inside(x0, z0) && claim(x0, y, z0)) {
+					FurnitureModel m = new FurnitureModel(x0, z0, 1, 1, 1.8, facing);
+					FurnitureDesigns.monitor(m);
+					furnish(m, List.of());
+				}
+			}
+			case "shower" -> {
+				List<BlockPos> core = fill(x0, z0, w, d, 1,
+						with(Blocks.WATER_CAULDRON.defaultBlockState(), BlockStateProperties.LEVEL_CAULDRON, 3));
+				if (core.size() == w * d) {
+					FurnitureModel m = new FurnitureModel(x0, z0, w, d, Math.max(2, h), facing);
+					FurnitureDesigns.shower(m);
+					furnish(m, core);
+				}
+			}
+			case "coat_rack" -> {
+				if (inside(x0, z0) && claim(x0, 1, z0)) {
+					FurnitureModel m = new FurnitureModel(x0, z0, 1, 1, Math.max(1.5, h), facing);
+					FurnitureDesigns.coatRack(m);
+					furnish(m, List.of());
+				}
+			}
 			case "lamp" -> {
 				if (inside(x0, z0) && claim(x0, 1, z0) && claim(x0, 2, z0)) {
 					FurnitureModel m = new FurnitureModel(x0, z0, 1, 1, 2, Direction.SOUTH);
@@ -573,6 +640,15 @@ public class HouseBuilder {
 					FurnitureDesigns.chandelier(m, y - 1, y - 1 + body, H);
 					furnish(m, List.of());
 					set(cx, y, cz, Blocks.LIGHT.defaultBlockState().setValue(LightBlock.LEVEL, LightBlock.MAX_LEVEL));
+				}
+			}
+			case "ceiling_fan" -> {
+				int y = Math.max(1, Math.min(H, o.has("y") ? o.get("y").getAsInt() : H));
+				int cx = x0 + w / 2, cz = z0 + d / 2;
+				if (inside(cx, cz) && claim(cx, y, cz)) {
+					FurnitureModel m = new FurnitureModel(x0, z0, w, d, H - 1, Direction.SOUTH);
+					FurnitureDesigns.ceilingFan(m, y - 1, H);
+					furnish(m, List.of());
 				}
 			}
 			case "ceiling_light" -> {

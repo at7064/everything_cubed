@@ -323,25 +323,35 @@ KEEP_SEGFORMER = {"wall", "floor", "ceiling"}
 # Not windows and doors: their boxes enclose a lot of real wall (a Gothic window's stone tracery took 28% of the
 # wall points in Suzzallo and stretched the room), and SegFormer finds them well itself.
 MAY_TAKE = {"painting": {"wall"}, "sconce": {"wall"}, "curtain": {"wall"}, "mirror": {"wall"}, "clock": {"wall"},
+            "bulletin_board": {"wall"}, "projection_screen": {"wall"}, "radiator": {"wall"},
+            "range_hood": {"wall"}, "wall_hooks": {"wall"},
             "whiteboard": {"wall"}, "exit_sign": {"wall"}, "fire_extinguisher": {"wall"}, "rug": {"floor"},
             # Hanging things are seen against the ceiling (the depth gate keeps the real ceiling behind them).
-            "projector": {"ceiling"}, "chandelier": {"ceiling"}}
+            "projector": {"ceiling"}, "chandelier": {"ceiling"}, "ceiling_fan": {"ceiling"}}
 # Detector names that only map by these synonyms when the model's mapping is unavailable. ADE_TO_CATEGORY
 # is tried first; IGNORE_NAMES are people and parts of the building, never furniture.
 SYNONYMS = {"office chair": "chair", "dining chair": "chair", "couch": "sofa", "loveseat": "sofa",
             "bookshelf": "bookshelf", "bookshelves": "bookshelf", "book shelf": "bookshelf",
-            "nightstand": "cabinet", "dresser": "cabinet", "drawer": "cabinet", "filing cabinet": "cabinet",
+            "nightstand": "nightstand", "bedside table": "nightstand", "dresser": "dresser", "drawer": "dresser",
+            "filing cabinet": "cabinet",
             "closet": "wardrobe", "end table": "table", "side table": "table", "dining table": "table",
-            "television": "tv", "tv": "tv", "laptop": "tv", "desk lamp": "lamp", "floor lamp": "lamp",
+            "television": "tv", "tv": "tv", "laptop": "monitor", "computer monitor": "monitor",
+            "desktop monitor": "monitor", "desk lamp": "lamp", "floor lamp": "lamp",
             "table lamp": "lamp", "pendant light": "ceiling_light", "ceiling light": "ceiling_light",
             "potted plant": "plant", "houseplant": "plant", "picture": "painting", "picture frame": "painting",
-            "artwork": "painting", "whiteboard": "whiteboard", "dry erase board": "whiteboard",
+            "artwork": "painting", "bulletin board": "bulletin_board", "cork board": "bulletin_board",
+            "corkboard": "bulletin_board", "whiteboard": "whiteboard", "dry erase board": "whiteboard",
             "chalkboard": "whiteboard", "blackboard": "whiteboard", "projector": "projector",
             "exit sign": "exit_sign", "fire extinguisher": "fire_extinguisher", "extinguisher": "fire_extinguisher",
             "fire extinguisher cabinet": "fire_extinguisher", "floor fan": "fan", "tower fan": "fan",
-            "pedestal fan": "fan", "carpet": "rug", "trash can": "trash",
+            "pedestal fan": "fan", "ceiling fan": "ceiling_fan", "stack of chairs": "chair_stack",
+            "stacked chairs": "chair_stack", "student chair desk": "student_desk", "writing arm chair": "student_desk",
+            "projection screen": "projection_screen", "pull down screen": "projection_screen",
+            "wall heater": "radiator", "range hood": "range_hood", "extractor hood": "range_hood",
+            "coat rack": "coat_rack", "wall hooks": "wall_hooks", "coat hooks": "wall_hooks",
+            "lectern": "podium", "podium": "podium", "piano": "piano", "carpet": "rug", "trash can": "trash",
             "garbage can": "trash", "wastebasket": "trash", "bin": "trash", "stained glass window": "window",
-            "fridge": "fridge", "bathroom sink": "sink", "shower": "bathtub", "doorway": "door"}
+            "fridge": "fridge", "bathroom sink": "sink", "shower": "shower", "doorway": "door"}
 PERSON_WORDS = {"person", "people", "man", "men", "woman", "women", "boy", "girl", "child", "children", "student",
                 "students", "human", "face", "head", "hand", "arm", "leg"}
 IGNORE_NAMES = {"person", "people", "man", "woman", "boy", "girl", "child", "student", "human", "face", "head",
