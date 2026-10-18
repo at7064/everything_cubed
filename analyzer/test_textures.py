@@ -351,3 +351,21 @@ apply_wall_features(p5, {"north": {"seen": seen_all, "window": none, "bookshelf"
 t5 = np.array(p5["textures"]["walls"]["north"]["tiles"])
 assert t5[:3, 3:6].sum() == 0 and t5[3:, 3:6].all() and t5[:, :3].all() and t5[:, 6:].all(), t5
 print("no frames around doors OK")
+
+# With the wall picture at hand, the frames around a door stay and show plain paint instead: bare wall blocks next
+# to framed ones look lighter, an outline around the door. Here the wall picture is paint with a poster drawn across
+# the door's neighbourhood; the poster pixels next to the door are painted over, the rest stays.
+px6, d6 = 8, Path(tempfile.mkdtemp())
+img6 = np.zeros((rows * px6, cols * px6, 3), np.uint8); img6[...] = (200, 190, 180)
+img6[:, 3 * px6:7 * px6] = (20, 40, 160)   # columns u = 3..6, every row
+Image.fromarray(img6).save(d6 / "n.png")
+p6 = fplan()
+p6["openings"] = [{"type": "door", "side": "north", "u": 4, "w": 1, "y": 0, "h": 2}]
+apply_wall_features(p6, {"north": {"seen": seen_all, "window": none, "bookshelf": none},
+                         "south": {"seen": none, "window": none, "bookshelf": none}}, log=lambda m: None, tex_dir=d6)
+assert np.array(p6["textures"]["walls"]["north"]["tiles"]).all(), "frames stay around the door"
+out6 = np.asarray(Image.open(d6 / "n.png"))
+bottom = out6[(rows - 3) * px6:]                      # wall rows 0..2, the door and the row above it
+assert (bottom[:, 3 * px6:6 * px6] == (200, 190, 180)).all(), "u = 3..5 painted plain"
+assert (bottom[:, 6 * px6:7 * px6] == (20, 40, 160)).all() and (out6[:(rows - 3) * px6, 3 * px6:6 * px6] == (20, 40, 160)).all()
+print("plain paint around doors OK")
