@@ -17,6 +17,14 @@ ARKit already measures depth and camera positions, so the analyzer only has to l
 5. The mod saves the scan under `everything_cubed/photos/<name>-<date>`, analyses it, and builds the house in
    front of you. Progress shows both in chat and in the app. `/everything_cubed build <folder>` rebuilds a saved scan.
 
+### Spectate (live)
+
+After pairing, tap **Spectate** instead of starting a scan. The camera streams to the game about 5 times a second,
+and the world around you follows the real room. Hold still for the first 3 seconds while the room is scanned. After
+that, a block only changes once the LiDAR has clearly seen the change for about a second. People in view show up as
+villagers. You are in spectator mode in game until you tap **Stop** or run `/everything_cubed spectate stop`. You
+then get your game mode and position back, and `/everything_cubed undo` reverts the mirrored blocks.
+
 ## Build
 
 Open `EverythingCubedScanner.xcodeproj` in Xcode 16 or newer, choose your team under *Signing & Capabilities*,
@@ -27,10 +35,6 @@ and run on a LiDAR device (iOS 17+). The simulator has no LiDAR or RoomPlan.
 | Folder | What |
 |---|---|
 | `Network/` | `WireMessage` (the framing in [PROTOCOL.md](PROTOCOL.md)), `StreamClient` (TCP), `ServerBrowser` (Bonjour) |
-| `Capture/` | `CaptureSource`, implemented by `RoomPlanSource`; `FramePump` samples the AR session, `KeyframeSelector` decides what to keep, `FrameEncoder` turns a frame into a `frame` message |
+| `Capture/` | `CaptureSource`, implemented by `RoomPlanSource` (scan) and `LiveSource` (spectate); `FramePump` samples the AR session, a `FrameSelector` decides what to keep (`KeyframeSelector` for scans, `IntervalSelector` every 0.2 s for spectate), `FrameEncoder` turns a frame into a `frame` message (plus a person mask for spectate) |
 | `AppModel.swift` | connection state, and the `FrameSink` that streams frames to the mod |
 | `Views/` | SwiftUI screens |
-
-To add live capture (for example continuous video for real-time world updates): add a `CaptureSource` that runs
-plain ARKit world tracking with `.sceneDepth` (no RoomPlan UI), give `FramePump` a time-based selector, send `begin` with `"mode": "live"`, and register a
-`live` session in the mod's `StreamModes`. The connection, framing and pairing stay as they are.

@@ -21,6 +21,14 @@ Run `/everything_cubed phone` and scan the room with the iOS app in [ios/](ios/R
 into the game and is built in front of you. LiDAR gives depth and camera positions directly, so the 3D
 reconstruction step is skipped.
 
+### Spectate: the room, live
+
+After `/everything_cubed phone`, tap **Spectate** in the app. The world around you follows the real room about
+5 times a second, through the same LiDAR pipeline as build. People show up as villagers. You are in spectator mode
+so nothing you do disturbs the blocks. A block only changes once the LiDAR has clearly seen the change for about a
+second; anything unclear keeps its last confirmed state. `/everything_cubed spectate stop` (or **Stop** in the app)
+gives you your game mode back, and `/everything_cubed undo` reverts the mirrored blocks.
+
 Furniture is drawn as detailed models (legs, drawers, cushions, burners, ...) around the real blocks that do the work:
 open cabinets, wardrobes and fridges, sleep in beds, cook on stoves, fill bottles at sinks. Right-click a chair, sofa
 or toilet to sit (sneak to stand up), and right-click a lamp to switch it on or off. Breaking the block inside a model,

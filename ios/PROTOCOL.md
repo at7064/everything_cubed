@@ -23,8 +23,8 @@ Implementations: `ios/EverythingCubedScanner/Network/WireMessage.swift` and
 | type | fields | blobs |
 |---|---|---|
 | `hello` | `protocol` (1), `code` (pairing code from `/everything_cubed phone`), `device`, `app` | |
-| `begin` | `mode` (`capture`), `name`, `source` (`roomplan`), `app` | |
-| `frame` | `seq`, `kind` (`keyframe` / `photo`), `time`, `tracking`, `imageSize` [w,h], `depthSize` [w,h], `K` (3×3), `cam2world` (4×4) | `image` (jpeg), `depth` (f16), `confidence` (u8) |
+| `begin` | `mode` (`capture` / `spectate`), `name`, `source` (`roomplan` / `arkit-live`), `app`, `scale` (spectate, optional) | |
+| `frame` | `seq`, `kind` (`keyframe` / `photo`), `time`, `tracking`, `imageSize` [w,h], `depthSize` [w,h], `K` (3×3), `cam2world` (4×4) | `image` (jpeg), `depth` (f16), `confidence` (u8), `person` (u8, spectate) |
 | `room` | | `room` (RoomPlan `CapturedRoom` as JSON) |
 | `end` | `build` (default true), `scale` (blocks per metre, optional) | |
 | `ping` | | |
@@ -32,7 +32,8 @@ Implementations: `ios/EverythingCubedScanner/Network/WireMessage.swift` and
 `hello` must come first. Matrices are row-major, in ARKit conventions: world +Y is up, metres; the camera looks
 down -Z with +Y up, and `K` belongs to the image in the sensor's landscape orientation (the analyzer turns
 portrait shots upright). `depth` is little-endian float16 metres, `confidence` is ARKit's 0 (low) to 2 (high),
-both `depthSize` pixels and aligned with the image.
+both `depthSize` pixels and aligned with the image. `person` is 1 where a person is, also per depth pixel; it is
+left out when nobody is in view.
 
 ## Mod to phone
 
@@ -40,7 +41,8 @@ both `depthSize` pixels and aligned with the image.
 |---|---|
 | `welcome` | `protocol`, `modes` (supported `begin` modes) |
 | `error` | `text`; the mod closes the connection after a failed `hello` |
-| `ready` | `folder`, the scan's folder under `everything_cubed/photos` |
+| `ready` | `folder`, the scan's folder under `everything_cubed/photos` (capture); `mode` = `spectate` (spectate) |
+| `stopped` | `text`: the game ended spectating (`/everything_cubed spectate stop`, the player left, ...) |
 | `status` | `level` (`info` / `progress` / `success` / `error`), `text`: progress and chat lines for the app's log |
 | `pong` | |
 
@@ -55,6 +57,12 @@ photos/<name>-<yyyyMMdd-HHmmss>/
 ```
 
 The analyzer's `arkit` backend (`analyzer/perception.py`) reads `capture.json`.
+
+## Mode `spectate`
+
+The phone streams `frame`s continuously, every 0.2 s, until `end` (or until the mod sends `stopped`). Nothing is
+saved: each frame goes to `analyzer/spectate_analyzer.py`, which the mod keeps running. While it works on one
+frame, only the newest one that arrives is kept. The player is in spectator mode until the session ends.
 
 ## Extending
 

@@ -123,6 +123,28 @@ for a 34-photo scan on a laptop, and only numpy, SciPy, scikit-learn and Pillow.
 Photo-only flags (`--perceptron`, `--backend`, model names) are ignored with a log line.
 `python test_lidar.py` checks it on a synthetic scan.
 
+## Spectate: live LiDAR (`spectate_analyzer.py`)
+
+The mod starts this worker when the iOS app spectates, and keeps it running. It reads the phone's frames on stdin
+(about 5 a second) and answers each with one JSON line of block changes and people. It runs the LiDAR pipeline
+above per frame (same unprojection, labels and surface palette): the room's axes, floor, walls and table tops are
+measured once from the first 15 frames, and every later frame is labelled against them. A frame takes about 16 ms.
+
+Only confident changes reach the world:
+
+- the first 15 frames are the initial scan, and everything they show is built as it is;
+- after that, a block appears or disappears only when 5 frames in a row show the change clearly, with
+  high-confidence LiDAR depth closer than 5 m. A different colour needs 10 frames in a row that agree;
+- a frame that shows a spot both ways, or only at low confidence, resets that spot's count, and spots out of view
+  keep theirs. Unclear spots stay as they were;
+- evidence is kept on 3 x 3 x 3 sub-cells per block, so rays passing over a partly filled block (a 1 m crate in a
+  0.8 m block row) don't count the filled part as empty;
+- people (masked by the phone) are never built. They are grouped into tracked positions, which the mod shows as
+  villagers.
+
+`python test_spectate.py` streams a synthetic room through it. A crate is carried away and a person walks in.
+It checks that a box seen in one frame and changes seen only at low confidence leave the world alone.
+
 ## Optional: open-vocabulary detection (`--perceptron`)
 
 Off by default, because it sends the photos to [Perceptron](https://docs.perceptron.inc) (`api.perceptron.inc`).
