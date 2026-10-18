@@ -16,15 +16,20 @@ Then `roomplan.py`:
 1. Fits the floor plane (gravity) and the dominant wall direction, so the room is axis-aligned.
 2. Measures each wall. Walls that never appear in a photo are inferred from the floor and furniture extents,
    and get the room's dominant wall material.
-3. Picks a scale (1.25 blocks per metre, enlarged so the short side is at least 6.25 blocks, max 2.5 blocks/m)
-   unless you pass one.
+3. Picks a scale (1.25 blocks per metre, enlarged so the short side is at least 6.25 blocks, max 2.5 blocks/m),
+   then builds a room from photos 25% larger than measured (`--enlarge 1.25`; `--enlarge 1` keeps true
+   proportions), since furniture is whole blocks and rooms otherwise feel crowded. LiDAR scans from the iOS app
+   are always built at their measured size, and so is a scale you pass (`--scale`, `buildscaled`).
 4. Colours each wall/floor cell from the photos. Up to 3 distinct materials are kept per surface, so you don't
    get a blotchy result. They are matched in CIELAB to the real average texture colours read from your
    Minecraft jar (concrete, terracotta, wool, planks, stone, ...).
 5. Clusters each object class in 3D and converts it to real, usable blocks at the right size and position:
    beds (colour-matched, side by side for wide beds), doors, glass-pane windows, stair chairs and sofas, slab tables,
    barrels and cabinets, chiseled bookshelves, shelves, furnace/smoker, cauldron sinks, carpets for rugs,
-   lanterns, chandeliers hung from the ceiling, potted plants and paintings. Things with no template yet (from
+   lanterns, chandeliers hung from the ceiling, potted plants and paintings. Classroom and public-room things:
+   whiteboards and chalkboards (their real size, white or green), exit signs high on the wall (a dim light),
+   fire extinguishers low on the wall (heights follow NFPA 101 and NFPA 10), ceiling projectors aimed at the
+   whiteboard or screen wall, and floor fans. Things with no template yet (from
    `--perceptron`) become a plain box named after what was detected.
 6. Walls (`walltex.py`): every wall is resampled straight from the photos with the reconstructed cameras.
    Each pixel comes from the most head-on photo that shows the wall surface itself, not furniture in front

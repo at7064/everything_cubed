@@ -71,4 +71,13 @@ assert abs(plan["metres"]["y"] - H) < 0.15
 assert any(o["type"] == "door" for o in plan["openings"]), "a front door must always exist"
 assert any(o["type"] == "window" for o in plan["openings"])
 assert any(o["type"] == "bed" for o in plan["objects"])
+
+# --enlarge: the same room at 1.0 and 1.5 - real metres unchanged, blocks about 1.5x; an explicit scale is exact.
+small = build_plan(P_world, np.concatenate(cols), np.array(cats), Palette(builtin_surface_entries()), enlarge=1.0, log=lambda m: None)
+big = build_plan(P_world, np.concatenate(cols), np.array(cats), Palette(builtin_surface_entries()), enlarge=1.5, log=lambda m: None)
+assert small["metres"] == big["metres"] and abs(big["scale"] / small["scale"] - 1.5) < 0.01  # scale is stored rounded
+assert abs(big["size"]["x"] / small["size"]["x"] - 1.5) < 0.25 and big["size"]["y"] > small["size"]["y"], (small["size"], big["size"])
+fixed = build_plan(P_world, np.concatenate(cols), np.array(cats), Palette(builtin_surface_entries()), scale=2.0, enlarge=1.5, log=lambda m: None)
+assert fixed["scale"] == 2.0
+print("enlarge:", small["size"], "->", big["size"])
 print("OK")

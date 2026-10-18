@@ -33,6 +33,9 @@ def main(argv=None):
     ap.add_argument("--out", type=Path, help="output plan (default: <images>/plan.json)")
     ap.add_argument("--mc-jar", help="Minecraft client jar, used to read real block texture colours")
     ap.add_argument("--scale", type=float, help="blocks per metre (default: automatic)")
+    ap.add_argument("--enlarge", type=float, default=1.25,
+                    help="build photo rooms this much larger than measured, e.g. 1.25 = 25%% (default); "
+                         "LiDAR scans and --scale are always built at their measured size")
     ap.add_argument("--known-height", type=float,
                     help="the room's real floor-to-ceiling height in metres; corrects the reconstruction's scale")
     ap.add_argument("--backend", default="auto", choices=["auto", "arkit", "mapanything", "vggt"])
@@ -70,6 +73,11 @@ def main(argv=None):
     device = pick_device(opts.device)
     log(f"[analyzer] {len(paths)} photo(s) from {opts.images}")
     views, metric = reconstruct(paths, opts.backend, device, opts, log)
+    # LiDAR measures the room itself: built at its real proportions. Photo reconstructions are enlarged.
+    lidar = bool(views) and bool(views[0].get("lidar"))
+    enlarge = 1.0 if lidar or opts.scale else opts.enlarge
+    if lidar and opts.enlarge != 1.0:
+        log("[analyzer] LiDAR scan: --enlarge does not apply, building at measured size")
     label_maps, id2label = segment(views, device, opts.seg_model, log)
     ade_to_category, detections = ADE_TO_CATEGORY, None
     if opts.perceptron:
@@ -90,8 +98,8 @@ def main(argv=None):
     ctx = {}
     object_instances = detections.pop("_instances", []) if detections else []
     plan = build_plan(pts, rgb, cats, surface_palette(opts.mc_jar, cache), scale=opts.scale, metric=metric, log=log, ctx=ctx,
-                      known_height=opts.known_height, object_instances=object_instances)
-    plan["source"] = {"photos": [p.name for p in paths], "metric": metric}
+                      known_height=opts.known_height, object_instances=object_instances, enlarge=enlarge)
+    plan["source"] = {"photos": [p.name for p in paths], "metric": metric, "lidar": lidar, "enlarge": enlarge}
     out = opts.out or opts.images / "plan.json"
     if detections:
         # Every detected name and what it became, so missing templates are easy to spot.

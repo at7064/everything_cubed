@@ -198,7 +198,7 @@ def reconstruct_arkit(folder: Path, log, max_views=ARKIT_MAX_VIEWS):
         pts = cam @ c2w[:3, :3].T + c2w[:3, 3]
         mask = np.isfinite(d) & (d > 0.1) & (d < ARKIT_MAX_DEPTH) & (c >= 1)
         out.append(_upright({"points": pts.astype(np.float32), "K": K, "cam2world": c2w, "conf": c,
-                             "mask": mask, "rgb": rgb}))
+                             "mask": mask, "rgb": rgb, "lidar": True}))
     return out, True
 
 
@@ -323,7 +323,9 @@ KEEP_SEGFORMER = {"wall", "floor", "ceiling"}
 # Not windows and doors: their boxes enclose a lot of real wall (a Gothic window's stone tracery took 28% of the
 # wall points in Suzzallo and stretched the room), and SegFormer finds them well itself.
 MAY_TAKE = {"painting": {"wall"}, "sconce": {"wall"}, "curtain": {"wall"}, "mirror": {"wall"}, "clock": {"wall"},
-            "rug": {"floor"}}
+            "whiteboard": {"wall"}, "exit_sign": {"wall"}, "fire_extinguisher": {"wall"}, "rug": {"floor"},
+            # Hanging things are seen against the ceiling (the depth gate keeps the real ceiling behind them).
+            "projector": {"ceiling"}, "chandelier": {"ceiling"}}
 # Detector names that only map by these synonyms when the model's mapping is unavailable. ADE_TO_CATEGORY
 # is tried first; IGNORE_NAMES are people and parts of the building, never furniture.
 SYNONYMS = {"office chair": "chair", "dining chair": "chair", "couch": "sofa", "loveseat": "sofa",
@@ -333,7 +335,11 @@ SYNONYMS = {"office chair": "chair", "dining chair": "chair", "couch": "sofa", "
             "television": "tv", "tv": "tv", "laptop": "tv", "desk lamp": "lamp", "floor lamp": "lamp",
             "table lamp": "lamp", "pendant light": "ceiling_light", "ceiling light": "ceiling_light",
             "potted plant": "plant", "houseplant": "plant", "picture": "painting", "picture frame": "painting",
-            "artwork": "painting", "whiteboard": "painting", "carpet": "rug", "trash can": "trash",
+            "artwork": "painting", "whiteboard": "whiteboard", "dry erase board": "whiteboard",
+            "chalkboard": "whiteboard", "blackboard": "whiteboard", "projector": "projector",
+            "exit sign": "exit_sign", "fire extinguisher": "fire_extinguisher", "extinguisher": "fire_extinguisher",
+            "fire extinguisher cabinet": "fire_extinguisher", "floor fan": "fan", "tower fan": "fan",
+            "pedestal fan": "fan", "carpet": "rug", "trash can": "trash",
             "garbage can": "trash", "wastebasket": "trash", "bin": "trash", "stained glass window": "window",
             "fridge": "fridge", "bathroom sink": "sink", "shower": "bathtub", "doorway": "door"}
 PERSON_WORDS = {"person", "people", "man", "men", "woman", "women", "boy", "girl", "child", "children", "student",

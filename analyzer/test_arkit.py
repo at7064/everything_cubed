@@ -77,6 +77,8 @@ with tempfile.TemporaryDirectory() as tmp:
     folder = Path(tmp)
     write_scan(folder)
     views, metric = reconstruct_arkit(folder, print)
+    # LiDAR views say so (also after being turned upright): the analyzer then builds at measured size, no --enlarge.
+    assert all(v.get("lidar") is True for v in views)
 
 assert metric and len(views) == 8
 for i, v in enumerate(views):
