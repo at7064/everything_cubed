@@ -92,7 +92,7 @@ public class HouseBuilder {
 
 	private static BlockState block(String id) {
 		Identifier key = Identifier.tryParse(id.contains(":") ? id : "minecraft:" + id);
-		if (key == null) return Blocks.STONE.defaultBlockState();
+		if (key == null) return null; // so first() tries its next id
 		return BuiltInRegistries.BLOCK.getOptional(key).map(Block::defaultBlockState).orElse(null);
 	}
 
@@ -650,9 +650,6 @@ public class HouseBuilder {
 					}
 		return filled;
 	}
-
-	// ------------------------------------------------------------------------------------- finishing
-
 
 	// ------------------------------------------------------------------------------------- photo walls
 

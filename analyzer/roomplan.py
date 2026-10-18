@@ -352,7 +352,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             f = 3.5 / max(1e-6, np.percentile(loc[:, 0], 98) - np.percentile(loc[:, 0], 2))
         loc *= f
         log(f"[plan] non-metric reconstruction rescaled by {f:.3f}")
-    stretch = 1.0  # --known-height rescale; point spacing grows with it, so clustering radii must too
+    # (Point spacing grows with every rescale here, so clustering radii are multiplied by f.)
     if known_height:
         # Monocular metric scale is a learned guess and can be far off outside ordinary rooms (a 20 m hall
         # came out at 0.4x). One real measurement fixes it everywhere, if the shape itself is right.
@@ -486,7 +486,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             continue
         m = np.flatnonzero(cats == cat)
         # Chandeliers are open metalwork alone in the air: a wider radius keeps one from splitting into parts.
-        for idx in cluster_category(loc[m], eps=(0.35 if cat == "chandelier" else 0.12) * stretch):
+        for idx in cluster_category(loc[m], eps=(0.35 if cat == "chandelier" else 0.12) * f):
             small = cat.startswith(VANILLA) and not vanilla_parts(cat)[1]  # a lantern or candle is small
             if len(idx) < MIN_POINTS.get(cat, 15 if small else 60):
                 continue
@@ -509,7 +509,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
                       if cat == inst["category"] and j not in used_clusters]
         if candidates:
             dist, j = min(candidates)
-            if dist < 0.8 * stretch:
+            if dist < 0.8 * f:
                 obj_clusters[j] = (inst["category"], cl)
                 used_clusters.add(j)
                 matched += 1
@@ -847,7 +847,6 @@ def apply_wall_features(plan, features, log=print, mirror=False):
     wall become vanilla bookshelf furniture standing on the floor right in front of it (never part of the wall
     itself), and bookcases already placed at those spots are dropped as duplicates. mirror=True: a wall the photos hardly saw copies the
     opposite wall when that one was seen well (halls, libraries, churches)."""
-    H = plan["size"]["y"]
     decided = {}
     for side, f in features.items():
         rows, cols = f["seen"].shape
@@ -875,7 +874,9 @@ def apply_wall_features(plan, features, log=print, mirror=False):
         for side, d in decided.items():
             o = opposite[side]
             if d["seen"] < MIRROR_UNSEEN and o in decided and decided[o]["seen"] >= MIRROR_SEEN:
-                decided[side] = dict(decided[o], seen=d["seen"])
+                own_doors = _grid_of(plan["openings"], side, "door", *decided[o]["win"].shape)
+                decided[side] = {"win": decided[o]["win"] & ~own_doors, "shelf": decided[o]["shelf"] & ~own_doors,
+                                 "seen": d["seen"]}
                 mirrored.add((side, o))
                 log(f"[plan] {side} wall ({d['seen']:.0%} seen) mirrors the {o} wall ({decided[o]['seen']:.0%} seen)")
 
@@ -906,6 +907,26 @@ def apply_wall_features(plan, features, log=print, mirror=False):
         # Shelving stands on the floor: each column of shelf cells becomes a stack from the floor up to its top.
         top = np.where(d["shelf"].any(0), d["shelf"].shape[0] - np.argmax(d["shelf"][::-1], 0), 0)
         top[top < 2] = 0  # a lone block of "shelf" is noise, not furniture
+        # Not in a doorway (a door column, and the two cells in front of any door) nor where furniture stands.
+        taken = np.zeros((W, D), bool)
+        for o in plan["objects"]:
+            if o.get("w") and o.get("d") and o["type"] not in ("ceiling_light", "chandelier", "projector", "rug"):
+                taken[o["x"]:o["x"] + o["w"], o["z"]:o["z"] + o["d"]] = True
+        for o in plan["openings"]:
+            if o["type"] == "door":
+                for du in range(o["w"]):
+                    uu = o["u"] + du
+                    for depth in (0, 1):
+                        cx, cz = {"north": (uu, depth), "south": (uu, D - 1 - depth),
+                                  "west": (depth, uu), "east": (W - 1 - depth, uu)}[o["side"]]
+                        if 0 <= cx < W and 0 <= cz < D:
+                            taken[cx, cz] = True
+        cell = {"north": lambda uu: (uu, 0), "south": lambda uu: (uu, D - 1),
+                "west": lambda uu: (0, uu), "east": lambda uu: (W - 1, uu)}[side]
+        for uu in range(len(top)):
+            cx, cz = cell(uu)
+            if not (0 <= cx < W and 0 <= cz < D) or taken[cx, cz]:
+                top[uu] = 0
         front = {"north": "south", "south": "north", "west": "east", "east": "west"}[side]
         u = 0
         while u < len(top):
@@ -926,4 +947,6 @@ def apply_wall_features(plan, features, log=print, mirror=False):
         tex = plan.get("textures", {}).get("walls", {})
         if o in tex:
             tex[side] = dict(tex[o])          # same image and flip: the same picture at the same x (or z)
+        else:
+            tex.pop(side, None)               # blocks and pictures always come from the same wall
         plan["walls"][side] = {"palette": list(plan["walls"][o]["palette"]), "grid": [r[:] for r in plan["walls"][o]["grid"]]}

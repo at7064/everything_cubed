@@ -544,8 +544,8 @@ def main(argv=None):
                          "transformers and is much slower")
     ap.add_argument("--device", help="torch device for --segformer (default: cuda > mps > cpu)")
     ap.add_argument("--seg-model", default="nvidia/segformer-b5-finetuned-ade-640-640")
-    ap.add_argument("--wall-detail", default="pattern", choices=["pattern", "items", "photo", "none"])
-    ap.add_argument("--texture-px", type=int, help="texture pixels per block (default 64 for items, 128 for photo)")
+    ap.add_argument("--wall-detail", default="style", choices=["style", "pattern", "items", "photo", "none"])
+    ap.add_argument("--texture-px", type=int, help="texture pixels per block (default 128 for photo, else 64)")
     ap.add_argument("--save-cloud", action="store_true", help="also write the labelled point cloud (.npz)")
     ap.add_argument("--mirror-walls", action="store_true",
                     help="a wall the scan hardly saw copies the opposite wall (halls, libraries, churches)")
@@ -592,8 +592,9 @@ def main(argv=None):
 
     cache = Path(__file__).resolve().parent
     ctx = {}
+    # LiDAR measures the room itself: built at its measured size (photo rooms are enlarged, see --enlarge).
     plan = build_plan(pts, rgb, cats, surface_palette(opts.mc_jar, cache), scale=opts.scale, metric=True, log=log,
-                      ctx=ctx, known_height=opts.known_height)
+                      ctx=ctx, known_height=opts.known_height, enlarge=1.0)
     plan["source"] = {"photos": [v_name for v_name in (f.get("image") for f in cap["frames"]) if v_name],
                       "metric": True, "lidar": True, "roomplan": room is not None}
     out = opts.out or opts.images / "plan.json"

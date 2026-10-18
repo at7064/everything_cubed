@@ -2,7 +2,7 @@
 cameras) and resamples it into a rectified image, 1 tile = 1 wall block. The mod turns each tile into a
 locked map in an invisible item frame.
 
-detail="items" (default): the paint is real blocks - one of the 33 wall blocks, found jointly over all walls
+detail="items": the paint is real blocks - one of the 33 wall blocks, found jointly over all walls
 so the same paint is the same block everywhere (unseen walls inferred). Item frames lit per entity can never
 blend with smoothly lit blocks, so frames are only used for the things on the wall (posters, boards,
 clocks...): snapped to whole blocks, in a few flat colours, filling their frames completely.
@@ -417,7 +417,7 @@ def render_walls(views, label_maps, cat_names_of_pixel, ctx, out_dir: Path, px=6
             rows_px, cols_px = img.shape[:2]
             reps = (rows_px // px + 1, cols_px // px + 1, 1)
             out = profile[:, None, :] + np.tile(tile, reps)[:rows_px, :cols_px]
-            _, lbl, _ = compose_wall(img, seen, paints_rgb, paints_lab, default_paint, px, "items")
+            _, lbl, _ = compose_wall(img, seen, paints_rgb, paints_lab, default_paint, px, "photo")  # labels only
             tiles = np.ones((rows_px // px, cols_px // px), bool)
         elif patterned.get(side):
             use_own = side in pools and len(pools[side][0]) >= 30 and seen.mean() >= PATTERN_OWN_POOL
@@ -494,13 +494,11 @@ def _exemplars(img, seen, B, ds, stride, cap, rng):
     return full, low
 
 
-def synthesize_wall(img, seen, pool, px, rng, top_k=5, reuse=0.0):
+def synthesize_wall(img, seen, pool, px, rng, top_k=5):
     """Fills the unseen part of a wall image with patches from `pool` (full, low) exemplars, keeping every seen
     pixel. Patches are one block wide; each is chosen among the `top_k` best matches to what is already known
     in its window (photo or earlier patches), so it continues the pattern without copying one patch over and
-    over. With `reuse` > 0 every use of a patch makes it that share of the typical match cost more expensive, so
-    one striking patch repeats less; off by default, because with few clean patches it turns walls into a busy
-    collage (tried on Suzzallo). Returns the filled image."""
+    over. Returns the filled image."""
     full, low = pool
     B = px
     ds = max(1, B // 16)
@@ -509,7 +507,6 @@ def synthesize_wall(img, seen, pool, px, rng, top_k=5, reuse=0.0):
     h, w = seen.shape
     out = img.astype(np.float32).copy()
     known = seen.copy()
-    uses = np.zeros(len(full))
     ys = sorted(set(list(range(0, max(1, h - B + 1), step)) + [max(0, h - B)]))
     xs = sorted(set(list(range(0, max(1, w - B + 1), step)) + [max(0, w - B)]))
     for y in ys:
@@ -524,10 +521,8 @@ def synthesize_wall(img, seen, pool, px, rng, top_k=5, reuse=0.0):
                 tgt = (out[y:y + B, x:x + B] * wk[..., None]).reshape(B // ds, ds, B // ds, ds, 3).sum(axis=(1, 3))
                 tgt = tgt / np.maximum(m * ds * ds, 1e-6)[..., None]
                 d = (((low - tgt) ** 2).sum(-1) * m).sum(axis=(1, 2)) / m.sum()
-                d = d + reuse * np.median(d) * uses
                 best = np.argpartition(d, min(top_k, len(d) - 1))[:top_k]
                 i = int(rng.choice(best))
-            uses[i] += 1
             patch = full[i].astype(np.float32)
             win = out[y:y + B, x:x + B]
             if wk.any():
@@ -640,7 +635,8 @@ def room_style(walls, px):
         grain = float(np.percentile(energy, 30))
     else:
         tile, grain = np.zeros((px, px, 3), np.float32), 0.0
-    spread = float(np.percentile(_de(prof_lab, np.median(prof_lab, axis=0)), 95))
+    # Full CIELAB difference, as for the bands: a white-over-grey wainscot differs mostly in lightness.
+    spread = float(np.percentile(np.linalg.norm(prof_lab - np.median(prof_lab, axis=0), axis=-1), 95))
     return profile, tile, {"height_spread": spread, "grain": grain, "patches": len(cands), "walls": len(walls)}
 
 

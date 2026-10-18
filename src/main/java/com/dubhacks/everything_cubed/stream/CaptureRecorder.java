@@ -95,7 +95,9 @@ final class CaptureRecorder implements StreamSession {
 	public void onEnd(StreamMessage msg) throws IOException {
 		writeCapture();
 		boolean build = !msg.header().has("build") || msg.header().get("build").getAsBoolean();
-		Double scale = msg.header().has("scale") && !msg.header().get("scale").isJsonNull() ? msg.header().get("scale").getAsDouble() : null;
+		// Clamped to the same range as /everything_cubed buildscaled.
+		Double scale = msg.header().has("scale") && !msg.header().get("scale").isJsonNull()
+				? Math.max(0.5, Math.min(4.0, msg.header().get("scale").getAsDouble())) : null;
 		String folder = dir.getFileName().toString();
 		phone.status("success", "Saved " + frames.size() + " photos as " + folder);
 		if (!build) return;

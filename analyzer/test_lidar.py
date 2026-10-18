@@ -102,7 +102,8 @@ def run(with_room):
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
         write_scan(folder, with_room)
-        lidar_analyzer.main(["--images", str(folder), "--wall-detail", "items"])
+        # The default wall mode (style), which this parser once rejected.
+        lidar_analyzer.main(["--images", str(folder)])
         return json.loads((folder / "plan.json").read_text())
 
 
@@ -116,5 +117,7 @@ for with_room in (False, True):
     assert len(glass) == 1, plan["openings"]
     tables = [o for o in plan["objects"] if o["type"] == "table"]
     assert len(tables) == 1, plan["objects"]
+    # LiDAR rooms are built at their measured size: 1.25 blocks/m for this room, not enlarged like photo rooms.
+    assert abs(plan["scale"] - 1.25) < 0.01, plan["scale"]
     print(f"room.json={with_room}: room {m}, window on {glass}, table {tables[0]}")
 print("OK")
