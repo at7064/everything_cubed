@@ -675,6 +675,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
     tables = [cl for c, cl in obj_clusters if c in ("table", "desk", "coffee_table")]
     floor_objs = sorted([(c, cl) for c, cl in obj_clusters if c not in NO_FOOTPRINT and not is_wall_tv(c, cl)],
                         key=lambda t: (PRIORITY.index(t[0]) if t[0] in PRIORITY else 99, -t[1]["n"]))
+    placed = []   # (object, its cluster) for the floor furniture
     for cat, cl in floor_objs:
         # A detector sometimes labels an entire vertical stack as one ordinary chair.
         if cat == "chair" and cl["hi"][1] - cl["lo"][1] > 1.25 and max(cl["hi"][0] - cl["lo"][0],
@@ -702,6 +703,8 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             obj["source_views"] = cl["source_views"]
             obj["estimated_center_m"] = [round(float(x), 3) for x in cl["c"]]
         objects.append(obj)
+        placed.append((obj, cl))
+    arrange_seating(placed, room, occupancy, log)
 
     # Small objects share the supporting furniture's floor cell, above its top.
     for cat, cl in obj_clusters:
@@ -907,6 +910,80 @@ def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
                     obj.update(x=int(ax), z=int(az), w=int(w), d=int(d), h=int(h))
                     return obj
     return None
+
+
+SEATS = ("chair", "sofa")
+SEAT_TABLES = ("table", "coffee_table", "desk")
+
+
+def arrange_seating(placed, room: Room, occupancy, log=print, reach=1.8):
+    """Chairs and sofas around a table, laid out as a group: each on the side of the table it really is on, all at
+    the same gap from it (the group's median real gap), centred along that side and in their real order.
+    Placed one by one, seats ~1.1 m from a table came out 1 block away on one side and 2 on another (1.5 blocks
+    rounds either way), or on a diagonal, though RoomPlan had them evenly around it. A seat near a wall joins its
+    table's group too (a sofa between the table and the wall belongs with the table). If the group doesn't fit, it
+    stays as placed."""
+    tables = [(o, cl) for o, cl in placed if o["type"] in SEAT_TABLES]
+    if not tables:
+        return
+    groups = {}
+    for o, cl in placed:
+        if o["type"] not in SEATS:
+            continue
+        t = min(tables, key=lambda t: np.hypot(*(t[1]["c"] - cl["c"])[[0, 2]]))
+        if np.hypot(*(t[1]["c"] - cl["c"])[[0, 2]]) <= reach:
+            groups.setdefault(id(t[0]), (t, []))[1].append((o, cl))
+    for (to, tcl), seats in groups.values():
+        if len(seats) < 2:
+            continue
+        sides, gaps = {}, []
+        for o, cl in seats:
+            off = cl["c"] - tcl["c"]
+            ax = 0 if abs(off[0]) >= abs(off[2]) else 2      # the seat is east/west (0) or north/south (2)
+            sign = 1 if off[ax] > 0 else -1
+            gaps.append(abs(off[ax]) - (tcl["hi"][ax] - tcl["lo"][ax]) / 2 - (cl["hi"][ax] - cl["lo"][ax]) / 2)
+            sides.setdefault((ax, sign), []).append((o, cl))
+        g = int(np.clip(round(max(0.0, float(np.median(gaps))) * room.s), 0, 2))
+        old = [(o, o["x"], o["z"], o["w"], o["d"], o["facing"]) for o, _ in seats]
+        for o, _ in seats:
+            occupancy[o["x"]:o["x"] + o["w"], o["z"]:o["z"] + o["d"]] = -1
+        tx, tz, tw, td = to["x"], to["z"], to["w"], to["d"]
+        new = []
+        for (ax, sign), items in sides.items():
+            along = 2 if ax == 0 else 0                        # seats on one side run along the other axis
+            items.sort(key=lambda it: it[1]["c"][along])
+            lens = [max(o["w"], o["d"]) if o["type"] == "sofa" else 1 for o, _ in items]
+            start, span = (tz, td) if ax == 0 else (tx, tw)
+            pos = start + (span - sum(lens)) // 2
+            for (o, _), n in zip(items, lens):
+                if ax == 0:
+                    x0, z0, w, d = (tx - g - 1 if sign < 0 else tx + tw + g), pos, 1, n
+                    facing = "west" if sign < 0 else "east"    # its back away from the table
+                else:
+                    x0, z0, w, d = pos, (tz - g - 1 if sign < 0 else tz + td + g), n, 1
+                    facing = "north" if sign < 0 else "south"
+                new.append((o, x0, z0, w, d, facing))
+                pos += n
+        fits = all(0 <= x0 and 0 <= z0 and x0 + w <= room.W and z0 + d <= room.D for _, x0, z0, w, d, _ in new)
+        if fits:
+            claimed = []
+            for _, x0, z0, w, d, _ in new:
+                cells = occupancy[x0:x0 + w, z0:z0 + d]
+                if not (cells == -1).all():
+                    fits = False
+                    break
+                cells[...] = 1
+                claimed.append((x0, z0, w, d))
+            if not fits:
+                for x0, z0, w, d in claimed:
+                    occupancy[x0:x0 + w, z0:z0 + d] = -1
+        chosen = new if fits else old
+        for o, x0, z0, w, d, facing in chosen:
+            o.update(x=int(x0), z=int(z0), w=int(w), d=int(d), facing=facing)
+            if not fits:
+                occupancy[x0:x0 + w, z0:z0 + d] = 1
+        log(f"[plan] {len(seats)} seat(s) around the {to['type']}: " +
+            (f"evenly on {len(sides)} side(s), {g} block(s) away" if fits else "no room to even them out, kept as placed"))
 
 
 def choose_door(room: Room, openings, occupancy, objects):
