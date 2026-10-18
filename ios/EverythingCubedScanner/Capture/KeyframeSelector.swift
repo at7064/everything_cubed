@@ -29,10 +29,6 @@ struct KeyframeSelector: FrameSelector {
     mutating func kept(_ frame: ARFrame) {
         last = (frame.camera.transform, frame.timestamp)
     }
-
-    mutating func reset() {
-        last = nil
-    }
 }
 
 /// Keeps a frame every `interval` seconds whatever the phone does: a steady stream for spectate.

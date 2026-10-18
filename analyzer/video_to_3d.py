@@ -16,7 +16,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from plan_viewer import scene_from_plan, write_obj, write_viewer
+from plan_viewer import write_obj, write_viewer
 
 
 VIDEO_EXT = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi"}

@@ -123,7 +123,7 @@ def scene_from_plan(plan):
                 if 0 <= nx < W and 0 <= nz < D and not inside(nx, nz):
                     add(bx, 0, bz, bw, H, bd, material_color(plan.get("wall_main", "white_concrete")), "wall", "Wall")
 
-    for i, o in enumerate(plan.get("objects", [])):
+    for o in plan.get("objects", []):
         typ = o.get("type", "object")
         x, z = float(o.get("x", 0)), float(o.get("z", 0))
         w, d = max(0.3, float(o.get("w", 1))), max(0.3, float(o.get("d", 1)))

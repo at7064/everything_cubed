@@ -744,20 +744,17 @@ SYNONYMS = {"office chair": "chair", "dining chair": "chair", "couch": "sofa", "
             "coat rack": "coat_rack", "wall hooks": "wall_hooks", "coat hooks": "wall_hooks",
             "lectern": "podium", "podium": "podium", "piano": "piano", "carpet": "rug", "trash can": "trash",
             "garbage can": "trash", "wastebasket": "trash", "bin": "trash", "stained glass window": "window",
-            "fridge": "fridge", "bathroom sink": "sink", "shower": "shower", "doorway": "door"}
+            "fridge": "fridge", "bathroom sink": "sink", "shower": "shower", "doorway": "door",
+            "backpack": "backpack", "bag": "backpack", "school bag": "backpack", "handbag": "backpack",
+            "tote bag": "backpack", "globe": "globe", "desk globe": "globe", "locker": "locker", "lockers": "locker",
+            "drinking fountain": "drinking_fountain", "water fountain": "drinking_fountain",
+            "bottle filler": "drinking_fountain", "bottle filling station": "drinking_fountain",
+            "umbrella stand": "umbrella_stand", "umbrella holder": "umbrella_stand"}
 PERSON_WORDS = {"person", "people", "man", "men", "woman", "women", "boy", "girl", "child", "children", "student",
                 "students", "human", "face", "head", "hand", "arm", "leg"}
 IGNORE_NAMES = {"person", "people", "man", "woman", "boy", "girl", "child", "student", "human", "face", "head",
                 "hand", "arm", "leg", "wall", "floor", "ceiling", "column", "pillar", "arch", "beam", "roof",
                 "window frame", "door frame", "molding", "railing", "stairs", "staircase", "shadow", "reflection"}
-
-
-SYNONYMS.update({
-    "backpack": "backpack", "bag": "backpack", "school bag": "backpack", "handbag": "backpack", "tote bag": "backpack",
-    "globe": "globe", "desk globe": "globe", "locker": "locker", "lockers": "locker", "drinking fountain":
-    "drinking_fountain", "water fountain": "drinking_fountain", "bottle filler": "drinking_fountain",
-    "bottle filling station": "drinking_fountain", "umbrella stand": "umbrella_stand", "umbrella holder": "umbrella_stand",
-})
 
 
 def _singular(name):

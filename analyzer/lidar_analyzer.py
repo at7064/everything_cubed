@@ -333,7 +333,7 @@ def _under_roomplan_object(table, room, log, share=0.3):
     """A table top found in the depth that is mostly the top of something RoomPlan already reported (a bed's
     mattress is at table height, so is a dresser, and RoomPlan's own tables), which would otherwise be built a
     second time as a table. Chairs and sofas don't count: they stand partly under tables."""
-    t_lo, t_hi, cells, x0, z0, m, sl = table
+    t_lo, t_hi, _, x0, z0, m, sl = table
     i, k = np.nonzero(m)
     P = np.stack([x0 + (i + sl[0].start + 0.5) * 0.05, np.full(len(i), (t_lo + t_hi) / 2),
                   z0 + (k + sl[1].start + 0.5) * 0.05], 1)
@@ -467,7 +467,7 @@ def find_tables(frames, floor_y, log, cell=0.05):
     cover = np.zeros(shape); np.add.at(cover, (i, k), A)
     hsum = np.zeros(shape); np.add.at(hsum, (i, k), A * P[:, 1])
     occ = ndimage.binary_closing(cover > 0, np.ones((3, 3)))
-    comp, nc = ndimage.label(occ)
+    comp, _ = ndimage.label(occ)
     tables = []
     for ci, sl in enumerate(ndimage.find_objects(comp), start=1):
         m = comp[sl] == ci
@@ -519,7 +519,7 @@ def solid_objects(room, tables, floor_y, pts, rgb, cats):
         if cat == "table" and o.get("attributes", {}).get("TableType") == "coffee":
             cat = "coffee_table"
         new_p.append(_box_surface(_mat(o["transform"]), o["dimensions"], floor_y)); new_c.append(cat)
-    for t_lo, t_hi, cells, x0, z0, m, sl in tables:
+    for t_lo, t_hi, _, x0, z0, m, sl in tables:
         i, k = np.nonzero(m)
         top = np.full(len(i), (t_lo + t_hi) / 2 + 0.005)
         new_p.append(np.stack([x0 + (i + sl[0].start + 0.5) * 0.05, top, z0 + (k + sl[1].start + 0.5) * 0.05], 1))

@@ -45,29 +45,21 @@ ADE_TO_CATEGORY = {
     "box": "storage", "basket": "storage", "barrel": "storage", "ashcan": "trash",
     "washer": "washer", "dishwasher": "washer", "curtain": "curtain", "blind": "curtain",
     "mirror": "mirror", "clock": "clock", "fan": "fan", "radiator": "radiator", "piano": "piano",
-    "hood": "range_hood",
+    "hood": "range_hood", "bag": "backpack", "fountain": "drinking_fountain",
 }
 # Templates only the open-vocabulary detector (perception.perceptron_pass) finds: ADE20K has no such class.
 DETECTOR_ONLY = {"whiteboard", "projector", "exit_sign", "fire_extinguisher", "podium", "student_desk",
                  "projection_screen", "ceiling_fan", "chair_stack", "shower", "coat_rack", "wall_hooks",
                  "led_panel", "downlight", "linear_light", "pendant_lamp", "desk_lamp", "laptop",
                  "book_stack", "mug", "small_plant", "printer", "light_switch", "outlet", "thermostat",
-                 "fire_alarm", "smoke_detector", "soap_dispenser", "sanitizer_dispenser", "paper_towel_dispenser"}
-# Backpacks, globes, lockers, drinking fountains, umbrella stands.
-ADE_TO_CATEGORY.update({"bag": "backpack", "fountain": "drinking_fountain"})
-DETECTOR_ONLY |= {"globe", "locker", "umbrella_stand"}
+                 "fire_alarm", "smoke_detector", "soap_dispenser", "sanitizer_dispenser", "paper_towel_dispenser",
+                 "globe", "locker", "umbrella_stand"}
 CATEGORIES = sorted(set(ADE_TO_CATEGORY.values()) | DETECTOR_ONLY | {"other"})
 # Detected things without a template are "generic:<detected name>" (see perception.perceptron_pass); they are
 # built as a plain box and keep their name in the plan, so missing templates show up.
 GENERIC = "generic:"
 # Detected things that are a vanilla block: "vanilla:<block id>:<cube|model>:<detected name>" (perception.map_names).
 VANILLA = "vanilla:"
-
-
-def vanilla_parts(cat):
-    """(block id, is full cube, detected name) of a vanilla category."""
-    _, bid, kind, name = cat.split(":", 3)
-    return bid, kind == "cube", name
 STRUCTURAL = {"wall", "floor", "ceiling"}
 TEMPLATES = set(CATEGORIES) - STRUCTURAL - {"other"}
 # What each template is, for the detector's name mapping (perception.map_names_with_model).
@@ -109,32 +101,30 @@ TEMPLATE_INFO = {
     "smoke_detector": "a round ceiling smoke detector", "soap_dispenser": "a wall soap dispenser",
     "sanitizer_dispenser": "a wall hand sanitizer dispenser",
     "paper_towel_dispenser": "a wall paper towel dispenser",
-}
-TEMPLATE_INFO.update({
     "backpack": "a backpack, school bag or handbag", "globe": "a globe of the Earth, on a desk or a floor stand",
     "locker": "a locker or a bank of lockers", "drinking_fountain": "a drinking fountain or water bottle filler",
     "umbrella_stand": "an umbrella stand",
-})
+}
 assert set(TEMPLATE_INFO) == TEMPLATES, set(TEMPLATE_INFO) ^ TEMPLATES
 WALL_MOUNTED = {"window", "door", "painting", "sconce", "curtain", "mirror", "clock", "whiteboard", "exit_sign",
                 "fire_extinguisher", "bulletin_board", "projection_screen", "radiator", "range_hood", "wall_hooks",
                 "light_switch", "outlet", "thermostat", "fire_alarm", "soap_dispenser",
-                "sanitizer_dispenser", "paper_towel_dispenser"}
+                "sanitizer_dispenser", "paper_towel_dispenser", "drinking_fountain", "shelf"}
 TABLETOP = {"monitor", "laptop", "book_stack", "mug", "small_plant", "printer", "desk_lamp"}
 CEILING_FIXTURES = {"ceiling_light", "led_panel", "downlight", "linear_light", "pendant_lamp", "smoke_detector"}
-# Things that never stand on the floor grid.
-NO_FOOTPRINT = WALL_MOUNTED | CEILING_FIXTURES | {"chandelier", "ceiling_fan", "projector", "rug"} | TABLETOP
+# Things that never stand on the floor grid. A globe sits on its desk (or is placed on the floor below).
+NO_FOOTPRINT = WALL_MOUNTED | CEILING_FIXTURES | {"chandelier", "ceiling_fan", "projector", "rug", "globe"} | TABLETOP
 # Placement priority (earlier wins collisions).
 PRIORITY = ["bed", "counter", "fridge", "stove", "sink", "bathtub", "shower", "toilet", "wardrobe", "bookshelf",
             "cabinet", "dresser", "nightstand", "piano", "podium", "fireplace", "sofa", "desk", "student_desk",
             "table", "coffee_table", "washer", "tv", "chair", "chair_stack", "coat_rack",
-            "lamp", "fan", "storage", "trash", "microwave", "plant"]
+            "lamp", "fan", "storage", "trash", "microwave", "plant", "locker", "umbrella_stand", "backpack"]
 # Max height in blocks per category (None = up to the ceiling).
 MAX_HEIGHT = {"bed": 1, "table": 1, "desk": 1, "coffee_table": 1, "counter": 1, "chair": 1, "sofa": 1,
               "cabinet": 2, "storage": 1, "trash": 1, "washer": 1, "sink": 1, "bathtub": 1, "toilet": 1,
               "stove": 1, "microwave": 1, "plant": 1, "lamp": 2, "fireplace": 2, "tv": 2, "fan": 2,
               "podium": 2, "student_desk": 1, "chair_stack": 2, "nightstand": 1, "dresser": 2,
-              "piano": 2, "shower": 2, "coat_rack": 2}
+              "piano": 2, "shower": 2, "coat_rack": 2, "locker": 2, "umbrella_stand": 1, "backpack": 1}
 # Smallest believable cluster (points after 3 cm voxelisation) per category.
 MIN_POINTS = {"window": 60, "door": 120, "bed": 200, "rug": 150, "painting": 40, "plant": 25,
               "lamp": 25, "ceiling_light": 15, "chandelier": 25, "sconce": 10, "microwave": 30, "clock": 10,
@@ -144,10 +134,9 @@ MIN_POINTS = {"window": 60, "door": 120, "bed": 200, "rug": 150, "painting": 40,
               **{c: 8 for c in ("led_panel", "downlight", "linear_light", "pendant_lamp", "smoke_detector",
                                "desk_lamp", "laptop", "book_stack", "mug", "small_plant", "printer",
                                "light_switch", "outlet", "thermostat", "fire_alarm", "soap_dispenser",
-                               "sanitizer_dispenser", "paper_towel_dispenser")}}
+                               "sanitizer_dispenser", "paper_towel_dispenser")},
+              "backpack": 20, "globe": 15, "locker": 60, "drinking_fountain": 15, "umbrella_stand": 12}
 
-WALL_MOUNTED |= {"drinking_fountain", "shelf"}
-NO_FOOTPRINT |= {"drinking_fountain", "globe", "shelf"}   # a globe sits on its desk (or is placed on the floor below)
 # Raised beds. A bed cluster with most of its points above RAISED_Y is a bunk or a loft bed: a loft when furniture
 # stands under it (a desk, a dresser), else a bunk when part of the bed is also low. Thresholds are first guesses.
 # RAISED_Y is above an ordinary bed's headboard (most stop below 1.2 m), so a bed box that includes a headboard (a
@@ -167,9 +156,6 @@ UNDER_SHARE = 0.5                   # of the furniture's own footprint that is u
 PAINTING_MAX_M = 1.2                # posters and paintings, per side
 TALL_CABINET_M = 1.3                # a cabinet lower than this is built one block high
 UPPER_BUNK = 3                      # block y of a raised bed: two blocks of headroom below it
-PRIORITY += ["locker", "umbrella_stand", "backpack"]
-MAX_HEIGHT.update({"locker": 2, "umbrella_stand": 1, "backpack": 1})
-MIN_POINTS.update({"backpack": 20, "globe": 15, "locker": 60, "drinking_fountain": 15, "umbrella_stand": 12})
 
 SIDES = ("north", "south", "west", "east")
 AUTO_SCALE = 1.25  # default blocks per metre
@@ -177,6 +163,12 @@ BED_LENGTH_M = 1.9  # a bed is at least this long (metres) when its width is tur
 ENLARGE = 1.25     # automatic scales are this much larger: one-block furniture leaves more room to move
                    # (tuned with the Apache MapAnything, the default; the research variant measures rooms ~20% larger)
 OPPOSITE = {"north": "south", "south": "north", "west": "east", "east": "west"}
+
+
+def vanilla_parts(cat):
+    """(block id, is full cube, detected name) of a vanilla category."""
+    _, bid, kind, name = cat.split(":", 3)
+    return bid, kind == "cube", name
 
 
 # ----------------------------------------------------------------------------------- geometry
@@ -910,7 +902,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
         if cat.startswith(VANILLA) and cl["lo"][1] > 0.4 and not vanilla_parts(cat)[1]:
             # (Full cubes - bookcases, barrels - always stand on the floor; tables and chairs in front often
             # hide their lower part, so they are placed from the floor up like any furniture.)
-            bid, cube, name = vanilla_parts(cat)
+            bid, _, name = vanilla_parts(cat)
             # A single block in the air (a lantern, a bell): it hangs from its top, at its real position.
             objects.append({"type": "vanilla", "block": "minecraft:" + bid, "name": name, "cube": False, "hanging": True,
                             "x": int(room.bx(cl["c"][0])), "z": int(room.bz(cl["c"][2])), "w": 1, "d": 1, "h": 1,
@@ -1222,7 +1214,7 @@ def seating_scale(scale, clusters, log=print, lo=0.9, hi=1.35, cap=2.5 * AUTO_SC
 
     def mismatches(s):
         n = 0
-        for (i, ax, sign), (t, seats) in sides.items():
+        for (_, ax, _), (t, seats) in sides.items():
             along = 2 if ax == 0 else 0
             tl = max(1, round((t["hi"][along] - t["lo"][along]) * s))
             sl = sum(1 if c == "chair" else max(1, round(max(cl["hi"][0] - cl["lo"][0], cl["hi"][2] - cl["lo"][2]) * s))

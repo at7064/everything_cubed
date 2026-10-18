@@ -333,7 +333,7 @@ def compose_wall(img, seen, paints_rgb, paints_lab, default_paint, px, detail):
     s = max(1, px // 32)
     item = ndimage.binary_opening(item, structure=np.ones((2 * s + 1, 2 * s + 1)))
     item = ndimage.binary_closing(item, structure=np.ones((4 * s + 1, 4 * s + 1))) & seen
-    comp, n = ndimage.label(item)
+    comp, _ = ndimage.label(item)
     item = np.zeros_like(item)
     rects = []
     for i, sl in enumerate(ndimage.find_objects(comp), start=1):
