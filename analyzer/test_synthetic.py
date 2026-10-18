@@ -75,8 +75,10 @@ assert any(o["type"] == "bed" for o in plan["objects"])
 # --enlarge: the same room at 1.0 and 1.5 - real metres unchanged, blocks about 1.5x; an explicit scale is exact.
 small = build_plan(P_world, np.concatenate(cols), np.array(cats), Palette(builtin_surface_entries()), enlarge=1.0, log=lambda m: None)
 big = build_plan(P_world, np.concatenate(cols), np.array(cats), Palette(builtin_surface_entries()), enlarge=1.5, log=lambda m: None)
-assert small["metres"] == big["metres"] and abs(big["scale"] / small["scale"] - 1.5) < 0.01  # scale is stored rounded
-assert abs(big["size"]["x"] / small["size"]["x"] - 1.5) < 0.25 and big["size"]["y"] > small["size"]["y"], (small["size"], big["size"])
+# (base_scale: before the nudge that lets seats be centred on their tables; scale is stored rounded)
+assert small["metres"] == big["metres"] and abs(big["base_scale"] / small["base_scale"] - 1.5) < 0.01
+# Blocks: bigger in every direction (not exactly 1.5x, each scale may be nudged for its seating).
+assert all(big["size"][k] > small["size"][k] for k in "xyz"), (small["size"], big["size"])
 fixed = build_plan(P_world, np.concatenate(cols), np.array(cats), Palette(builtin_surface_entries()), scale=2.0, enlarge=1.5, log=lambda m: None)
 assert fixed["scale"] == 2.0
 print("enlarge:", small["size"], "->", big["size"])

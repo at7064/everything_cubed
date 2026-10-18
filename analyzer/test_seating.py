@@ -1,12 +1,13 @@
 """Checks roomplan.arrange_seating on the dorm scan that showed the problem: four sofas evenly around a coffee table
 (RoomPlan put each 1.0-1.2 m from the table's centre, one per side), at 1.385 blocks/m. Placed one by one they came
 out 1 block away on one side, 2 on another and one on a diagonal; as a group, each must sit on its own side, all at
-the same gap. A group that doesn't fit stays where it was.
+the same gap. A group that doesn't fit stays where it was. And the scale is nudged so a table side and the seats
+along it differ by an even number of blocks (a 1-block table can't have a 2-block sofa centred on it).
 Run: python test_seating.py
 """
 import numpy as np
 
-from roomplan import Room, arrange_seating
+from roomplan import Room, arrange_seating, seating_scale
 
 
 def cl(c, size):
@@ -49,3 +50,12 @@ kept = [dict(o) for o, _ in sofas]
 arrange_seating(placed, room, occ2, log=print)
 assert [dict(o) for o, _ in sofas] == kept, "a group that doesn't fit is left alone"
 print("OK")
+
+# The scale: at 1.385 blocks/m the 0.89 m table is 1 block and the 1.27 m sofas 2, which can't be centred. A
+# nearby scale makes the table 2 blocks along the sofas while it stays 1 along the 1-block end sofas.
+clusters = [("coffee_table", table[1])] + [("sofa", c) for _, c in sofas]
+s2 = seating_scale(1.385, clusters, log=print)
+assert 1.385 * 0.9 <= s2 <= 1.385 * 1.35 and s2 != 1.385, s2
+assert round(0.89 * s2) == 2 and round(1.27 * s2) == 2 and round(0.82 * s2) == 1 and round(0.83 * s2) == 1, s2
+assert seating_scale(s2, clusters, log=print) == s2, "an even scale is kept"
+print(f"scale 1.385 -> {s2:.2f}: OK")

@@ -461,7 +461,70 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
         hm = 2.5
     hm = float(np.clip(hm, 2.0, 40.0 if known_height else 25.0))
 
+    # ---------------- object clusters (in metres; they don't depend on the scale)
+    obj_clusters = []
+    for cat in CATEGORIES + sorted(c for c in set(cats.tolist()) if c.startswith((GENERIC, VANILLA))):
+        if cat in STRUCTURAL or cat == "other":
+            continue
+        m = np.flatnonzero(cats == cat)
+        # Chandeliers are open metalwork alone in the air: a wider radius keeps one from splitting into parts.
+        for idx in cluster_category(loc[m], eps=(0.35 if cat in ("chandelier", "ceiling_fan", "linear_light", "led_panel") else 0.12) * f):
+            small = cat.startswith(VANILLA) and not vanilla_parts(cat)[1]  # a lantern or candle is small
+            if len(idx) < MIN_POINTS.get(cat, 15 if small else 60):
+                continue
+            obj_clusters.append((cat, summarize_cluster(loc[m][idx], colors[m][idx])))
+    matched = 0
+    used_clusters = set()
+    for inst in object_instances or []:
+        p = (np.asarray(inst["points"], float) - origin) @ R.T
+        p[:, 1] -= y_shift
+        p *= f
+        center = (np.asarray(inst["center"], float) - origin) @ R.T
+        center[1] -= y_shift
+        center *= f
+        if len(p) < 20 or not np.isfinite(p).all() or not np.isfinite(center).all():
+            continue
+        cl = {"lo": np.percentile(p, 5, axis=0), "hi": np.percentile(p, 95, axis=0),
+              "c": center, "rgb": np.median(inst["colors"], axis=0), "n": len(p),
+              "source_views": inst["views"]}
+        candidates = [(np.linalg.norm(old["c"] - center), j) for j, (cat, old) in enumerate(obj_clusters)
+                      if cat == inst["category"] and j not in used_clusters]
+        if candidates:
+            dist, j = min(candidates)
+            if dist < 0.8 * f:
+                obj_clusters[j] = (inst["category"], cl)
+                used_clusters.add(j)
+                matched += 1
+                continue
+        obj_clusters.append((inst["category"], cl))
+        matched += 1
+    if matched:
+        log(f"[plan] {matched} object(s) located from matching detections in multiple views")
+    log("[plan] detected: " + ", ".join(f"{n}x {c}" for c, n in Counter(c for c, _ in obj_clusters).items()))
+
+    # Generic segmentation light labels are refined from shape and position.
+    refined = []
+    for cat, cl in obj_clusters:
+        span = cl["hi"] - cl["lo"]
+        if cat == "ceiling_light":
+            width = max(span[0], span[2])
+            if width > 0.8 and min(span[0], span[2]) > 0.35:
+                cat = "led_panel"
+            elif width > 0.7 and min(span[0], span[2]) < 0.35:
+                cat = "linear_light"
+            elif cl["hi"][1] < hm - 0.25:
+                cat = "pendant_lamp"
+            else:
+                cat = "downlight"
+        elif cat == "lamp" and cl["lo"][1] > 0.55:
+            cat = "desk_lamp"
+        elif cat == "plant" and cl["lo"][1] > 0.55:
+            cat = "small_plant"
+        refined.append((cat, cl))
+    obj_clusters = refined
+
     wm, dm = bounds["xmax"] - bounds["xmin"], bounds["zmax"] - bounds["zmin"]
+    base_scale = scale
     if scale is None:
         # 1.25 blocks per metre (rooms felt a bit small at 1:1), enlarged so the short side has at
         # least 6.25 blocks, at most 2.5 blocks per metre.
@@ -470,6 +533,9 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             scale = min(2 * AUTO_SCALE, 5 * AUTO_SCALE / min(wm, dm))
         # Furniture is whole blocks (a chair is one), so at true proportions rooms feel crowded: build bigger.
         scale *= enlarge
+        # Nudged so seats around a table can be centred on its sides (see seating_scale).
+        base_scale = scale
+        scale = seating_scale(scale, obj_clusters, log)
     room = Room(bounds["xmin"], bounds["xmax"], bounds["zmin"], bounds["zmax"], hm, scale)
     if ctx is not None:
         ctx.update(origin=origin, R=R, y_shift=y_shift, f=f, room=room)
@@ -532,66 +598,6 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
     # ---------------- objects
     occupancy = -np.ones((W, D), int)
     openings, objects = [], []
-    obj_clusters = []
-    for cat in CATEGORIES + sorted(c for c in set(cats.tolist()) if c.startswith((GENERIC, VANILLA))):
-        if cat in STRUCTURAL or cat == "other":
-            continue
-        m = np.flatnonzero(cats == cat)
-        # Chandeliers are open metalwork alone in the air: a wider radius keeps one from splitting into parts.
-        for idx in cluster_category(loc[m], eps=(0.35 if cat in ("chandelier", "ceiling_fan", "linear_light", "led_panel") else 0.12) * f):
-            small = cat.startswith(VANILLA) and not vanilla_parts(cat)[1]  # a lantern or candle is small
-            if len(idx) < MIN_POINTS.get(cat, 15 if small else 60):
-                continue
-            obj_clusters.append((cat, summarize_cluster(loc[m][idx], colors[m][idx])))
-    matched = 0
-    used_clusters = set()
-    for inst in object_instances or []:
-        p = (np.asarray(inst["points"], float) - origin) @ R.T
-        p[:, 1] -= y_shift
-        p *= f
-        center = (np.asarray(inst["center"], float) - origin) @ R.T
-        center[1] -= y_shift
-        center *= f
-        if len(p) < 20 or not np.isfinite(p).all() or not np.isfinite(center).all():
-            continue
-        cl = {"lo": np.percentile(p, 5, axis=0), "hi": np.percentile(p, 95, axis=0),
-              "c": center, "rgb": np.median(inst["colors"], axis=0), "n": len(p),
-              "source_views": inst["views"]}
-        candidates = [(np.linalg.norm(old["c"] - center), j) for j, (cat, old) in enumerate(obj_clusters)
-                      if cat == inst["category"] and j not in used_clusters]
-        if candidates:
-            dist, j = min(candidates)
-            if dist < 0.8 * f:
-                obj_clusters[j] = (inst["category"], cl)
-                used_clusters.add(j)
-                matched += 1
-                continue
-        obj_clusters.append((inst["category"], cl))
-        matched += 1
-    if matched:
-        log(f"[plan] {matched} object(s) located from matching detections in multiple views")
-    log("[plan] detected: " + ", ".join(f"{n}x {c}" for c, n in Counter(c for c, _ in obj_clusters).items()))
-
-    # Generic segmentation light labels are refined from shape and position.
-    refined = []
-    for cat, cl in obj_clusters:
-        span = cl["hi"] - cl["lo"]
-        if cat == "ceiling_light":
-            width = max(span[0], span[2])
-            if width > 0.8 and min(span[0], span[2]) > 0.35:
-                cat = "led_panel"
-            elif width > 0.7 and min(span[0], span[2]) < 0.35:
-                cat = "linear_light"
-            elif cl["hi"][1] < hm - 0.25:
-                cat = "pendant_lamp"
-            else:
-                cat = "downlight"
-        elif cat == "lamp" and cl["lo"][1] > 0.55:
-            cat = "desk_lamp"
-        elif cat == "plant" and cl["lo"][1] > 0.55:
-            cat = "small_plant"
-        refined.append((cat, cl))
-    obj_clusters = refined
 
     def nearest_side(cx, cz):
         d = room.wall_dist(cx, cz)
@@ -781,6 +787,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
     return {
         "version": 1,
         "scale": round(float(scale), 3),
+        "base_scale": round(float(base_scale), 3),   # before seating_scale's nudge
         "metres": {"x": round(wm, 2), "z": round(dm, 2), "y": round(hm, 2)},
         "size": {"x": W, "z": D, "y": H},
         "floor": {"palette": floor_blocks, "grid": floor_grid.tolist()},
@@ -914,9 +921,60 @@ def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
 
 SEATS = ("chair", "sofa")
 SEAT_TABLES = ("table", "coffee_table", "desk")
+SEAT_REACH = 1.8   # metres from a table's centre for a seat to belong to it
 
 
-def arrange_seating(placed, room: Room, occupancy, log=print, reach=1.8):
+def seat_sides(clusters, reach=SEAT_REACH):
+    """{(table index, axis, sign): [seat clusters]}: the table side each chair or sofa is on. axis 0: the seat is
+    east/west of the table, so the seats on that side line up along z; axis 2: north/south, along x."""
+    tables = [(i, cl) for i, (c, cl) in enumerate(clusters) if c in SEAT_TABLES]
+    sides = {}
+    if not tables:
+        return sides
+    for c, cl in clusters:
+        if c not in SEATS:
+            continue
+        i, t = min(tables, key=lambda t: np.hypot(*(t[1]["c"] - cl["c"])[[0, 2]]))
+        off = cl["c"] - t["c"]
+        if np.hypot(off[0], off[2]) > reach:
+            continue
+        ax = 0 if abs(off[0]) >= abs(off[2]) else 2
+        sides.setdefault((i, ax, 1 if off[ax] > 0 else -1), (t, []))[1].append((c, cl))
+    return sides
+
+
+def seating_scale(scale, clusters, log=print, lo=0.9, hi=1.35, cap=2.5 * AUTO_SCALE):
+    """An automatic scale, nudged (within lo..hi of it) so that on every side of a table its length in blocks and
+    the seats along it differ by an even number: only then can the seats be centred on it. A 1-block coffee table
+    with a 2-block sofa can't be, however they are moved. Chairs are 1 block, sofas their long side; the nearest
+    scale with the fewest mismatched sides wins, and the scale is kept when nothing is better."""
+    sides = seat_sides(clusters)
+    if not sides:
+        return scale
+
+    def mismatches(s):
+        n = 0
+        for (i, ax, sign), (t, seats) in sides.items():
+            along = 2 if ax == 0 else 0
+            tl = max(1, round((t["hi"][along] - t["lo"][along]) * s))
+            sl = sum(1 if c == "chair" else max(1, round(max(cl["hi"][0] - cl["lo"][0], cl["hi"][2] - cl["lo"][2]) * s))
+                     for c, cl in seats)
+            n += (tl - sl) % 2
+        return n
+
+    base = mismatches(scale)
+    if base == 0:
+        return scale
+    cands = [s for s in np.arange(scale * lo, min(scale * hi, max(cap, scale)) + 1e-9, 0.01)]
+    best = min(cands, key=lambda s: (mismatches(s), abs(s - scale)))
+    if mismatches(best) >= base:
+        return scale
+    log(f"[plan] scale {scale:.2f} -> {best:.2f} blocks/m so seats can be centred on their tables "
+        f"({base} -> {mismatches(best)} uneven side(s))")
+    return float(best)
+
+
+def arrange_seating(placed, room: Room, occupancy, log=print, reach=SEAT_REACH):
     """Chairs and sofas around a table, laid out as a group: each on the side of the table it really is on, all at
     the same gap from it (the group's median real gap), centred along that side and in their real order.
     Placed one by one, seats ~1.1 m from a table came out 1 block away on one side and 2 on another (1.5 blocks
