@@ -35,6 +35,9 @@ final class AppModel: ObservableObject, FrameSink {
     @Published private(set) var source: CaptureSource?
     /// The last scan is built in game and can be spectated: it had LiDAR depth and ARKit's map of it was kept.
     @Published private(set) var canSpectate = false
+    /// The last scan was a LiDAR room scan (RoomPlan) on a device with LiDAR: the only kind spectate can follow.
+    /// The Spectate button is hidden otherwise (photo scans, phones without LiDAR).
+    @Published private(set) var scanIsLidar = false
 
     /// The last scan's folder in the mod, and its RoomPlan source, kept running: spectate continues that RoomPlan
     /// session, so its live objects are in the same coordinates as the scan (and the built house).
@@ -171,6 +174,7 @@ final class AppModel: ObservableObject, FrameSink {
 
     private func beginCapture(name: String, lidar: Bool) {
         canSpectate = false
+        scanIsLidar = false
         scanFolder = nil
         scanSource?.close()
         scanSource = nil
@@ -251,6 +255,7 @@ final class AppModel: ObservableObject, FrameSink {
         scanHadDepth = framesWithDepth > 0
         // A RoomPlan scan stays running (paused RoomPlan, live AR session) so spectate can continue it.
         scanSource = src as? RoomPlanSource
+        scanIsLidar = scanSource != nil && RoomPlanSource.isSupported
         sendScan()
     }
 
