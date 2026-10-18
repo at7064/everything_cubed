@@ -14,7 +14,7 @@ copying. Two scan types:
 1. In Minecraft (operator / cheats on), run `/everything_cubed phone`. Chat shows a 6-digit pairing code and the
    computer's address.
 2. Open the app on the same Wi-Fi. The game shows up under *Games on this network* (Bonjour). If it doesn't,
-   type the address from chat. Enter the code and connect.
+   tap *Game not listed?* below it and type the address from chat. Enter the code and connect.
 3. Name the room and start the scan. On a LiDAR device it is Apple RoomPlan's guided scan by default: when you
    finish, RoomPlan's room model (walls, doors, windows, furniture boxes) is sent too and saved as `room.json`.
    Without LiDAR (or with the LiDAR switch off) it is a photo scan with ARKit tracking: walk along the walls rather
