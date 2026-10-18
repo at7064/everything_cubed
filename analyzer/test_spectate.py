@@ -270,7 +270,7 @@ live_objs = [rp("al-chair", "chair", (1.5, 1.5), CHAIR), rp("al-table", "table",
              rp("al-bed", "bed", (5.4, 3.9), BED, yaw=90)]
 got = []
 for _ in range(8):
-    m, a = fw.update({"walls": [shifted(w) for w in walls], "objects": [shifted(o) for o in live_objs]}, "normal")
+    m, a = fw.update({"walls": [shifted(w) for w in walls], "objects": [shifted(o) for o in live_objs]})
     got += m + a
 assert not got, got
 back = fw.align.world(frame) @ G
@@ -278,7 +278,7 @@ assert np.allclose(back, np.eye(4), atol=0.02), np.round(back, 3)
 assert {v["index"] for v in fw.live.values()} == {0, 1, 2}, fw.live
 live_objs[0] = rp("al-chair", "chair", (1.5, 2.7), CHAIR)                 # the chair really moves 1.2 m
 for _ in range(8):
-    m, a = fw.update({"walls": [shifted(w) for w in walls], "objects": [shifted(o) for o in live_objs]}, "normal")
+    m, a = fw.update({"walls": [shifted(w) for w in walls], "objects": [shifted(o) for o in live_objs]})
     got += m + a
 true_move = builder._place("chair", sa.Pose(frame, live_objs[0]), skip=0)
 assert len(got) == 1 and (got[0]["to"]["x"], got[0]["to"]["z"]) == (true_move["x"], true_move["z"]), (got, true_move)

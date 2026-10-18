@@ -1,4 +1,3 @@
-import ARKit
 import AVFoundation
 import QuartzCore
 import RoomPlan
@@ -335,27 +334,7 @@ final class AppModel: ObservableObject, FrameSink {
         guard phase == .spectating, spectateAllowed, now - lastRoomSent >= roomInterval, canAcceptFrame,
               let json = try? JSONEncoder().encode(room) else { return }
         lastRoomSent = now
-        // ARKit's tracking state goes along: the live objects are only in the scan's coordinates while it is normal.
-        let tracking = Self.describe(scanSource?.arSession.currentFrame?.camera.trackingState)
-        client.send(WireMessage("room", ["tracking": tracking],
-                                blobs: [.init(name: "room", format: "roomplan.json", data: json)]))
-    }
-
-    /// "normal", "limited: relocalizing" (or initializing, excessiveMotion, insufficientFeatures), "unavailable".
-    private static func describe(_ state: ARCamera.TrackingState?) -> String {
-        switch state {
-        case .normal?: return "normal"
-        case .limited(let reason)?:
-            switch reason {
-            case .initializing: return "limited: initializing"
-            case .relocalizing: return "limited: relocalizing"
-            case .excessiveMotion: return "limited: excessiveMotion"
-            case .insufficientFeatures: return "limited: insufficientFeatures"
-            @unknown default: return "limited"
-            }
-        case .notAvailable?: return "unavailable"
-        case nil: return "no frame"
-        }
+        client.send(WireMessage("room", blobs: [.init(name: "room", format: "roomplan.json", data: json)]))
     }
 
     private func sendScan() {

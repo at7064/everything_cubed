@@ -371,7 +371,6 @@ class Furniture:
             f"linked to RoomPlan objects")
         self.live = {}             # live RoomPlan id -> {"scan", "index": plan object index or None, "anchor": Pose}
         self.pending = {}          # live id -> (target key, updates in a row)
-        self.tracking, self.updates = None, 0   # last tracking state logged, room updates seen
         self.scan_walls, self.scan_objects = _room_walls(frame, scan_room), _room_objects(frame, scan_room)
         self.align = None          # Alignment of RoomPlan's live coordinates onto the scan's, once agreed
         self.align_logged = None   # the alignment last logged
@@ -459,13 +458,7 @@ class Furniture:
         self.pending[rid] = (key, n)
         return n >= MOVE_UPDATES
 
-    def update(self, room, tracking=None):
-        """tracking: ARKit's tracking state the phone sent with this room update (None from an older app)."""
-        if self.updates == 0 or tracking != self.tracking:
-            log(f"[spectate] phone tracking: {tracking or 'not sent (older app)'}"
-                + (f" (was {self.tracking or 'not sent'})" if self.updates else ""))
-            self.tracking = tracking
-        self.updates += 1
+    def update(self, room):
         moves, adds = [], []
         if not self._realign(room):
             return moves, adds
@@ -615,7 +608,7 @@ class People:
 def step(furniture, people, header, blobs):
     out = {"type": "update", "moves": [], "adds": [], "people": people.kept()}
     if header.get("type") == "room" and "room" in blobs:
-        out["moves"], out["adds"] = furniture.update(json.loads(blobs["room"]), header.get("tracking"))
+        out["moves"], out["adds"] = furniture.update(json.loads(blobs["room"]))
     elif header.get("type") == "frame" and header.get("tracking", "normal") == "normal":
         fr = decode_frame(header, blobs)
         if fr is not None:
