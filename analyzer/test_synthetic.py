@@ -209,6 +209,29 @@ a, b = beds3
 assert not (a["x"] < b["x"] + b["w"] and b["x"] < a["x"] + a["w"] and a["z"] < b["z"] + b["d"] and b["z"] < a["z"] + a["d"]), \
     ("two beds in one footprint", beds3)
 
+# The Lander scan's second loft: a bed set at a medium height (mattress about 1 m up, little of it below 0.7 m)
+# with its end frame 15 cm away seen as a separate thin sliver of "bed". One loft, not a bed plus a 1-block loft.
+from roomplan import absorb_fragments
+assert bed_style(box((0, 0, 0), (2, 1.6, 1), raised=0.22, low=0.21), [], 5) == "loft", "raised by having little low"
+pts3, cols3, cats3 = [], [], []
+add3(30000, (0, 0, 0), (6, 0, 4), "floor"); add3(15000, (0, 2.6, 0), (6, 2.6, 4), "ceiling")
+for lo, hi in (((0, 0, 0), (6, 2.6, 0)), ((0, 0, 4), (6, 2.6, 4)), ((0, 0, 0), (0, 2.6, 4)), ((6, 0, 0), (6, 2.6, 4))):
+    add3(9000, lo, hi, "wall")
+add3(3000, (0.3, 0.75, 0.05), (2.4, 1.3, 1.1), "bed", (90, 90, 160))     # mattress and bedding at a medium height
+add3(500, (0.3, 0.45, 0.05), (2.4, 0.7, 1.1), "bed", (90, 90, 160))      # its frame below
+add3(700, (0.0, 0.5, 0.05), (0.15, 1.7, 1.05), "bed", (90, 90, 160))     # the end frame, a thin sliver
+P3 = np.concatenate(pts3)
+logs = []
+rp5 = build_plan(P3, np.concatenate(cols3), np.array(cats3), Palette(builtin_surface_entries()), scale=2.0, enlarge=1.0,
+                 log=logs.append)
+beds5 = [o for o in rp5["objects"] if o["type"] == "bed"]
+assert len(beds5) == 1 and beds5[0].get("style") == "loft", (beds5, [m for m in logs if "bed" in m])
+assert any("1 thin piece(s) joined" in m for m in logs), logs
+# A sliver with no bed beside it is dropped; a whole bed is never treated as a piece.
+lone = absorb_fragments([("bed", box((0, 0, 0), (0.2, 1, 2), n=100, raised=0.5, low=0.1)),
+                         ("bed", box((3, 0, 0), (5, 0.6, 1), n=900, raised=0.0, low=1.0))], log=lambda m: None)
+assert len(lone) == 1 and lone[0][1]["lo"][0] == 3, lone
+
 # Posters and cabinets: a 2.2 m wide poster mask is built at most PAINTING_MAX_M a side; a 1.0 m cabinet is one block
 # (level with the desks), a 1.8 m one stays tall.
 from roomplan import PAINTING_MAX_M

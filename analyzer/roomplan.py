@@ -152,7 +152,13 @@ NO_FOOTPRINT |= {"drinking_fountain", "globe", "shelf"}   # a globe sits on its 
 # RAISED_Y is above an ordinary bed's headboard (most stop below 1.2 m), so a bed box that includes a headboard (a
 # RoomPlan box is sampled down its sides) does not read as raised; a bunk's or loft's upper deck is at about 1.3-1.8 m.
 RAISED_Y, LOW_Y = 1.2, 0.7          # metres above the floor
-RAISED_SHARE, LOW_SHARE = 0.35, 0.2
+# Raised: much of it high, or little of it low (a bed on the floor has most of its points below LOW_Y; a loft set at
+# a medium height has neither). A bunk has its lower mattress: at least LOW_SHARE low.
+RAISED_SHARE, LOW_SHARE = 0.35, 0.3
+# Thinner than this (metres, across the floor) is part of something, not the whole thing: a loft's end frame or ladder
+# comes out as a sliver of "bed" next to the bed.
+MIN_SIDE = {"bed": 0.5}
+FRAGMENT_REACH = 0.4
 # Furniture that stands under a loft bed. Not chairs, nightstands or bins: they stand next to any bed.
 UNDER_LOFT = {"desk", "table", "dresser", "cabinet", "wardrobe", "sofa", "storage", "fridge", "bookshelf",
               "student_desk"}
@@ -376,6 +382,35 @@ def footprint_overlap(a, b):
         return 0.0
     area = lambda c: max(1e-6, (c["hi"][0] - c["lo"][0]) * (c["hi"][2] - c["lo"][2]))
     return ix * iz / min(area(a), area(b))
+
+
+def absorb_fragments(obj_clusters, log=print):
+    """A cluster thinner than MIN_SIDE of its category is a piece of a neighbour of the same category (within
+    FRAGMENT_REACH): joined to it (box union, point-weighted height shares), or dropped when there is none."""
+    out = list(obj_clusters)
+    joined = dropped = 0
+    for cat, min_side in MIN_SIDE.items():
+        def thin(cl):
+            return min(cl["hi"][0] - cl["lo"][0], cl["hi"][2] - cl["lo"][2]) < min_side
+        for frag in [cl for c, cl in out if c == cat and thin(cl)]:
+            def gap(o):
+                return max(max(o["lo"][0] - frag["hi"][0], frag["lo"][0] - o["hi"][0], 0),
+                           max(o["lo"][2] - frag["hi"][2], frag["lo"][2] - o["hi"][2], 0))
+            hosts = [o for c, o in out if c == cat and o is not frag and not thin(o) and gap(o) <= FRAGMENT_REACH]
+            out = [(c, o) for c, o in out if o is not frag]
+            if not hosts:
+                dropped += 1
+                continue
+            host = min(hosts, key=gap)
+            n = host["n"] + frag["n"]
+            grown = dict(host, lo=np.minimum(host["lo"], frag["lo"]), hi=np.maximum(host["hi"], frag["hi"]), n=n,
+                         **{k: (host[k] * host["n"] + frag[k] * frag["n"]) / n for k in ("raised", "low")
+                            if k in host and k in frag})
+            out = [(c, grown if o is host else o) for c, o in out]
+            joined += 1
+    if joined or dropped:
+        log(f"[plan] {joined} thin piece(s) joined to the object beside them, {dropped} dropped (too thin to be whole)")
+    return out
 
 
 def merge_duplicates(obj_clusters, log=print):
@@ -730,7 +765,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
         matched += 1
     if matched:
         log(f"[plan] {matched} object(s) located from matching detections in multiple views")
-    obj_clusters = merge_duplicates(obj_clusters, log)
+    obj_clusters = absorb_fragments(merge_duplicates(obj_clusters, log), log)
     log("[plan] detected: " + ", ".join(f"{n}x {c}" for c, n in Counter(c for c, _ in obj_clusters).items()))
 
     # Generic segmentation light labels are refined from shape and position.
@@ -1004,7 +1039,7 @@ def bed_style(cl, obj_clusters, H):
     """"bunk", "loft" or None (an ordinary bed) from the bed cluster's heights and what stands under it.
     H is the room's interior height in blocks: a raised bed needs UPPER_BUNK blocks below it and two above (to climb
     on and stand on it; HouseBuilder builds an ordinary bed otherwise)."""
-    if H < UPPER_BUNK + 2 or cl.get("raised", 0.0) < RAISED_SHARE:
+    if H < UPPER_BUNK + 2 or (cl.get("raised", 0.0) < RAISED_SHARE and cl.get("low", 1.0) >= LOW_SHARE):
         return None
     def share_under(o):
         ix = min(o["hi"][0], cl["hi"][0]) - max(o["lo"][0], cl["lo"][0])
