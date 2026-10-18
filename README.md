@@ -23,13 +23,13 @@ reconstruction step is skipped.
 
 ### Spectate: the room, live
 
-Spectate starts from a room you have just scanned with LiDAR and built. When the house stands, the app offers
-**Scan another room** or **Spectate this room**. Spectating, the phone lines up with the scan (point it at the
-room) and the inside of the house follows the real room about 5 times a second, through the same LiDAR pipeline
-as build. The build is the starting state: a piece of furniture only goes, or something new only appears, once the
-LiDAR has clearly seen it for about a second, and anything unclear stays as built. The floor, walls and ceiling
-never change. People show up as villagers. You are in spectator mode so nothing you do disturbs the blocks.
-`/everything_cubed spectate stop` (or **Stop** in the app) gives you your game mode back, and
+Spectate starts from a room you have just scanned with LiDAR (RoomPlan) and built. When the house stands, the app
+offers **Scan another room** or **Spectate this room**. Spectating continues the scan's RoomPlan session, and the
+furniture in game follows the real room: move a chair or the table and it moves in game, as the same piece of
+furniture, once RoomPlan has clearly placed it somewhere else for about a second. Something new only appears when
+RoomPlan identifies it as an object (with medium or high confidence). No single blocks are ever placed, and anything
+RoomPlan is unsure of stays as built. People show up as villagers. You are in spectator mode so nothing you do
+disturbs the house. `/everything_cubed spectate stop` (or **Stop** in the app) gives you your game mode back, and
 `/everything_cubed undo` reverts the changes.
 
 Furniture is drawn as detailed models (legs, drawers, cushions, burners, ...) around the real blocks that do the work:

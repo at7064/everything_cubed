@@ -667,7 +667,8 @@ def main(argv=None):
                       "metric": True, "lidar": True, "roomplan": room is not None}
     # How ARKit world coordinates map onto the plan's blocks, for spectate (spectate_analyzer.PlanFrame): a point P
     # is at room metres loc = ((P - origin) @ R.T - [0, y_shift, 0]) * f, block x = (loc.x - xmin) / (xmax - xmin) * W,
-    # z likewise, interior row y / hm * H (row 0 = first air layer). The phone relocalises to this scan's world.
+    # z likewise, interior row y / hm * H (row 0 = first air layer). Spectate continues this scan's RoomPlan
+    # session, so its live objects are in this scan's world coordinates.
     r = ctx["room"]
     plan["arkit"] = {"origin": [float(v) for v in ctx["origin"]], "R": [[float(v) for v in row] for row in ctx["R"]],
                      "y_shift": float(ctx["y_shift"]), "f": float(ctx["f"]),

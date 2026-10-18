@@ -123,33 +123,32 @@ for a 34-photo scan on a laptop, and only numpy, SciPy, scikit-learn and Pillow.
 Photo-only flags (`--perceptron`, `--backend`, model names) are ignored with a log line.
 `python test_lidar.py` checks it on a synthetic scan.
 
-## Spectate: live LiDAR (`spectate_analyzer.py`)
+## Spectate: furniture from RoomPlan, live (`spectate_analyzer.py`)
 
-The mod starts this worker when the iOS app spectates a room it has scanned and built, and keeps it running. It
-reads the phone's frames on stdin (about 5 a second) and answers each with one JSON line of block changes and
-people. `lidar_analyzer.py` saves an `arkit` frame in every LiDAR plan: how ARKit's world metres map onto the plan's
-blocks. The phone relocalises to the scan's world map, so each frame (unprojected with `frame_geometry`, as for
-build) lands on the built house's blocks. New blocks are coloured with build's surface palette. A frame takes about
-11 ms.
+The mod starts this worker when the iOS app spectates a room it has scanned with RoomPlan and built, and keeps it
+running. The app continues the scan's RoomPlan session, so RoomPlan's live objects (measured with the LiDAR) are in
+the scan's coordinates; `lidar_analyzer.py` saves an `arkit` frame in every LiDAR plan that maps them onto the
+plan's blocks. The worker reads RoomPlan's live room model and camera frames on stdin (about 5 a second each) and
+answers each with one JSON line.
 
-The build is the starting state, taken as certain (`--baseline`: the blocks inside the house that hold something
-now). Only the inside changes; the floor, walls and ceiling never do. Only confident changes reach the world:
+The build is the starting state, taken as certain. Only whole pieces of furniture change, and only from RoomPlan's
+objects; no single blocks are ever placed:
 
-- evidence is kept on 3 x 3 x 3 sub-cells per block. A sub-cell changes only when 5 frames in a row show the
-  change clearly, with high-confidence LiDAR depth closer than 5 m. A frame that shows it both ways, or only at
-  low confidence, resets its count, and sub-cells out of view keep theirs;
-- a built block goes only when 2/3 of its sub-cells are clearly empty (a chair fills about half its block, so it
-  stays), and it takes its whole furniture model with it. Built blocks are never recoloured;
-- a new block appears where sub-cells are newly and clearly filled;
-- depth within 10 cm of the floor, walls or ceiling is that surface, not something new;
-- frames before the phone has relocalised are no evidence;
-- people (masked by the phone) are never built. They are grouped into tracked positions, which the mod shows as
-  villagers.
+- every built piece is linked to the RoomPlan object of the scan it came from (`room.json`), by kind and position;
+- a piece moves when RoomPlan places its object more than 25 cm or 25 degrees from where it was, onto a different
+  footprint, the same one for 5 updates in a row. The new footprint, height and facing come from
+  `roomplan.place_object`, as in build; material and colour stay. The mod takes the whole model away and builds it
+  again at the new place;
+- a new piece is added only when RoomPlan identifies a new object with medium or high confidence, stable for 5
+  updates;
+- low-confidence objects, jitter within a footprint, and objects RoomPlan stops reporting change nothing;
+- people are found in the frames (the phone's person mask over LiDAR depth) and reported as tracked positions,
+  which the mod shows as villagers.
 
-`python test_spectate.py` streams a synthetic built room through it. It checks that seeing the room as built
-changes nothing (a half-filled block stays), and that a box seen in one frame, low-confidence views and
-relocalising frames change nothing. A crate carried away goes, a new box appears, and a person walking in is
-reported, never built.
+`python test_spectate.py` streams synthetic RoomPlan updates through it. It checks that the room as scanned (and
+with 5 cm jitter) changes nothing, a chair away for 3 updates changes nothing, a chair moved for good moves once as
+the same chair, a new sofa is added at medium confidence but not low, a table RoomPlan stops reporting stays, a
+person is reported, and that no single blocks are ever sent.
 
 ## Optional: open-vocabulary detection (`--perceptron`)
 

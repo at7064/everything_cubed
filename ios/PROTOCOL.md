@@ -25,7 +25,7 @@ Implementations: `ios/EverythingCubedScanner/Network/WireMessage.swift` and
 | `hello` | `protocol` (1), `code` (pairing code from `/everything_cubed phone`), `device`, `app` | |
 | `begin` | `mode` (`capture` / `spectate`), `folder` (spectate: the scan to spectate, from `ready`), `name`, `source` (`roomplan`: RoomPlan's LiDAR scan; `tracked`: photos under ARKit world tracking, any iPhone; `arkit-live`: spectate, LiDAR), `app` | |
 | `frame` | `seq`, `kind` (`keyframe` / `photo`), `time`, `tracking`, `imageSize` [w,h], `depthSize` [w,h], `K` (3×3), `cam2world` (4×4) | `image` (jpeg), `depth` (f16), `confidence` (u8), `person` (u8, spectate) |
-| `room` | | `room` (RoomPlan `CapturedRoom` as JSON) |
+| `room` | | `room` (RoomPlan `CapturedRoom` as JSON: the finished scan's, or the live one while spectating) |
 | `end` | `build` (default true), `scale` (blocks per metre, optional) | |
 | `ping` | | |
 
@@ -64,13 +64,14 @@ The analyzer reads `capture.json`: frames with depth go to `analyzer/lidar_analy
 
 ## Mode `spectate`
 
-Starts from a scan the player has built (their last build, named by `folder`); the mod refuses it otherwise. The
-phone relocalises to the scan's ARKit world map, so its frames are in the scan's coordinates, and sends no frame
-until tracking is normal. LiDAR only: frames without depth are skipped. The phone streams `frame`s continuously,
-every 0.2 s, until `end` (or until the mod sends `stopped`). Nothing is saved: each frame goes to
+Starts from a RoomPlan scan the player has built (their last build, named by `folder`); the mod refuses it
+otherwise. The phone continues that scan's RoomPlan session, so everything is in the scan's coordinates, and sends
+`room` (RoomPlan's live room model) and `frame` (LiDAR frames with a `person` mask, for people) about every 0.2 s
+each, until `end` (or until the mod sends `stopped`). Nothing is saved: they go to
 `analyzer/spectate_analyzer.py`, which the mod keeps running with the scan's `plan.json` (its `arkit` frame maps
-ARKit metres onto the plan's blocks) and the blocks inside the house as built. While it works on one frame, only
-the newest one that arrives is kept. The player is in spectator mode until the session ends.
+ARKit metres onto the plan's blocks) and `room.json`. It answers with whole pieces of furniture to move or add, never
+single blocks. While it works on one message, only the newest of each kind that arrives is kept. The player is in
+spectator mode until the session ends.
 
 ## Extending
 

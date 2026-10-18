@@ -1,5 +1,6 @@
-import ARKit
 import AVFoundation
+import QuartzCore
+import RoomPlan
 import Foundation
 import Network
 import UIKit
@@ -35,11 +36,14 @@ final class AppModel: ObservableObject, FrameSink {
     /// The last scan is built in game and can be spectated: it had LiDAR depth and ARKit's map of it was kept.
     @Published private(set) var canSpectate = false
 
-    /// The last scan's folder in the mod, and ARKit's map of the room from it: spectate relocalises to that map, so
-    /// its live frames are in the same coordinates as the scan (and the built house).
+    /// The last scan's folder in the mod, and its RoomPlan source, kept running: spectate continues that RoomPlan
+    /// session, so its live objects are in the same coordinates as the scan (and the built house).
     private var scanFolder: String?
-    private var scanMap: ARWorldMap?
+    private var scanSource: RoomPlanSource?
     private var scanHadDepth = false
+    /// RoomPlan's live room model is sent at most this often (seconds).
+    private let roomInterval: TimeInterval = 0.2
+    private var lastRoomSent: TimeInterval = 0
 
     private let client = StreamClient()
     private var pump: FramePump?
@@ -101,7 +105,7 @@ final class AppModel: ObservableObject, FrameSink {
             }
         case "built":
             // The mod built the scan: it can be spectated if it is this scan, with depth and a map to line up to.
-            if msg.string("folder") == scanFolder, scanMap != nil, scanHadDepth, LiveSource.isSupported {
+            if msg.string("folder") == scanFolder, scanSource != nil, scanHadDepth {
                 canSpectate = true
                 append("success", "You can spectate this room now.")
             }
@@ -110,7 +114,7 @@ final class AppModel: ObservableObject, FrameSink {
             append("info", msg.string("text") ?? "Spectating ended.")
             if phase == .spectating {
                 pump?.stop()
-                source?.finish { _ in }
+                scanSource?.finishLive()
                 stopCapture()
                 phase = .done
             }
@@ -168,7 +172,8 @@ final class AppModel: ObservableObject, FrameSink {
     private func beginCapture(name: String, lidar: Bool) {
         canSpectate = false
         scanFolder = nil
-        scanMap = nil
+        scanSource?.close()
+        scanSource = nil
         let src: CaptureSource = lidar && RoomPlanSource.isSupported ? RoomPlanSource() : TrackedPhotoSource()
         source = src
         framesSent = 0
@@ -183,8 +188,7 @@ final class AppModel: ObservableObject, FrameSink {
     }
 
     private func beginSpectate() {
-        guard let map = scanMap, let folder = scanFolder else { return }
-        let src = LiveSource(worldMap: map)
+        guard let src = scanSource, let folder = scanFolder else { return }
         source = src
         framesSent = 0
         framesWithDepth = 0
@@ -202,7 +206,7 @@ final class AppModel: ObservableObject, FrameSink {
         guard phase == .spectating else { return }
         print("[app] spectate stopped")
         pump?.stop()
-        source?.finish { _ in }
+        scanSource?.finishLive()
         client.send(WireMessage("end", ["build": false]))
         stopCapture()
         phase = .done   // back to the finished scan: spectate again or scan another room
@@ -214,7 +218,12 @@ final class AppModel: ObservableObject, FrameSink {
     func captureViewAppeared() {
         guard phase == .scanning || phase == .spectating, !captureRunning, let src = source else { return }
         captureRunning = true
-        src.start()
+        if phase == .spectating, let live = scanSource {
+            // RoomPlan may report off the main thread.
+            live.startLive { [weak self] room in Task { @MainActor in self?.sendLiveRoom(room) } }
+        } else {
+            src.start()
+        }
         pump?.start()
         print("[app] capture started (\(src.name))")
     }
@@ -240,14 +249,18 @@ final class AppModel: ObservableObject, FrameSink {
         phase = .finishing
         append("info", "Finishing scan…")
         scanHadDepth = framesWithDepth > 0
-        // Keep ARKit's map of the room (while the session still runs) so spectate can line up with this scan.
-        src.arSession.getCurrentWorldMap { [weak self] map, error in
-            if let error { print("[app] no world map: \(error)") }
-            Task { @MainActor in
-                self?.scanMap = map
-                self?.sendScan()
-            }
-        }
+        // A RoomPlan scan stays running (paused RoomPlan, live AR session) so spectate can continue it.
+        scanSource = src as? RoomPlanSource
+        sendScan()
+    }
+
+    /// Spectating: RoomPlan's live room model to the mod, at most every `roomInterval` and not while Wi-Fi is behind.
+    private func sendLiveRoom(_ room: CapturedRoom) {
+        let now = CACurrentMediaTime()
+        guard phase == .spectating, now - lastRoomSent >= roomInterval, canAcceptFrame,
+              let json = try? JSONEncoder().encode(room) else { return }
+        lastRoomSent = now
+        client.send(WireMessage("room", blobs: [.init(name: "room", format: "roomplan.json", data: json)]))
     }
 
     private func sendScan() {

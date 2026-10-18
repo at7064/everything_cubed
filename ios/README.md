@@ -26,14 +26,15 @@ copying. Two scan types:
 
 ### Spectate (live)
 
-Needs LiDAR (Pro models), and starts from a scan. When a LiDAR scan is built, the finished screen offers **Scan
-another room** or **Spectate this room**. The app keeps ARKit's map of the room from the scan; spectating, ARKit
-relocalises to it (point the phone at the scanned room), so the live frames line up with the built house. The
-camera then streams to the game about 5 times a second. A piece of furniture only goes, or something new only
-appears, once the LiDAR has clearly seen it for about a second; anything unclear stays as built. People in view
-show up as villagers. You are in spectator mode in game until you tap **Stop** or run
-`/everything_cubed spectate stop`. You then get your game mode and position back, and `/everything_cubed undo`
-reverts the changes.
+Needs LiDAR (Pro models), and starts from a RoomPlan scan. When the scan is built, the finished screen offers **Scan
+another room** or **Spectate this room**. Finishing a scan leaves its AR session running; spectating runs RoomPlan
+again on it, so RoomPlan's live objects are in the scan's coordinates (no need to line anything up). The app sends
+RoomPlan's live room model and camera frames (for people) about 5 times a second. A piece of furniture moves in game
+once RoomPlan has clearly placed it elsewhere for about a second; something new appears only when RoomPlan
+identifies it as an object. People in view show up as villagers. You are in spectator mode in game until you tap
+**Stop** or run `/everything_cubed spectate stop`. You then get your game mode and position back, and
+`/everything_cubed undo` reverts the changes. Starting another scan ends the kept session, so spectate the room
+before scanning the next one.
 
 ## Build
 
