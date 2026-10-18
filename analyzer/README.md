@@ -16,10 +16,11 @@ Then `roomplan.py`:
 1. Fits the floor plane (gravity) and the dominant wall direction, so the room is axis-aligned.
 2. Measures each wall. Walls that never appear in a photo are inferred from the floor and furniture extents,
    and get the room's dominant wall material.
-3. Picks a scale (1.5625 blocks per metre, enlarged so the short side is at least 7.8 blocks, max 3.125 blocks/m)
+3. Picks a scale (1.25 blocks per metre, enlarged so the short side is at least 6.25 blocks, max 2.5 blocks/m)
    unless you pass one.
-4. Colours each wall/floor cell from the photos. Up to 3 distinct materials are kept per surface, so you don't
-   get a blotchy result. They are matched in CIELAB to the real average texture colours read from your
+4. Colours each wall cell from the photos. Up to 3 distinct materials are kept per wall, so you don't
+   get a blotchy result. The floor is one block throughout: the material covering most of it (shadows under
+   tables or sun by a window never split it; rugs are separate objects). They are matched in CIELAB to the real average texture colours read from your
    Minecraft jar (concrete, terracotta, wool, planks, stone, ...).
 5. Clusters each object class in 3D and converts it to real, usable blocks at the right size and position:
    beds (colour-matched, side by side for wide beds), doors, glass-pane windows, stair chairs and sofas, slab tables,

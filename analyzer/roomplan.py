@@ -93,7 +93,7 @@ MIN_POINTS = {"window": 60, "door": 120, "bed": 200, "rug": 150, "painting": 40,
               "lamp": 25, "ceiling_light": 15, "chandelier": 25, "sconce": 10, "microwave": 30, "clock": 10}
 
 SIDES = ("north", "south", "west", "east")
-AUTO_SCALE = 1.5625  # default blocks per metre (1.25, then 25% bigger)
+AUTO_SCALE = 1.25  # default blocks per metre
 OPPOSITE = {"north": "south", "south": "north", "west": "east", "east": "west"}
 
 
@@ -394,8 +394,8 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
 
     wm, dm = bounds["xmax"] - bounds["xmin"], bounds["zmax"] - bounds["zmin"]
     if scale is None:
-        # 1.5625 blocks per metre (rooms felt small at 1:1, and still at 1.25), enlarged so the short side has at
-        # least 7.8 blocks, at most 3.125 blocks per metre.
+        # 1.25 blocks per metre (rooms felt a bit small at 1:1), enlarged so the short side has at
+        # least 6.25 blocks, at most 2.5 blocks per metre.
         scale = AUTO_SCALE
         if min(wm, dm) * scale < 5 * AUTO_SCALE:
             scale = min(2 * AUTO_SCALE, 5 * AUTO_SCALE / min(wm, dm))
@@ -634,16 +634,15 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
 
 
 def surface_grid(ij, rgb, shape, palette, default_rgb):
+    """One block over the whole surface: the material covering most of what was seen. Shadows under tables and sun
+    by a window once split one carpet into a patchwork of two blocks; rugs are separate objects."""
     mean, cnt = cell_colours(ij, rgb, shape) if len(ij) else (np.zeros((shape[0] * shape[1], 3)), np.zeros(shape[0] * shape[1]))
     obs = cnt > 0
     if obs.sum() == 0:
         return np.zeros(shape, int), [palette.nearest(default_rgb)]
     labels, blocks = quantize(mean[obs], cnt[obs].astype(float), palette)
-    g = np.full(shape[0] * shape[1], -1)
-    g[obs] = labels
-    g = g.reshape(shape)
     dominant = int(np.bincount(labels, weights=cnt[obs]).argmax())
-    return fill_unknown(mode_filter(g), dominant), blocks
+    return np.zeros(shape, int), [blocks[dominant]]
 
 
 def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
