@@ -131,4 +131,26 @@ for with_room, detail in ((False, "items"), (True, "uniform")):
     # LiDAR rooms are built at their measured size: 1.25 blocks/m for this room, not enlarged like photo rooms.
     assert abs(plan["scale"] - 1.25) < 0.01, plan["scale"]
     print(f"room.json={with_room}, walls {detail}: room {m}, window on {glass}, table {tables[0]}")
+
+# Depth table tops over seats. A 0.65 x 0.5 m flat patch at 0.71 m lying wholly inside RoomPlan's chair box is the
+# chair (a real scan built it as a second table in the middle of the room); a table top that only overhangs a
+# chair tucked under it stays a table.
+from lidar_analyzer import _under_roomplan_object  # noqa: E402
+
+
+def top(x0, z0, sx, sz, y=0.71):
+    m = np.ones((round(sx / 0.05), round(sz / 0.05)), bool)
+    return (y - 0.05, y + 0.04, None, x0, z0, m, (slice(0, m.shape[0]), slice(0, m.shape[1])))
+
+
+def box(cat, centre, dims):
+    T = np.eye(4); T[:3, 3] = centre
+    return {"category": {cat: {}}, "transform": T.T.ravel().tolist(), "dimensions": list(dims)}
+
+
+chair_room = {"objects": [box("chair", (1.0, 0.37, 1.0), (0.6, 0.74, 0.6))]}
+assert _under_roomplan_object(top(0.7, 0.75, 0.65, 0.5), chair_room, print), "a patch on the chair is not a table"
+# A 1.4 x 0.8 m table top with the chair tucked under its edge: about 15% over the chair, kept.
+assert not _under_roomplan_object(top(0.5, 0.4, 1.4, 0.8), chair_room, print), "a table over a tucked chair stays"
+print("depth table tops over seats OK")
 print("OK")

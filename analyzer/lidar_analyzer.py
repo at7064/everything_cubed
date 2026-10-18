@@ -365,21 +365,20 @@ def roomplan_wall_ends(room):
     return ends
 
 
-def _under_roomplan_object(table, room, log, share=0.3):
+def _under_roomplan_object(table, room, log, share=0.3, seat_share=0.8):
     """A table top found in the depth that is mostly the top of something RoomPlan already reported (a bed's
     mattress is at table height, so is a dresser, and RoomPlan's own tables), which would otherwise be built a
-    second time as a table. Chairs and sofas don't count: they stand partly under tables."""
+    second time as a table. Chairs and sofas stand partly under tables, so they only count when the top lies almost
+    wholly inside one (seat_share): then it is part of the seat (a flat patch at a chair's top), never a table."""
     t_lo, t_hi, _, x0, z0, m, sl = table
     i, k = np.nonzero(m)
     P = np.stack([x0 + (i + sl[0].start + 0.5) * 0.05, np.full(len(i), (t_lo + t_hi) / 2),
                   z0 + (k + sl[1].start + 0.5) * 0.05], 1)
     for o in (room or {}).get("objects", []):
-        if next(iter(o["category"])) in ("chair", "sofa"):   # seats tuck under tables
-            continue
         T, d = _mat(o["transform"]), np.asarray(o["dimensions"], float)
         loc = (P - T[:3, 3]) @ T[:3, :3]
         inside = (np.abs(loc[:, 0]) <= d[0] / 2 + 0.1) & (np.abs(loc[:, 2]) <= d[2] / 2 + 0.1)
-        if inside.mean() >= share:
+        if inside.mean() >= (seat_share if next(iter(o["category"])) in ("chair", "sofa") else share):
             log(f"[lidar] a table top found in the depth is RoomPlan's {next(iter(o['category']))}: not a table")
             return True
     return False
