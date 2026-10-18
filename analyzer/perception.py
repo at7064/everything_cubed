@@ -45,7 +45,29 @@ def _np(t):
 
 # ----------------------------------------------------------------------------------- reconstruction
 
-def reconstruct_mapanything(paths, device, model_name, log):
+FULL_FRAME_DIAGONAL_MM = 43.2666  # a 36 x 24 mm frame: "35 mm equivalent" focal lengths are relative to it
+
+
+def exif_focal_px(path):
+    """Focal length in pixels of the photo as stored (after EXIF orientation), from its 35 mm-equivalent focal
+    length (the diagonal definition), or None when the photo does not say."""
+    from PIL import Image, ImageOps
+    with Image.open(path) as im:
+        f35 = im.getexif().get_ifd(0x8769).get(0xA405)  # Exif FocalLengthIn35mmFilm
+        w, h = ImageOps.exif_transpose(im).size
+    if not f35:
+        return None
+    return float(f35) / FULL_FRAME_DIAGONAL_MM * float(np.hypot(w, h)), (w, h)
+
+
+def view_intrinsics(focal, photo_size, view_size):
+    """Pinhole K of a photo after MapAnything's resize: uniform scale, then a centred crop (see view_crop)."""
+    (W0, H0), (Wv, Hv) = photo_size, view_size
+    s = max(Wv / W0, Hv / H0)
+    return np.array([[focal * s, 0, Wv / 2], [0, focal * s, Hv / 2], [0, 0, 1.0]])
+
+
+def reconstruct_mapanything(paths, device, model_name, log, use_exif=True):
     import torch
     from mapanything.models import MapAnything
     from mapanything.utils.image import load_images
@@ -53,6 +75,17 @@ def reconstruct_mapanything(paths, device, model_name, log):
     log(f"[recon] MapAnything ({model_name}) on {len(paths)} photo(s), device={device}")
     model = MapAnything.from_pretrained(model_name).to(device)
     views = load_images([str(p) for p in paths])
+    # The camera geometry, when every photo states its lens: MapAnything then does not have to guess the field of
+    # view, which otherwise feeds straight into the scale.
+    focals = [exif_focal_px(p) for p in paths] if use_exif and len(paths) == len(views) else [None]
+    if all(focals):
+        for v, (f, size) in zip(views, focals):
+            Hv, Wv = v["img"].shape[-2:]
+            v["intrinsics"] = torch.from_numpy(view_intrinsics(f, size, (Wv, Hv))).float()[None]
+        fov = np.degrees(2 * np.arctan(focals[0][1][0] / 2 / focals[0][0]))
+        log(f"[recon] camera geometry from the photos' lens data (horizontal field of view {fov:.0f} deg)")
+    elif use_exif:
+        log("[recon] some photos have no lens data; MapAnything estimates the camera geometry itself")
     with torch.no_grad():
         preds = model.infer(views, memory_efficient_inference=True, use_amp=device == "cuda",
                             amp_dtype="bf16", apply_mask=True, mask_edges=True,
@@ -213,7 +246,8 @@ def reconstruct(paths, backend, device, opts, log):
                     raise ImportError(f"no capture.json in {folder}")
                 return reconstruct_arkit(folder, log)
             if b == "mapanything":
-                return reconstruct_mapanything(paths, device, opts.mapanything_model, log)
+                return reconstruct_mapanything(paths, device, opts.mapanything_model, log,
+                                               use_exif=not getattr(opts, "no_exif_camera", False))
             if b == "vggt":
                 return reconstruct_vggt(paths, device, opts.vggt_model, opts.depth_model, log)
         except ImportError as ex:
