@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import math
 from collections import Counter
-from pathlib import Path
 
 import numpy as np
 from scipy import ndimage
@@ -1102,7 +1101,7 @@ def _rects(grid):
     return out
 
 
-def apply_wall_features(plan, features, log=print, mirror=False, tex_dir=None):
+def apply_wall_features(plan, features, log=print, mirror=False):
     """Windows and built-in bookshelves from what the photos show on each wall (walltex.project_features).
 
     Windows: where a wall was seen well, glass goes exactly where the photos show glass, so the stone between
@@ -1110,8 +1109,7 @@ def apply_wall_features(plan, features, log=print, mirror=False, tex_dir=None):
     MAX_WINDOW of a wall: overlapping clusters once turned a whole wall into glass. Bookshelves seen on the
     wall become vanilla bookshelf furniture standing on the floor right in front of it (never part of the wall
     itself), and bookcases already placed at those spots are dropped as duplicates. mirror=True: a wall the photos hardly saw copies the
-    opposite wall when that one was seen well (halls, libraries, churches). tex_dir: the folder the wall pictures'
-    paths are relative to (the plan's folder), so the wall around doors can be repainted plain."""
+    opposite wall when that one was seen well (halls, libraries, churches)."""
     decided = {}
     for side, f in features.items():
         rows, cols = f["seen"].shape
@@ -1215,38 +1213,20 @@ def apply_wall_features(plan, features, log=print, mirror=False, tex_dir=None):
         else:
             tex.pop(side, None)               # blocks and pictures always come from the same wall
         plan["walls"][side] = {"palette": list(plan["walls"][o]["palette"]), "grid": [r[:] for r in plan["walls"][o]["grid"]]}
-    clear_around_doors(plan, tex_dir)
+    clear_around_doors(plan)
 
 
-def clear_around_doors(plan, tex_dir=None, margin=1):
-    """Plain wall paint around a door: its columns plus `margin` either side, up to one row above it.
+def clear_around_doors(plan, margin=1):
+    """No picture frames on the wall around a door: its columns plus `margin` either side, up to one row above it.
     A door the photos' labels missed, or one placed a little off where the photos show it, would otherwise be
-    drawn on the maps next to the real door (or its exit sign above it). The frames stay and show the wall's paint
-    (its most common colour): a bare wall block next to framed ones looks lighter, so leaving the frames out made a
-    pale outline around every door. Without `tex_dir` (the pictures can't be edited) the frames are left out."""
-    from PIL import Image
-
+    drawn on the maps next to the real door (or its exit sign above it)."""
     walls = plan.get("textures", {}).get("walls", {})
     for o in plan["openings"]:
         tex = walls.get(o["side"]) if o["type"] == "door" else None
         if not tex:
             continue
         t = np.array(tex["tiles"])
-        rows, cols = t.shape
-        r1 = min(rows, o["y"] + o["h"] + 1)
-        u0, u1 = max(0, o["u"] - margin), min(cols, o["u"] + o["w"] + margin)
-        path = Path(tex_dir) / tex["image"] if tex_dir else None
-        if path is None or not path.is_file():
-            t[:r1, u0:u1] = 0
-            tex["tiles"] = t.tolist()
-            continue
-        img = np.array(Image.open(path).convert("RGB"))
-        px = img.shape[0] // rows
-        colours, counts = np.unique(img.reshape(-1, 3), axis=0, return_counts=True)
-        paint = colours[counts.argmax()]
-        for r in range(r1):
-            for u in range(u0, u1):
-                col = cols - 1 - u if tex["flip"] else u
-                y = (rows - 1 - r) * px   # image row 0 is the top of the wall
-                img[y:y + px, col * px:(col + 1) * px] = paint
-        Image.fromarray(img).save(path)
+        r1 = min(t.shape[0], o["y"] + o["h"] + 1)
+        u0, u1 = max(0, o["u"] - margin), min(t.shape[1], o["u"] + o["w"] + margin)
+        t[:r1, u0:u1] = 0
+        tex["tiles"] = t.tolist()

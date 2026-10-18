@@ -133,7 +133,7 @@ def main(argv=None):
             plan["walls"] = tex.pop("wall_blocks")
             plan["wall_main"] = tex.pop("wall_main")
             plan["textures"] = tex
-            apply_wall_features(plan, tex.pop("features"), log, mirror=opts.mirror_walls, tex_dir=out.parent)
+            apply_wall_features(plan, tex.pop("features"), log, mirror=opts.mirror_walls)
         except Exception as ex:  # never lose the whole analysis over the wall pictures
             import traceback
             traceback.print_exc()

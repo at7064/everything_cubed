@@ -105,10 +105,14 @@ def run(with_room, detail):
         lidar_analyzer.main(["--images", str(folder), "--wall-detail", detail])
         plan = json.loads((folder / "plan.json").read_text())
         if detail == "uniform":
-            # Every wall block is a map - around doors too, painted plain (roomplan.clear_around_doors) - and the
-            # plain walls are one colour, with nothing drawn on them.
+            # Every wall block is a map - except around doors, which stay plain wall (roomplan.clear_around_doors) -
+            # and the plain walls are one colour, with nothing drawn on them.
             for side, w in plan["textures"]["walls"].items():
-                assert np.array(w["tiles"], bool).all(), side
+                t = np.array(w["tiles"], bool)
+                for o in plan["openings"]:
+                    if o["type"] == "door" and o["side"] == side:
+                        t[:o["y"] + o["h"] + 1, max(0, o["u"] - 1):o["u"] + o["w"] + 1] = True
+                assert t.all(), side
                 img = np.asarray(Image.open(folder / w["image"]))
                 assert len(np.unique(img.reshape(-1, 3), axis=0)) == 1, side
         return plan
