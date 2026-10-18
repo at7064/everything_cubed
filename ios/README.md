@@ -20,7 +20,8 @@ copying. Two scan types:
    Without LiDAR (or with the LiDAR switch off) it is a photo scan with ARKit tracking: walk along the walls rather
    than turning on the spot.
 4. Walk slowly around the room. Photos are taken automatically when you move about 30 cm or turn 15°.
-   Tap the shutter for extra close-ups (posters, boards, the floor). Then tap **Finish**.
+   In a photo scan, tap the shutter for extra close-ups (posters, boards, the floor); a LiDAR scan has no shutter.
+   Then tap **Finish**.
 5. The mod saves the scan under `everything_cubed/photos/<name>-<date>`, analyses it, and builds the house in
    front of you. Progress shows both in chat and in the app. `/everything_cubed build <folder>` rebuilds a saved scan.
 

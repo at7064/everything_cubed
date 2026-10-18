@@ -83,8 +83,11 @@ struct ScanView: View {
         switch model.phase {
         case .scanning:
             HStack(spacing: 40) {
-                Button { model.takePhoto() } label: {
-                    Image(systemName: "camera.circle.fill").font(.system(size: 64))
+                // Extra close-up photos only help photo scans; a LiDAR room scan measures everything itself.
+                if !expectsDepth {
+                    Button { model.takePhoto() } label: {
+                        Image(systemName: "camera.circle.fill").font(.system(size: 64))
+                    }
                 }
                 Button { model.finishScan() } label: {
                     Label("Finish", systemImage: "checkmark.circle.fill").font(.title2.bold())

@@ -39,7 +39,9 @@ struct ScanSetupView: View {
                     }
                 }
                 Section {
-                    Text("Photos are taken automatically as you move, each with where the phone was. Tap the shutter for extra close-ups of walls and posters. When you finish, the house is built in front of you in game.")
+                    Text(lidar
+                         ? "Photos are taken automatically as you move, each with where the phone was. When you finish, the house is built in front of you in game."
+                         : "Photos are taken automatically as you move, each with where the phone was. Tap the shutter for extra close-ups of walls and posters. When you finish, the house is built in front of you in game.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
