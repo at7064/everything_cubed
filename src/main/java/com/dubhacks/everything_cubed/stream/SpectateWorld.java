@@ -13,6 +13,9 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.npc.villager.Villager;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.block.BedBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.phys.Vec3;
 
 import java.io.IOException;
@@ -124,6 +127,7 @@ final class SpectateWorld {
 				people.put(id, v);
 				continue;
 			}
+			if (sleep(v, p)) continue;
 			Vec3 d = at.subtract(v.position());
 			float yaw = v.getYRot();
 			if (d.horizontalDistance() > MIN_TURN) yaw = (float) Math.toDegrees(Math.atan2(-d.x, d.z));
@@ -133,15 +137,47 @@ final class SpectateWorld {
 		}
 		people.entrySet().removeIf(en -> {
 			if (seen.contains(en.getKey())) return false;
-			en.getValue().discard();
+			remove(en.getValue());
 			return true;
 		});
+	}
+
+	/** Takes a villager away, waking it first so its bed is not left marked as occupied. */
+	private static void remove(Villager v) {
+		if (v.isSleeping()) v.stopSleeping();
+		v.discard();
+	}
+
+	/**
+	 * A person lying on a bed: the villager sleeps in that bed (its head block), and gets up when they do.
+	 * Returns true while the villager sleeps, so it is not moved.
+	 */
+	private boolean sleep(Villager v, JsonObject p) {
+		JsonArray at = p.getAsJsonArray("sleep");
+		BlockPos head = null;
+		if (at != null) {
+			BlockPos pos = build.origin().offset(at.get(0).getAsInt(), 1, at.get(1).getAsInt());
+			BlockState bed = level.getBlockState(pos);
+			if (bed.getBlock() instanceof BedBlock) {
+				// Villagers sleep with their head on the bed's head block.
+				head = bed.getValue(BedBlock.PART) == BedPart.FOOT ? pos.relative(bed.getValue(BedBlock.FACING)) : pos;
+			}
+		}
+		if (head == null) {
+			if (v.isSleeping()) v.stopSleeping();
+			return false;
+		}
+		if (!v.isSleeping() || !v.getSleepingPos().map(head::equals).orElse(false)) {
+			if (v.isSleeping()) v.stopSleeping();
+			v.startSleeping(head);
+		}
+		return true;
 	}
 
 	/** Ends spectating: the rest of the queued blocks are placed, villagers go, the player gets their mode back. */
 	void finish() {
 		while (!pending.isEmpty()) tick();
-		people.values().forEach(Villager::discard);
+		people.values().forEach(SpectateWorld::remove);
 		people.clear();
 		if (!player.isRemoved()) {
 			player.setGameMode(previousMode);

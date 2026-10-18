@@ -27,12 +27,15 @@ copying. Two scan types:
 ### Spectate (live)
 
 Needs LiDAR (Pro models), and starts from a RoomPlan scan. When the scan is built, the finished screen offers **Scan
-another room** or **Spectate this room**. Finishing a scan leaves its AR session running; spectating runs RoomPlan
-again on it, so RoomPlan's live objects are in the scan's coordinates (no need to line anything up). The app sends
-RoomPlan's live room model and camera frames (for people) about 5 times a second. A piece of furniture moves in game
-once RoomPlan has clearly placed it elsewhere for about a second; something new appears only when RoomPlan
-identifies it as an object. People in view show up as villagers. You are in spectator mode in game until you tap
-**Stop** or run `/everything_cubed spectate stop`. You then get your game mode and position back, and
+another room** or **Spectate this room**. Both sides must allow it: tapping Spectate waits until the player clicks
+[Allow] in game chat (nothing is streamed before that), and `/everything_cubed spectate` in game asks on the phone
+(Allow / Don't Allow). Finishing a scan leaves its AR session running; spectating runs RoomPlan again on it, so
+RoomPlan's live objects are in the scan's coordinates (no need to line anything up). The app sends RoomPlan's live
+room model and camera frames (for people) about 5 times a second. A piece of furniture moves in game once RoomPlan
+has clearly placed it elsewhere for about a second; something new appears only when RoomPlan identifies it as an
+object. People in view show up as villagers, asleep in the bed when they lie on it. You are in spectator mode in
+game until you tap **Stop** or run `/everything_cubed spectate stop`; if the phone and the game hear nothing from
+each other for 5 seconds, spectating stops on both. You then get your game mode and position back, and
 `/everything_cubed undo` reverts the changes. Starting another scan ends the kept session, so spectate the room
 before scanning the next one.
 

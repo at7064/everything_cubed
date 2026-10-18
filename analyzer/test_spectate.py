@@ -9,7 +9,8 @@ Live RoomPlan updates (with their own object ids, as a new capture run gives) th
 3. show the chair 1.2 m away for good: it moves once, as a whole chair (same material), and nothing else does;
 4. show a new sofa at low confidence: nothing; at medium confidence: one sofa is added;
 5. leave the table out: it stays.
-A camera frame with a person (masked by the phone) reports a person; no blocks are ever sent.
+A camera frame with a person (masked by the phone) reports a person; no blocks are ever sent. Someone lying on the
+bed is reported sleeping in it after 3 frames (not 2), and awake again after getting up for 3 frames.
 Run: python test_spectate.py
 """
 import io
@@ -50,7 +51,7 @@ def rp(ident, cat, centre, dims, conf="high", yaw=0.0, **attrs):
             "confidence": {conf: {}}, "attributes": attrs}
 
 
-CHAIR, TABLE, SOFA = (0.5, 0.86, 0.55), (1.4, 0.75, 0.8), (1.8, 0.85, 0.9)
+CHAIR, TABLE, SOFA, BED = (0.5, 0.86, 0.55), (1.4, 0.75, 0.8), (1.8, 0.85, 0.9), (1.1, 0.6, 2.0)
 
 
 def message(type_, header=None, blobs=()):
@@ -62,6 +63,39 @@ def message(type_, header=None, blobs=()):
 
 def room_message(objects):
     return message("room", blobs=[("room", "roomplan.json", json.dumps({"objects": objects}).encode())])
+
+
+def look_at(eye, target):
+    """ARKit cam2world (room-local) at `eye` looking at `target` (camera looks down -Z, +Y up)."""
+    fwd = np.asarray(target, float) - eye; fwd /= np.linalg.norm(fwd)
+    right = np.cross(fwd, [0, 1.0, 0]); right /= np.linalg.norm(right)
+    up = np.cross(right, fwd)
+    c2w = np.eye(4); c2w[:3, 0], c2w[:3, 1], c2w[:3, 2], c2w[:3, 3] = right, up, -fwd, eye
+    return c2w
+
+
+def body_frame(i, lo, hi, eye, target):
+    """A frame of a person (a box lo..hi in room metres, masked) over the floor, from `eye` looking at `target`."""
+    K = np.array([[FX, 0, IW / 2], [0, FX, IH / 2], [0, 0, 1]])
+    Kd = K.copy(); Kd[:2] *= DW / IW
+    cv = look_at(np.asarray(eye, float), target) @ ARKIT_TO_CV
+    u, v = np.meshgrid(np.arange(DW) + 0.5, np.arange(DH) + 0.5)
+    dirs = np.stack([(u - Kd[0, 2]) / Kd[0, 0], (v - Kd[1, 2]) / Kd[1, 1], np.ones_like(u)], -1) @ cv[:3, :3].T
+    o = cv[:3, 3]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t1, t2 = (np.asarray(lo) - o) / dirs, (np.asarray(hi) - o) / dirs
+        tn, tf = np.nanmax(np.minimum(t1, t2), -1), np.nanmin(np.maximum(t1, t2), -1)
+        floor = np.where(dirs[..., 1] < 0, -o[1] / dirs[..., 1], 9.0)
+    body = np.where((tn <= tf) & (tn > 0), tn, np.inf)
+    mask = body < floor
+    depth = np.minimum(np.minimum(body, floor), 9.0)
+    img = io.BytesIO(); Image.fromarray(np.full((IH // 8, IW // 8, 3), 180, np.uint8)).resize((IW, IH)).save(img, "JPEG")
+    header = {"seq": i, "time": i * 0.2, "tracking": "normal", "imageSize": [IW, IH], "depthSize": [DW, DH],
+              "K": K.ravel().tolist(), "cam2world": (WORLD @ look_at(np.asarray(eye, float), target)).ravel().tolist()}
+    return message("frame", header, [("image", "jpeg", img.getvalue()),
+                                     ("depth", "f16", depth.astype("<f2").tobytes()),
+                                     ("confidence", "u8", np.full((DH, DW), 2, np.uint8).tobytes()),
+                                     ("person", "u8", mask.astype(np.uint8).tobytes())])
 
 
 def person_frame(i):
@@ -89,7 +123,8 @@ def person_frame(i):
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import spectate_analyzer as sa  # noqa: E402
 
-scan = {"objects": [rp("scan-chair", "chair", (1.5, 1.5), CHAIR), rp("scan-table", "table", (4.0, 3.0), TABLE)]}
+scan = {"objects": [rp("scan-chair", "chair", (1.5, 1.5), CHAIR), rp("scan-table", "table", (4.0, 3.0), TABLE),
+                    rp("scan-bed", "bed", (5.4, 3.9), BED, yaw=90)]}
 frame = sa.PlanFrame(ARKIT)
 builder = sa.Furniture({"objects": [], "scale": S}, frame, {"objects": []})
 built = []
@@ -169,6 +204,28 @@ for i in range(4):
     send(person_frame(i))
 assert people and abs(people[0]["x"] - 3.4 / W * 8) < 1 and abs(people[0]["z"] - 1.15 / D * 6) < 1, people
 print(f"person at block ({people[0]['x']:.1f}, {people[0]['z']:.1f})")
+
+# Someone lies down on the bed: low and flat over it. Asleep after 3 frames, awake 3 frames after getting up.
+bed = next(o for o in built if o["type"] == "bed")
+bx, bz = frame.metres_x(bed["x"] + bed["w"] / 2), frame.metres_z(bed["z"] + bed["d"] / 2)
+lying = ((bx - 0.25, 0.55, bz - 0.8), (bx + 0.25, 0.85, bz + 0.8))
+eye, look = (bx - 2.0, 1.6, bz), (bx, 0.6, bz)
+for i in range(2):
+    send(body_frame(10 + i, *lying, eye, look))
+assert people and not any("sleep" in q for q in people), people
+send(body_frame(12, *lying, eye, look))
+sleeper = [q for q in people if "sleep" in q]
+assert sleeper, people
+sx, sz = sleeper[0]["sleep"]
+assert bed["x"] <= sx < bed["x"] + bed["w"] and bed["z"] <= sz < bed["z"] + bed["d"], (sleeper, bed)
+print(f"lying on the bed: asleep in bed block ({sx}, {sz}) after 3 frames")
+standing = ((bx - 0.9, 0.0, bz - 0.2), (bx - 0.5, 1.75, bz + 0.2))   # got up, standing beside the bed
+for i in range(2):
+    send(body_frame(13 + i, *standing, eye, look))
+assert any("sleep" in q for q in people), "woke up after only 2 frames"
+send(body_frame(15, *standing, eye, look))
+assert people and not any("sleep" in q for q in people), people
+print("got up: awake after 3 frames")
 p.stdin.close()
 p.wait(timeout=10)
 print(f"median {np.median(ms):.0f} ms per message")

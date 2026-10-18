@@ -24,13 +24,15 @@ reconstruction step is skipped.
 ### Spectate: the room, live
 
 Spectate starts from a room you have just scanned with LiDAR (RoomPlan) and built. When the house stands, the app
-offers **Scan another room** or **Spectate this room**. Spectating continues the scan's RoomPlan session, and the
-furniture in game follows the real room: move a chair or the table and it moves in game, as the same piece of
-furniture, once RoomPlan has clearly placed it somewhere else for about a second. Something new only appears when
-RoomPlan identifies it as an object (with medium or high confidence). No single blocks are ever placed, and anything
-RoomPlan is unsure of stays as built. People show up as villagers. You are in spectator mode so nothing you do
-disturbs the house. `/everything_cubed spectate stop` (or **Stop** in the app) gives you your game mode back, and
-`/everything_cubed undo` reverts the changes.
+offers **Scan another room** or **Spectate this room**. Both sides must allow it: tapping Spectate on the phone asks
+you in chat ([Allow] / [Deny]), and `/everything_cubed spectate` in game asks the phone. Spectating continues the
+scan's RoomPlan session, and the furniture in game follows the real room: move a chair or the table and it moves in
+game, as the same piece of furniture, once RoomPlan has clearly placed it somewhere else for about a second.
+Something new only appears when RoomPlan identifies it as an object (with medium or high confidence). No single
+blocks are ever placed, and anything RoomPlan is unsure of stays as built. People show up as villagers, and someone
+lying on a bed is a villager asleep in it. You are in spectator mode so nothing you do disturbs the house. Either side
+stops it (`/everything_cubed spectate stop` or **Stop** in the app), and it stops by itself within seconds if the
+phone and the game lose touch. You then get your game mode back, and `/everything_cubed undo` reverts the changes.
 
 Furniture is drawn as detailed models (legs, drawers, cushions, burners, ...) around the real blocks that do the work:
 open cabinets, wardrobes and fridges, sleep in beds, cook on stoves, fill bottles at sinks. Right-click a chair, sofa

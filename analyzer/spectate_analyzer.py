@@ -17,13 +17,15 @@ Only whole pieces of furniture change, and only from RoomPlan's objects; no sing
   MOVE_UPDATES updates;
 - anything RoomPlan is unsure of, or stops reporting, stays as built.
 People are found in the camera frames (the `person` mask the phone sends with LiDAR depth) and reported as tracked
-positions, which the mod shows as villagers.
+positions, which the mod shows as villagers. A person lying on a bed (low and flat over a built bed, LYING_FRAMES
+frames in a row) is reported with the bed block they lie on ("sleep": [x, z]); the mod puts the villager to sleep
+there.
 
 stdin:  the phone's `room` messages (RoomPlan's live CapturedRoom as JSON in the `room` blob) and `frame` messages,
         forwarded by the mod (framing as in ios/PROTOCOL.md).
 stdout: one JSON object per line:
         {"type": "update", "moves": [{"from": object, "to": object}, ...], "adds": [object, ...],
-         "people": [{"id", "x", "y", "z"}, ...]}  exactly one per message read, so the mod knows when to send the next;
+         "people": [{"id", "x", "y", "z", "sleep"?: [x, z]}, ...]}  exactly one per message read, so the mod knows when to send the next;
         objects are plan "objects" entries (plan block coordinates);
         {"type": "status", "level", "text"}  for chat and the app's log.
 stderr: log lines.
@@ -55,6 +57,9 @@ PERSON_MIN_PIXELS = 25
 PERSON_MATCH = 0.8        # metres a person may move between frames and keep their id
 PERSON_SHOW = 2           # frames a person must be seen before they are reported
 PERSON_KEEP = 1.0         # seconds a person stays after they were last seen
+LYING_TOP = 1.2          # metres: a person whose highest point is below this, and
+LYING_SPAN = 0.9         # ... whose height from lowest to highest point is below this, over a bed, is lying on it
+LYING_FRAMES = 3         # frames in a row that must agree before a villager lies down or gets up
 KEEP_FIELDS = ("material", "color")   # what a moved piece keeps from the built one
 SAME_KIND = {"coffee_table": "table"}   # a coffee table and a table are matched as one kind
 
@@ -287,9 +292,21 @@ class Furniture:
 
 
 class People:
-    def __init__(self, frame: PlanFrame):
+    def __init__(self, frame: PlanFrame, furniture=None):
         self.fr = frame
+        self.furniture = furniture      # its objects are the beds as they stand now (they can move)
         self.tracks, self.next_id = [], 1
+
+    def bed_under(self, xz):
+        """The bed block (x, z) under a point (room metres), if a built bed is there (half a block of slack)."""
+        bx, bz = self.fr.block_x(xz[0]), self.fr.block_z(xz[1])
+        for o in (self.furniture.objects if self.furniture else []):
+            if o["type"] != "bed":
+                continue
+            if o["x"] - 0.5 <= bx < o["x"] + o["w"] + 0.5 and o["z"] - 0.5 <= bz < o["z"] + o["d"] + 0.5:
+                return (int(np.clip(np.floor(bx), o["x"], o["x"] + o["w"] - 1)),
+                        int(np.clip(np.floor(bz), o["z"], o["z"] + o["d"] - 1)))
+        return None
 
     def update(self, fr):
         from scipy import ndimage
@@ -306,30 +323,53 @@ class People:
             pid = comp[gi[:, 0], gi[:, 1]]
             for c in range(1, nc + 1):
                 sel = pid == c
-                if sel.sum() < PERSON_MIN_PIXELS or np.ptp(loc[sel, 1]) < 0.4:
+                if sel.sum() < PERSON_MIN_PIXELS:
                     continue
-                found.append(np.median(loc[sel][:, [0, 2]], axis=0))
+                y = loc[sel, 1]
+                top, span = np.percentile(y, 95), np.percentile(y, 95) - np.percentile(y, 5)
+                xz = np.median(loc[sel][:, [0, 2]], axis=0)
+                bed = self.bed_under(xz) if top < LYING_TOP and span < LYING_SPAN else None
+                if span < 0.4 and bed is None:
+                    continue   # too flat for someone standing or sitting, and not on a bed: not a person
+                found.append((xz, bed))
         now = fr["time"]
         free = list(range(len(found)))
         for t in sorted(self.tracks, key=lambda t: -t["seen"]):
             if not free:
                 break
-            d = [np.linalg.norm(found[f] - t["xz"]) for f in free]
+            d = [np.linalg.norm(found[f][0] - t["xz"]) for f in free]
             best = int(np.argmin(d))
             if d[best] <= PERSON_MATCH:
-                t["xz"] = found[free.pop(best)]
+                t["xz"], bed = found[free.pop(best)]
                 t["seen"] += 1
                 t["last"] = now
+                # Lying down or getting up only after LYING_FRAMES frames in a row agree.
+                lying = bed is not None
+                t["streak"] = t["streak"] + 1 if lying != bool(t["bed"]) else 0
+                if lying and t["bed"]:
+                    t["bed"] = bed
+                elif t["streak"] >= LYING_FRAMES:
+                    t["bed"], t["streak"] = bed, 0
         for f in free:
-            self.tracks.append({"id": self.next_id, "xz": found[f], "seen": 1, "last": now})
+            # A first sighting on a bed counts towards lying down.
+            self.tracks.append({"id": self.next_id, "xz": found[f][0], "seen": 1, "last": now, "bed": None,
+                                "streak": int(found[f][1] is not None)})
             self.next_id += 1
         self.tracks = [t for t in self.tracks if now - t["last"] <= PERSON_KEEP]
         return self.kept()
 
     def kept(self):
         """Tracked people in plan block coordinates, standing on the floor (y = 1)."""
-        return [{"id": t["id"], "x": round(float(self.fr.block_x(t["xz"][0])), 3), "y": 1.0,
-                 "z": round(float(self.fr.block_z(t["xz"][1])), 3)} for t in self.tracks if t["seen"] >= PERSON_SHOW]
+        out = []
+        for t in self.tracks:
+            if t["seen"] < PERSON_SHOW:
+                continue
+            p = {"id": t["id"], "x": round(float(self.fr.block_x(t["xz"][0])), 3), "y": 1.0,
+                 "z": round(float(self.fr.block_z(t["xz"][1])), 3)}
+            if t["bed"]:
+                p["sleep"] = list(t["bed"])
+            out.append(p)
+        return out
 
 
 def step(furniture, people, header, blobs):
@@ -359,7 +399,7 @@ def main(argv=None):
         return 2
     frame = PlanFrame(plan["arkit"])
     furniture = Furniture(plan, frame, json.loads(room_file.read_text()))
-    people = People(frame)
+    people = People(frame, furniture)
     emit({"type": "status", "level": "success",
           "text": "Spectate: furniture you move in the room moves in game once RoomPlan clearly sees it."})
     stdin = sys.stdin.buffer

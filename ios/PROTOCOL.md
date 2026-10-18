@@ -28,7 +28,8 @@ Implementations: `ios/EverythingCubedScanner/Network/WireMessage.swift` and
 | `room` | | `room` (RoomPlan `CapturedRoom` as JSON: the finished scan's, or the live one while spectating) |
 | `planes` | | `planes` (JSON `{"planes": [...]}`: per ARKit plane anchor `transform` 4×4 row-major, `center`, `extent` [w,h], `alignment`, `classification` (wall/floor/ceiling/table/seat/window/door/none), `boundary`), sent at the end of a `tracked` scan |
 | `end` | `build` (default true), `scale` (blocks per metre, optional) | |
-| `ping` | | |
+| `ping` | | | (also every second while spectating: the phone is there)
+| `spectate_decline` | `text`: why the phone said no to `spectate_invite` | |
 
 `hello` must come first. Matrices are row-major, in ARKit conventions: world +Y is up, metres; the camera looks
 down -Z with +Y up, and `K` belongs to the image in the sensor's landscape orientation (the analyzer turns
@@ -45,7 +46,10 @@ person is, also per depth pixel; it is left out when nobody is in view.
 | `error` | `text`; the mod closes the connection after a failed `hello` |
 | `ready` | `folder`, the scan's folder under `everything_cubed/photos` (capture); `mode` = `spectate` (spectate) |
 | `built` | `folder`: a capture's house stands in game; the app can now offer to spectate it |
-| `stopped` | `text`: the game ended spectating (`/everything_cubed spectate stop`, the player left, ...) |
+| `stopped` | `text`: the game ended spectating (`/everything_cubed spectate stop`, the player said no or left, ...) |
+| `waiting` | `text`: the phone asked to spectate; the player has to allow it in game |
+| `spectate_invite` | `folder`: the player ran `/everything_cubed spectate`; the phone asks its user, then sends `begin` or `spectate_decline` |
+| `alive` | sent every second while spectating: the game is there |
 | `status` | `level` (`info` / `progress` / `success` / `error`), `text`: progress and chat lines for the app's log |
 | `pong` | |
 
@@ -75,6 +79,16 @@ each, until `end` (or until the mod sends `stopped`). Nothing is saved: they go 
 ARKit metres onto the plan's blocks) and `room.json`. It answers with whole pieces of furniture to move or add, never
 single blocks. While it works on one message, only the newest of each kind that arrives is kept. The player is in
 spectator mode until the session ends.
+
+Both sides must allow it. When the phone asks first (`begin`), the mod answers `waiting` and asks the player in
+chat ([Allow] / [Deny], `/everything_cubed spectate allow|deny`, 60 s); only then does it send `ready`, and the
+phone streams nothing before that. When the player asks first (`/everything_cubed spectate`), the mod sends
+`spectate_invite`; the phone asks its user and answers with `begin` (which starts at once) or `spectate_decline`.
+Either side ends it (`end` / `stopped`). While spectating each side sends something every second (`ping` / `alive`)
+and ends it after 5 s of silence, so a dropped connection stops spectating within seconds.
+
+People are in the worker's answers as `{"id", "x", "y", "z"}` in plan blocks; someone lying on a bed also has
+`"sleep": [x, z]`, the bed block they lie on, and the mod puts their villager to sleep in that bed.
 
 ## Extending
 
