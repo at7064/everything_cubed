@@ -14,7 +14,7 @@ copying. Two scan types:
 1. In Minecraft (operator / cheats on), run `/everything_cubed phone`. Chat shows a 6-digit pairing code and the
    computer's address.
 2. Open the app on the same Wi-Fi. The game shows up under *Games on this network* (Bonjour). If it doesn't,
-   type the address from chat. Enter the code and connect.
+   tap *Game not listed?* below it and type the address from chat. Enter the code and connect.
 3. Name the room and start the scan. On a LiDAR device it is Apple RoomPlan's guided scan by default: when you
    finish, RoomPlan's room model (walls, doors, windows, furniture boxes) is sent too and saved as `room.json`.
    Without LiDAR (or with the LiDAR switch off) it is a photo scan with ARKit tracking: walk along the walls rather
@@ -23,6 +23,18 @@ copying. Two scan types:
    Tap the shutter for extra close-ups (posters, boards, the floor). Then tap **Finish**.
 5. The mod saves the scan under `everything_cubed/photos/<name>-<date>`, analyses it, and builds the house in
    front of you. Progress shows both in chat and in the app. `/everything_cubed build <folder>` rebuilds a saved scan.
+
+### Spectate (live)
+
+Needs LiDAR (Pro models), and starts from a RoomPlan scan. When the scan is built, the finished screen offers **Scan
+another room** or **Spectate this room**. Finishing a scan leaves its AR session running; spectating runs RoomPlan
+again on it, so RoomPlan's live objects are in the scan's coordinates (no need to line anything up). The app sends
+RoomPlan's live room model and camera frames (for people) about 5 times a second. A piece of furniture moves in game
+once RoomPlan has clearly placed it elsewhere for about a second; something new appears only when RoomPlan
+identifies it as an object. People in view show up as villagers. You are in spectator mode in game until you tap
+**Stop** or run `/everything_cubed spectate stop`. You then get your game mode and position back, and
+`/everything_cubed undo` reverts the changes. Starting another scan ends the kept session, so spectate the room
+before scanning the next one.
 
 ## Build
 
@@ -44,10 +56,6 @@ Capabilities* tab: Xcode writes those into the shared project file, and they wou
 | Folder | What |
 |---|---|
 | `Network/` | `WireMessage` (the framing in [PROTOCOL.md](PROTOCOL.md)), `StreamClient` (TCP), `ServerBrowser` (Bonjour) |
-| `Capture/` | `CaptureSource`, implemented by `RoomPlanSource` (LiDAR) and `TrackedPhotoSource` (ARKit world tracking, any iPhone; in `CaptureSource.swift`); `FramePump` samples the AR session, `KeyframeSelector` decides what to keep, `FrameEncoder` turns a frame into a `frame` message (depth only when the device has it) |
+| `Capture/` | `CaptureSource`, implemented by `RoomPlanSource` (LiDAR), `TrackedPhotoSource` (ARKit world tracking, any iPhone; in `CaptureSource.swift`) and `LiveSource` (spectate, LiDAR); `FramePump` samples the AR session, a `FrameSelector` decides what to keep (`KeyframeSelector` for scans, `IntervalSelector` every 0.2 s for spectate), `FrameEncoder` turns a frame into a `frame` message (depth only when the device has it, plus a person mask for spectate) |
 | `AppModel.swift` | connection state, and the `FrameSink` that streams frames to the mod |
 | `Views/` | SwiftUI screens |
-
-To add live capture (for example continuous video for real-time world updates): add a `CaptureSource` that runs
-plain ARKit world tracking with `.sceneDepth` (no RoomPlan UI), give `FramePump` a time-based selector, send `begin` with `"mode": "live"`, and register a
-`live` session in the mod's `StreamModes`. The connection, framing and pairing stay as they are.

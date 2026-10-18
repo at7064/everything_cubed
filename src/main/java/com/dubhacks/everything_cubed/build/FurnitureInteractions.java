@@ -164,6 +164,18 @@ public final class FurnitureInteractions {
 	}
 
 	/** Removes the model (if any) that had the real block at {@code pos} inside it. */
+	/**
+	 * Removes every furniture model in the block at {@code pos}: the one whose real block it is, and any whose parts
+	 * (or hitbox) are in it, such as a bin or a monitor with no real block (spectate: it is gone in the real room).
+	 */
+	public static void removeModelsIn(ServerLevel level, BlockPos pos) {
+		removeModelAround(level, pos);
+		for (Entity e : level.getEntitiesOfClass(Entity.class, new AABB(pos), e -> groupOf(e) != null)) {
+			String group = groupOf(e);
+			if (group != null) removeGroup(level, group, e.position());
+		}
+	}
+
 	private static void removeModelAround(ServerLevel level, BlockPos pos) {
 		String core = coreTag(pos);
 		for (Entity e : level.getEntitiesOfClass(Display.class, new AABB(pos).inflate(REACH), e -> e.entityTags().contains(core))) {

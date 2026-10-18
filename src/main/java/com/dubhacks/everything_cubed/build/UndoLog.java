@@ -17,15 +17,15 @@ public class UndoLog {
 	private final Map<BlockPos, BlockState> original = new LinkedHashMap<>();
 	private final List<Entity> entities = new ArrayList<>();
 
-	UndoLog(ServerLevel level) {
+	public UndoLog(ServerLevel level) {
 		this.level = level;
 	}
 
-	void remember(BlockPos pos) {
+	public void remember(BlockPos pos) {
 		original.computeIfAbsent(pos.immutable(), level::getBlockState);
 	}
 
-	void rememberEntity(Entity e) {
+	public void rememberEntity(Entity e) {
 		entities.add(e);
 	}
 

@@ -5,6 +5,7 @@ import com.dubhacks.everything_cubed.analyzer.AnalyzerRunner;
 import com.dubhacks.everything_cubed.build.HouseBuilder;
 import com.dubhacks.everything_cubed.build.UndoLog;
 import com.dubhacks.everything_cubed.stream.PhoneServer;
+import com.dubhacks.everything_cubed.stream.SpectateSession;
 import com.google.gson.JsonObject;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
@@ -27,15 +28,22 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.IdentityHashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 /**
  * /everything_cubed build <folder or plan.json>        analyse the photos (if needed) and build in front of you
  * /everything_cubed buildscaled <blocksPerMetre> <...> same, with a fixed scale
  * /everything_cubed undo                               revert the last build
  * /everything_cubed phone                              pair the iOS scanner app, which then builds in front of you
+ * /everything_cubed spectate stop                      stop mirroring the phone's live view (started from the app)
  */
 public final class EverythingCubedCommand {
 	private static final ExecutorService WORKER = Executors.newSingleThreadExecutor(r -> {
@@ -46,6 +54,18 @@ public final class EverythingCubedCommand {
 	private static final AtomicBoolean BUSY = new AtomicBoolean();
 	private static final int MAX_UNDO = 5;
 	private static final Deque<UndoLog> HISTORY = new ArrayDeque<>();
+	/** Each player's last build, for spectate. */
+	private static final Map<UUID, Built> LAST = new ConcurrentHashMap<>();
+	private static final Map<UndoLog, UUID> BUILT_BY = new IdentityHashMap<>();
+
+	/** A build in the world: the plan file it came from and where its interior (0, 1, 0) block is, minus (0, 1, 0). */
+	public record Built(ServerLevel level, BlockPos origin, Path plan, int w, int d, int h) {
+	}
+
+	/** The player's last build, if it is still there (not undone). */
+	public static Optional<Built> lastBuild(UUID player) {
+		return Optional.ofNullable(LAST.get(player));
+	}
 
 	private EverythingCubedCommand() {
 	}
@@ -61,7 +81,14 @@ public final class EverythingCubedCommand {
 								.then(Commands.argument("path", StringArgumentType.greedyString())
 										.executes(ctx -> start(ctx, DoubleArgumentType.getDouble(ctx, "blocksPerMetre"))))))
 				.then(Commands.literal("undo").executes(EverythingCubedCommand::undo))
-				.then(Commands.literal("phone").executes(EverythingCubedCommand::phone)));
+				.then(Commands.literal("phone").executes(EverythingCubedCommand::phone))
+				.then(Commands.literal("spectate")
+						.executes(ctx -> {
+							info(ctx.getSource(), "Run /everything_cubed phone, then choose Spectate in the iPhone app. "
+									+ "/everything_cubed spectate stop ends it.");
+							return 1;
+						})
+						.then(Commands.literal("stop").executes(EverythingCubedCommand::stopSpectate))));
 	}
 
 	private static int start(CommandContext<CommandSourceStack> ctx, Double scale) {
@@ -70,6 +97,11 @@ public final class EverythingCubedCommand {
 
 	/** Analyses {@code input} (if needed) in the background and builds it in front of {@code src}. */
 	public static int start(CommandSourceStack src, Path input, Double scale) {
+		return start(src, input, scale, b -> { });
+	}
+
+	/** Same, and {@code onBuilt} runs on the server thread once the house stands (not when it failed). */
+	public static int start(CommandSourceStack src, Path input, Double scale, Consumer<Built> onBuilt) {
 		if (!Files.exists(input)) {
 			src.sendFailure(Component.literal("Not found: " + input + " (relative paths are looked up in "
 					+ AnalyzerRunner.photosDir() + ")"));
@@ -90,7 +122,8 @@ public final class EverythingCubedCommand {
 		WORKER.submit(() -> {
 			try {
 				JsonObject plan = loadPlan(src, input, scale);
-				server.execute(() -> build(src, level, at, facing, plan));
+				Path planFile = Files.isRegularFile(input) ? input : input.resolve("plan.json");
+				server.execute(() -> build(src, level, at, facing, plan, planFile, onBuilt));
 			} catch (Exception ex) {
 				EverythingCubed.LOGGER.error("everything_cubed failed", ex);
 				server.execute(() -> src.sendFailure(Component.literal("everything_cubed failed: " + ex.getMessage())));
@@ -118,7 +151,8 @@ public final class EverythingCubedCommand {
 		return AnalyzerRunner.analyze(input, scale, line -> server.execute(() -> progress(src, line)));
 	}
 
-	private static void build(CommandSourceStack src, ServerLevel level, BlockPos at, Direction facing, JsonObject plan) {
+	private static void build(CommandSourceStack src, ServerLevel level, BlockPos at, Direction facing, JsonObject plan, Path planFile,
+			Consumer<Built> onBuilt) {
 		try {
 			JsonObject size = plan.getAsJsonObject("size");
 			int w = size.get("x").getAsInt(), d = size.get("z").getAsInt();
@@ -128,8 +162,13 @@ public final class EverythingCubedCommand {
 			int cz = at.getZ() + facing.getStepZ() * ahead;
 			BlockPos origin = new BlockPos(cx - w / 2, at.getY() - 1, cz - d / 2);
 			UndoLog log = new HouseBuilder(level, origin, plan).build();
-			HISTORY.push(log);
-			while (HISTORY.size() > MAX_UNDO) HISTORY.removeLast();
+			remember(log);
+			Built b = new Built(level, origin, planFile, w, d, size.get("y").getAsInt());
+			if (src.getEntity() instanceof ServerPlayer p) {
+				LAST.put(p.getUUID(), b);
+				BUILT_BY.put(log, p.getUUID());
+			}
+			onBuilt.accept(b);
 			JsonObject m = plan.getAsJsonObject("metres");
 			String metres = m == null ? "" : String.format(" (room %.1f x %.1f m)", m.get("x").getAsDouble(), m.get("z").getAsDouble());
 			src.sendSuccess(() -> Component.literal("Built a " + w + " x " + d
@@ -142,6 +181,21 @@ public final class EverythingCubedCommand {
 		}
 	}
 
+	/** Adds a finished change (a spectate session's blocks) to the undo history. Server thread. */
+	public static void remember(UndoLog log) {
+		HISTORY.push(log);
+		while (HISTORY.size() > MAX_UNDO) HISTORY.removeLast();
+	}
+
+	private static int stopSpectate(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+		ServerPlayer player = ctx.getSource().getPlayerOrException();
+		if (!SpectateSession.stop(player.getUUID(), "you stopped it")) {
+			ctx.getSource().sendFailure(Component.literal("You are not spectating."));
+			return 0;
+		}
+		return 1;
+	}
+
 	private static int undo(CommandContext<CommandSourceStack> ctx) {
 		UndoLog log = HISTORY.poll();
 		if (log == null) {
@@ -149,6 +203,8 @@ public final class EverythingCubedCommand {
 			return 0;
 		}
 		log.revert();
+		UUID by = BUILT_BY.remove(log);
+		if (by != null) LAST.remove(by);   // that build is gone: nothing to spectate
 		ctx.getSource().sendSuccess(() -> Component.literal("Reverted " + log.size() + " blocks."), true);
 		return 1;
 	}

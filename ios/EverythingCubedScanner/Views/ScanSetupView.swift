@@ -46,6 +46,8 @@ struct ScanSetupView: View {
                 Section {
                     Button("Start scan") { model.startScan(name: name, lidar: lidar) }
                         .disabled(!supported || name.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                Section {
                     Button("Disconnect", role: .destructive) { model.disconnect() }
                 }
             }

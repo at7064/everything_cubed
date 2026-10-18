@@ -67,11 +67,17 @@ public class HouseBuilder {
 	private final Map<BlockPos, BlockState> ladders = new LinkedHashMap<>();
 	/** Interior cells already used by furniture or kept clear for a doorway. */
 	private final Set<Long> occupied = new HashSet<>();
+	/** Wall blocks that are part of something built into the wall (a fireplace): no wall picture on them. */
+	private final Set<BlockPos> noFrame = new HashSet<>();
 	private final String wallMain, wood;
 	private final boolean ridgeAlongX;
 	private int plantIndex;
 
 	public HouseBuilder(ServerLevel level, BlockPos origin, JsonObject plan) {
+		this(level, origin, plan, new UndoLog(level));
+	}
+
+	private HouseBuilder(ServerLevel level, BlockPos origin, JsonObject plan, UndoLog undo) {
 		this.level = level;
 		this.origin = origin;
 		this.plan = plan;
@@ -87,7 +93,7 @@ public class HouseBuilder {
 			if (!footprint[z][x]) irregular = true;
 		}
 		this.irregularFootprint = irregular;
-		this.undo = new UndoLog(level);
+		this.undo = undo;
 		this.wallMain = plan.get("wall_main").getAsString();
 		JsonObject roof = plan.getAsJsonObject("roof");
 		this.wood = roof.get("wood").getAsString();
@@ -106,6 +112,35 @@ public class HouseBuilder {
 		return undo;
 	}
 
+	/**
+	 * Spectate: builds one piece of furniture ({@code o}, an entry like the plan's "objects") into the standing house
+	 * {@code plan} was built as, at {@code origin}. Its blocks and entities go into {@code undo}.
+	 */
+	public static void placeObject(ServerLevel level, BlockPos origin, JsonObject plan, JsonObject o, UndoLog undo) {
+		HouseBuilder b = new HouseBuilder(level, origin, plan, undo);
+		b.buildObject(o);
+		b.finishShapes();
+	}
+
+	/**
+	 * Spectate: takes a piece of furniture built from {@code o} out of the house at {@code origin}: its model (with
+	 * everything of it, hitboxes and lamp lights included) and its real blocks, up to its height. Changes go into
+	 * {@code undo}.
+	 */
+	public static void removeObject(ServerLevel level, BlockPos origin, JsonObject o, UndoLog undo) {
+		int x0 = o.get("x").getAsInt(), z0 = o.get("z").getAsInt(), w = o.get("w").getAsInt(), d = o.get("d").getAsInt();
+		int h = Math.max(1, o.has("h") ? o.get("h").getAsInt() : 1);
+		for (int x = x0; x < x0 + w; x++)
+			for (int z = z0; z < z0 + d; z++)
+				for (int y = 1; y <= h; y++) {
+					BlockPos p = origin.offset(x, y, z);
+					FurnitureInteractions.removeModelsIn(level, p);
+					if (level.getBlockState(p).isAir()) continue;
+					undo.remember(p);
+					level.setBlock(p, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);
+				}
+	}
+
 	// ------------------------------------------------------------------------------------- blocks
 
 	private static BlockState block(String id) {
@@ -115,7 +150,7 @@ public class HouseBuilder {
 	}
 
 	/** First block id that exists in this game version. */
-	static BlockState first(String... ids) {
+	public static BlockState first(String... ids) {
 		for (String id : ids) {
 			BlockState s = block(id);
 			if (s != null) return s;
@@ -668,15 +703,7 @@ public class HouseBuilder {
 							0.62f, 0.9f, FurnitureInteractions.TRASH, group));
 				}
 			}
-			case "fireplace" -> {
-				fill(x0, z0, w, d, 1, Blocks.BRICKS.defaultBlockState());
-				int cx = x0 + w / 2, cz = z0 + d / 2;
-				set(cx, 1, cz, Blocks.CAMPFIRE.defaultBlockState());
-				for (int y = 2; y <= Math.min(H, 1 + Math.max(2, h)); y++)
-					for (int x = x0; x < x0 + w; x++)
-						for (int z = z0; z < z0 + d; z++)
-							if (claim(x, y, z)) set(x, y, z, Blocks.BRICKS.defaultBlockState());
-			}
+			case "fireplace" -> fireplace(x0, z0, w, d, facing);
 			case "tv" -> fill(x0, z0, w, d, Math.min(2, h), first("black_concrete"));
 			case "monitor" -> {
 				int y = Math.max(2, Math.min(H, o.has("y") ? o.get("y").getAsInt() : 2));
@@ -864,6 +891,62 @@ public class HouseBuilder {
 	 * Fill a footprint up to height h, skipping cells another object (or a doorway) already uses.
 	 * Returns the positions that were filled.
 	 */
+	/**
+	 * A fireplace built into the wall behind its footprint (the side away from {@code facing}), centred along it,
+	 * flush with the wall like a real one: brick, campfire, brick, a brick mantel row, and a one-block chimney in the
+	 * wall up to the ceiling. Bricks outside close the firebox at the back. Those wall blocks get no wall picture.
+	 * When the 3-wide one meets a door or window it is a campfire under the chimney; a footprint that is not against
+	 * a wall gets the same shape standing in the room, its back to the footprint's back row.
+	 */
+	private void fireplace(int x0, int z0, int w, int d, Direction facing) {
+		if (H < 2) return;
+		boolean alongX = facing.getAxis() == Direction.Axis.Z;   // the fireplace runs along the wall behind it
+		int span = alongX ? w : d;
+		int back = alongX ? (facing.getStepZ() > 0 ? z0 : z0 + d - 1) : (facing.getStepX() > 0 ? x0 : x0 + w - 1);
+		Direction out = facing.getOpposite();
+		String side = out.getSerializedName();
+		boolean inWall = switch (side) {
+			case "north" -> back == 0;
+			case "south" -> back == D - 1;
+			case "west" -> back == 0;
+			default -> back == W - 1;
+		};
+		BlockState brick = Blocks.BRICKS.defaultBlockState();
+		for (int width : span >= 3 ? new int[]{3, 1} : new int[]{1}) {
+			int start = (alongX ? x0 : z0) + (span - width) / 2, mid = width / 2;
+			int[][] cells = new int[width][];
+			boolean fits = true;
+			for (int i = 0; i < width; i++) {
+				int u = start + i;
+				cells[i] = inWall ? wallCell(side, u) : new int[]{alongX ? u : back, alongX ? back : u};
+				for (int y = 1; y <= 2; y++)
+					fits &= inWall ? u >= 0 && u < (alongX ? W : D) && solidWall(cells[i][0], y, cells[i][1])
+							: inside(cells[i][0], cells[i][1]) && !occupied.contains(BlockPos.asLong(cells[i][0], y, cells[i][1]));
+			}
+			if (!fits) continue;
+			for (int i = 0; i < width; i++) {
+				int x = cells[i][0], z = cells[i][1];
+				int top = i == mid ? H : 2;
+				for (int y = 1; y <= top; y++) {
+					if (inWall ? !solidWall(x, y, z) : !claim(x, y, z)) break;   // a window above, a ceiling light
+					set(x, y, z, y == 1 && i == mid ? Blocks.CAMPFIRE.defaultBlockState() : brick);
+					if (inWall) noFrame.add(origin.offset(x, y, z));
+				}
+			}
+			if (inWall) {   // the back of the firebox, outside
+				int x = cells[mid][0] + out.getStepX(), z = cells[mid][1] + out.getStepZ();
+				for (int y = 1; y <= 2; y++) set(x, y, z, brick);
+			}
+			return;
+		}
+	}
+
+	/** A plain wall block (not a door, window or anything built into the wall already). */
+	private boolean solidWall(int x, int y, int z) {
+		BlockPos p = origin.offset(x, y, z);
+		return !noFrame.contains(p) && level.getBlockState(p).isCollisionShapeFullBlock(level, p);
+	}
+
 	private List<BlockPos> fill(int x0, int z0, int w, int d, int h, BlockState s) {
 		List<BlockPos> filled = new ArrayList<>();
 		for (int x = x0; x < x0 + w; x++)
@@ -921,6 +1004,7 @@ public class HouseBuilder {
 					int[] wc = wallCell(side, u), in = insideCell(side, u);
 					BlockPos wallPos = origin.offset(wc[0], row + 1, wc[1]);
 					if (!level.getBlockState(wallPos).isCollisionShapeFullBlock(level, wallPos)) continue; // window / door
+					if (noFrame.contains(wallPos)) continue; // a fireplace
 					BlockPos framePos = origin.offset(in[0], row + 1, in[1]);
 					BlockState inFront = level.getBlockState(framePos);
 				if (!inFront.isAir() && !inFront.is(Blocks.LIGHT)) continue;

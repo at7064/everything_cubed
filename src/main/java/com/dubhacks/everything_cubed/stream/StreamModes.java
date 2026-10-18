@@ -6,14 +6,16 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Session modes a phone can ask for in {@code begin}. {@code capture} records a scan and builds it.
- * New modes (for example live updates from video) register here without touching the connection code.
+ * Session modes a phone can ask for in {@code begin}. {@code capture} records a scan and builds it;
+ * {@code spectate} mirrors the room into the world live.
+ * New modes register here without touching the connection code.
  */
 public final class StreamModes {
 	private static final Map<String, StreamSession.Factory> MODES = new ConcurrentHashMap<>();
 
 	static {
 		register("capture", CaptureRecorder::new);
+		register("spectate", SpectateSession::new);
 	}
 
 	private StreamModes() {
