@@ -803,8 +803,8 @@ def apply_wall_features(plan, features, log=print, mirror=False):
     Windows: where a wall was seen well, glass goes exactly where the photos show glass, so the stone between
     windows stays. Unseen parts keep the windows guessed from 3D clusters, but those never take more than
     MAX_WINDOW of a wall: overlapping clusters once turned a whole wall into glass. Bookshelves seen on the
-    wall become vanilla bookshelf blocks in the wall itself (no picture of shelves), and furniture bookcases
-    standing at those spots are dropped as duplicates. mirror=True: a wall the photos hardly saw copies the
+    wall become vanilla bookshelf furniture standing on the floor right in front of it (never part of the wall
+    itself), and bookcases already placed at those spots are dropped as duplicates. mirror=True: a wall the photos hardly saw copies the
     opposite wall when that one was seen well (halls, libraries, churches)."""
     H = plan["size"]["y"]
     decided = {}
@@ -845,33 +845,42 @@ def apply_wall_features(plan, features, log=print, mirror=False):
             keep.append({"type": "window", "side": side, "u": int(u), "w": int(w), "y": int(y), "h": int(h),
                          **({"color": colour[side]} if side in colour else {})})
         log(f"[plan] {side} wall: {d['seen']:.0%} seen, {d['win'].mean():.0%} glass, "
-            f"{int(d['shelf'].sum())} built-in bookshelf blocks")
+            f"shelving seen in {int(d['shelf'].any(0).sum())} column(s)")
     plan["openings"] = keep
 
     W, D = plan["size"]["x"], plan["size"]["z"]
     for side, d in decided.items():
-        wall = plan["walls"][side]
-        if d["shelf"].any():
-            if "minecraft:bookshelf" not in wall["palette"]:
-                wall["palette"].append("minecraft:bookshelf")
-            g = np.array(wall["grid"])
-            g[d["shelf"][:g.shape[0], :g.shape[1]]] = wall["palette"].index("minecraft:bookshelf")
-            wall["grid"] = g.tolist()
-            tex = plan.get("textures", {}).get("walls", {}).get(side)
-            if tex:
-                t = np.array(tex["tiles"])
-                t[d["shelf"][:t.shape[0], :t.shape[1]]] = 0
-                tex["tiles"] = t.tolist()
-            cols_ = np.flatnonzero(d["shelf"].any(0))
-            near = lambda o: {"north": o["z"] <= 2, "south": o["z"] + o["d"] >= D - 2,
-                              "west": o["x"] <= 2, "east": o["x"] + o["w"] >= W - 2}[side]
-            span = lambda o: range(o["x"], o["x"] + o["w"]) if side in ("north", "south") else range(o["z"], o["z"] + o["d"])
-            before = len(plan["objects"])
-            plan["objects"] = [o for o in plan["objects"] if not (
-                (o["type"] == "bookshelf" or o.get("block") == "minecraft:bookshelf")
-                and near(o) and set(span(o)) & set(cols_.tolist()))]
-            if len(plan["objects"]) < before:
-                log(f"[plan] {side} wall: {before - len(plan['objects'])} bookcase(s) replaced by the built-in shelves")
+        if not d["shelf"].any():
+            continue
+        cols_ = np.flatnonzero(d["shelf"].any(0))
+        near = lambda o: {"north": o["z"] <= 2, "south": o["z"] + o["d"] >= D - 2,
+                          "west": o["x"] <= 2, "east": o["x"] + o["w"] >= W - 2}[side]
+        span = lambda o: range(o["x"], o["x"] + o["w"]) if side in ("north", "south") else range(o["z"], o["z"] + o["d"])
+        before = len(plan["objects"])
+        plan["objects"] = [o for o in plan["objects"] if not (
+            (o["type"] == "bookshelf" or o.get("block") == "minecraft:bookshelf")
+            and near(o) and set(span(o)) & set(cols_.tolist()))]
+        if len(plan["objects"]) < before:
+            log(f"[plan] {side} wall: {before - len(plan['objects'])} bookcase(s) replaced by the shelving seen on it")
+        # Shelving stands on the floor: each column of shelf cells becomes a stack from the floor up to its top.
+        top = np.where(d["shelf"].any(0), d["shelf"].shape[0] - np.argmax(d["shelf"][::-1], 0), 0)
+        top[top < 2] = 0  # a lone block of "shelf" is noise, not furniture
+        front = {"north": "south", "south": "north", "west": "east", "east": "west"}[side]
+        u = 0
+        while u < len(top):
+            if top[u] == 0:
+                u += 1
+                continue
+            v = u
+            while v + 1 < len(top) and top[v + 1] == top[u]:
+                v += 1
+            w = v - u + 1
+            x, z, ww, dd = {"north": (u, 0, w, 1), "south": (u, D - 1, w, 1),
+                            "west": (0, u, 1, w), "east": (W - 1, u, 1, w)}[side]
+            plan["objects"].append({"type": "vanilla", "block": "minecraft:bookshelf", "name": "bookshelf", "cube": True,
+                                    "facing": front, "x": int(x), "z": int(z), "w": int(ww), "d": int(dd),
+                                    "h": int(top[u]), "y": 1})
+            u = v + 1
     for side, o in mirrored:
         tex = plan.get("textures", {}).get("walls", {})
         if o in tex:

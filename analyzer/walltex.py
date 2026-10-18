@@ -75,6 +75,24 @@ PATTERN_GRAIN = 6.0  # ... or its block-scale lightness detail has this standard
 PATTERN_MIN_SEEN = 0.05  # below this share seen, a wall follows the rest of the room
 PATTERN_OWN_POOL = 0.2   # below this share seen, a patterned wall grows from the whole room's patches
 PATTERN_HEAD_ON = 0.5    # a patterned wall only keeps and learns from pixels seen within ~60 deg of straight on
+LIGHT_SCALE = 2.0        # blocks: brightness changes slower than this are the photo's lighting, not the wall
+LIGHT_STRENGTH = 0.85    # how much of that lighting is removed (1 = all)
+GLARE, SHADOW = 235, 22  # luminance (0-255) beyond which a photo pixel is glare or deep shadow, not wall
+
+
+def even_lighting(img, seen, px):
+    """Removes the photos' own lighting from a wall image: sun bands, cast shadows and fall-off become an even
+    brightness, while colour and detail finer than LIGHT_SCALE blocks stay. Blown-out glare and near-black
+    shadow carry no wall at all and become unseen (the pattern fill replaces them). Returns (image, seen)."""
+    Y = img @ np.array([0.299, 0.587, 0.114], np.float32)
+    seen = seen & (Y < GLARE) & (Y > SHADOW)
+    if seen.sum() < px * px:
+        return img, seen
+    sigma = LIGHT_SCALE * px
+    m = seen.astype(np.float32)
+    low = ndimage.gaussian_filter(Y * m, sigma) / np.maximum(ndimage.gaussian_filter(m, sigma), 1e-3)
+    gain = np.clip((np.median(Y[seen]) / np.maximum(low, 1.0)) ** LIGHT_STRENGTH, 0.5, 2.5)
+    return np.where(seen[..., None], (img * gain[..., None]).clip(0, 255), img).astype(np.float32), seen
 
 
 def _de(lab, ref):
@@ -332,6 +350,8 @@ def render_walls(views, label_maps, cat_names_of_pixel, ctx, out_dir: Path, px=6
         # Pixels seen at a grazing angle are smeared along the wall: a patterned wall neither keeps them nor
         # learns its pattern from them; the pattern grown from the clean part replaces them.
         proj = {s: (img, seen & (proj3[s][2] >= PATTERN_HEAD_ON)) for s, (img, seen) in proj.items()}
+    if detail == "pattern":  # "photo" stays the raw photo: evening out cannot tell slow paint changes from light
+        proj = {s: even_lighting(img, seen, px) for s, (img, seen) in proj.items()}
     paints_rgb, paints_lab, paint_blocks = find_paints([p for p in proj.values() if p[1].any()], fallback_rgb)
     # The paint unseen walls get: the one covering most of what was seen.
     seen_lab = [_lab_sample(img[seen]) for img, seen in proj.values() if seen.any()]

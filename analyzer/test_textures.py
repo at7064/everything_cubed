@@ -239,10 +239,10 @@ for o in p1["openings"]:
     if o["side"] == "south" and o["type"] == "window":
         sw[o["y"]:o["y"] + o["h"], o["u"]:o["u"] + o["w"]] = True
 assert sw.mean() <= 0.6 and not sw[:, 3].any() and not sw[:2, 4].any(), sw.astype(int)   # piers; no glass in the door
-g = np.array(p1["walls"]["north"]["grid"]); b = p1["walls"]["north"]["palette"].index("minecraft:bookshelf")
-assert (g[0:2, 2:5] == b).all() and (g[2:] != b).all()
-assert np.array(p1["textures"]["walls"]["north"]["tiles"])[0:2, 2:5].sum() == 0, "no picture over real shelves"
-assert [o["z"] for o in p1["objects"]] == [4], "the bookcase at the shelf wall is a duplicate; the other stays"
+assert "minecraft:bookshelf" not in p1["walls"]["north"]["palette"], "furniture is never part of the wall"
+shelf_objs = [o for o in p1["objects"] if o.get("block") == "minecraft:bookshelf"]
+assert [(o["x"], o["z"], o["w"], o["d"], o["y"], o["h"], o["facing"]) for o in shelf_objs] == [(2, 0, 3, 1, 1, 2, "south")], shelf_objs
+assert [o["z"] for o in p1["objects"] if o["type"] == "bookshelf"] == [4], "the bookcase at the shelf wall is a duplicate"
 
 p2 = fplan()
 apply_wall_features(p2, {"north": {"seen": seen_all, "window": glass, "bookshelf": shelves},
@@ -250,4 +250,28 @@ apply_wall_features(p2, {"north": {"seen": seen_all, "window": glass, "bookshelf
 sw2 = sorted((o["u"], o["w"], o["y"], o["h"]) for o in p2["openings"] if o["side"] == "south" and o["type"] == "window")
 assert sw2 == [(1, 2, 2, 3), (6, 2, 2, 3)], sw2
 assert p2["textures"]["walls"]["south"]["image"] == "n.png" and p2["walls"]["south"]["grid"] == p2["walls"]["north"]["grid"]
+assert [(o["x"], o["z"]) for o in p2["objects"] if o.get("block") == "minecraft:bookshelf"] == [(2, 0), (2, 7)], "mirrored shelving"
 print("wall features OK")
+
+# Lighting: a striped wall photographed under a strong sun band and a cast shadow. Evening out must remove
+# most of the slow brightness change but keep the stripes' contrast, and drop glare as unseen.
+px = 16
+yy, xx = np.mgrid[0:8 * px, 0:16 * px]
+base = np.where(((xx // (px // 2)) % 2 == 0)[..., None], np.array([150, 110, 75.0]), np.array([200, 180, 150.0]))
+light = 0.55 + 0.6 * np.exp(-((xx - 5 * px) / (2.5 * px)) ** 2)            # a sun band
+light[2 * px:5 * px, 10 * px:13 * px] *= 0.45                               # a cast shadow
+lit = (base * light[..., None]).clip(0, 255)
+lit[0:px // 2, 0:px // 2] = 255                                             # a glare spot
+seen_l = np.ones(xx.shape, bool)
+even, seen_e = walltex.even_lighting(lit, seen_l, px)
+Yb = lambda im: ndimage_gauss(im @ np.array([0.299, 0.587, 0.114]), 2 * px)
+from scipy.ndimage import gaussian_filter as ndimage_gauss  # noqa: E402
+spread_before = np.std(Yb(lit)[seen_e]); spread_after = np.std(Yb(even)[seen_e])
+stripe = lambda im: np.abs(im[4 * px, 6 * px:7 * px].mean(0) - im[4 * px, 6 * px + px // 2:7 * px + px // 2].mean(0)).mean()
+print(f"lighting spread {spread_before:.1f} -> {spread_after:.1f}; glare dropped {not seen_e[:2, :2].any()}")
+assert spread_after < 0.4 * spread_before and not seen_e[:2, :2].any()
+yl = 4 * px
+c_before = np.abs(np.diff(lit[yl, 8 * px:9 * px].mean(-1)[::px // 2])).mean()
+c_after = np.abs(np.diff(even[yl, 8 * px:9 * px].mean(-1)[::px // 2])).mean()
+assert c_after > 0.5 * c_before, (c_before, c_after)
+print("even lighting OK")

@@ -41,7 +41,9 @@ Then `roomplan.py`:
    wallpaper) gets a map on every block: the photo where a camera saw it well, and everywhere else patches of
    that same surface grown outward, brightness-matched and blended at the seams (patch-based filling in the
    spirit of image quilting, Efros & Freeman, SIGGRAPH 2001). Only pixels seen within about 60 degrees of
-   straight on are kept or copied, since steep views are smeared. A wall the photos hardly saw borrows
+   straight on are kept or copied, since steep views are smeared. The photos' own lighting (sun bands, cast
+   shadows, glare) is evened out first: brightness changes slower than about 2 blocks are removed, colour and
+   finer detail stay, and blown-out glare or near-black shadow is treated as unseen and filled with pattern. A wall the photos hardly saw borrows
    patches from the room's other patterned walls. With `--perceptron`, detected windows and doors are kept
    out of the wall pattern.
 
@@ -49,9 +51,9 @@ Then `roomplan.py`:
    flat paint where unseen) and `none` (blocks only). Extra flags go in `extraArgs` in
    `config/everything_cubed.json`.
 7. Windows and built-in shelves come from what the photos show on each wall (`walltex.project_features`): glass
-   only where the visible photos agree on glass (weighted by angle and distance), so the stone between windows stays, and bookcases seen on a
-   wall become vanilla bookshelf blocks in the wall itself (not a picture of shelves; a furniture bookcase at
-   the same spot is dropped as a duplicate). Windows guessed from 3D clusters alone, on walls the photos did
+   only where the most head-on photo shows glass, so the stone between windows stays, and shelving seen on a
+   wall becomes vanilla bookshelf furniture standing on the floor in front of it (furniture is never part of a
+   wall; a bookcase already placed at the same spot is dropped as a duplicate). Windows guessed from 3D clusters alone, on walls the photos did
    not see, never take more than 60% of a wall. `--mirror-walls` (opt-in) lets a wall the photos hardly saw
    copy the opposite wall when that one was seen well: right for halls, libraries and churches, wrong for a
    bedroom with a window on one side only.
