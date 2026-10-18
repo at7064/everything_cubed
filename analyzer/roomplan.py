@@ -468,12 +468,17 @@ def cluster_category(p, eps=0.12, min_samples=8):
 # ----------------------------------------------------------------------------------- main entry
 
 def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metric=True, log=print, ctx=None,
-               known_height=None, object_instances=None, enlarge=ENLARGE, planes=None):
+               known_height=None, object_instances=None, enlarge=ENLARGE, planes=None, wall_ends=None,
+               seat_nudge=True):
     """ctx: optional dict that receives the room frame (origin, R, y_shift, f, room) for texture projection.
     known_height: the room's real floor-to-ceiling height in metres; rescales the whole reconstruction to it.
     enlarge: factor on the automatic scale (an explicit `scale` is used exactly as given).
     planes: flat surfaces measured by ARKit, [{"normal", "point" (same world frame as `points`), "area", "label"}]:
-    labelled walls set the wall positions and ceilings the room height, instead of the photos' guessed depth."""
+    labelled walls set the wall positions and ceilings the room height, instead of the photos' guessed depth.
+    wall_ends: points (same world frame as `points`) where measured walls end, such as RoomPlan's: a side whose
+    wall was never seen reaches at least this far, so an unscanned fourth wall doesn't shrink the room to the
+    furniture.
+    seat_nudge: let seating_scale change the automatic scale (off for measured LiDAR rooms: it lengthens furniture)."""
     points = np.asarray(points, float)
     colors = np.asarray(colors, float)
     cats = np.asarray(cats)
@@ -577,6 +582,12 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
         bounds[name] = c if c is not None else inferred(axis, neg)
         if c is None:
             log(f"[plan] wall {name} not visible - inferred from other geometry")
+            ends = [((np.asarray(e, float) - origin) @ R.T)[axis] * f for e in wall_ends or []]
+            if ends:
+                reach = min(ends) if neg else max(ends)
+                if (reach < bounds[name]) if neg else (reach > bounds[name]):
+                    log(f"[plan] wall {name} moved {abs(reach - bounds[name]):.2f} m out to where the measured walls end")
+                    bounds[name] = float(reach)
     # Measured walls beat walls from guessed depth: each side takes the area-weighted median of the ARKit planes
     # labelled wall that face along its axis.
     meas = [(np.asarray(p["normal"], float) @ R.T,
@@ -687,7 +698,8 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
         scale *= enlarge
         # Nudged so seats around a table can be centred on its sides (see seating_scale).
         base_scale = scale
-        scale = seating_scale(scale, obj_clusters, log)
+        if seat_nudge:
+            scale = seating_scale(scale, obj_clusters, log)
     room = Room(bounds["xmin"], bounds["xmax"], bounds["zmin"], bounds["zmax"], hm, scale)
     if ctx is not None:
         ctx.update(origin=origin, R=R, y_shift=y_shift, f=f, room=room)

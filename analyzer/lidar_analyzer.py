@@ -329,6 +329,16 @@ def roomplan_walls(frames, room, ex, ez, log):
     return {k: v[0] for k, v in best.items()}
 
 
+def roomplan_wall_ends(room):
+    """Both end points (on the floor line) of every RoomPlan wall, in ARKit world coordinates."""
+    ends = []
+    for wl in (room or {}).get("walls", []):
+        T = _mat(wl["transform"])
+        half = T[:3, 0] * wl["dimensions"][0] / 2          # a RoomPlan wall runs along its local x
+        ends += [T[:3, 3] - half, T[:3, 3] + half]
+    return ends
+
+
 def _under_roomplan_object(table, room, log, share=0.3):
     """A table top found in the depth that is mostly the top of something RoomPlan already reported (a bed's
     mattress is at table height, so is a dresser, and RoomPlan's own tables), which would otherwise be built a
@@ -669,7 +679,8 @@ def main(argv=None):
     ctx = {}
     # LiDAR measures the room itself: built at its measured size (photo rooms are enlarged, see --enlarge).
     plan = build_plan(pts, rgb, cats, surface_palette(opts.mc_jar, cache), scale=opts.scale, metric=True, log=log,
-                      ctx=ctx, known_height=opts.known_height, enlarge=1.0)
+                      ctx=ctx, known_height=opts.known_height, enlarge=1.0,
+                      wall_ends=roomplan_wall_ends(room), seat_nudge=False)
     plan["source"] = {"photos": [v_name for v_name in (f.get("image") for f in cap["frames"]) if v_name],
                       "metric": True, "lidar": True, "roomplan": room is not None}
     # How ARKit world coordinates map onto the plan's blocks, for spectate (spectate_analyzer.PlanFrame): a point P

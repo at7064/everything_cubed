@@ -82,6 +82,18 @@ assert all(big["size"][k] > small["size"][k] for k in "xyz"), (small["size"], bi
 fixed = build_plan(P_world, np.concatenate(cols), np.array(cats), Palette(builtin_surface_entries()), scale=2.0, enlarge=1.5, log=lambda m: None)
 assert fixed["scale"] == 2.0
 print("enlarge:", small["size"], "->", big["size"])
+# The south wall is never seen, so its side is inferred from the furniture (~3.1 m). Measured walls that run on to
+# z=3.8 (RoomPlan's west and east walls ending there) take the room out to their ends; the seen sides stay.
+to_world = lambda q: np.asarray(q, float) @ (flip @ Rx @ Ry).T + np.array([0.3, 1.4, 2.0])
+ends = [to_world(q) for q in ((0, 0, 0), (0, 0, 3.8), (W, 0, 0), (W, 0, 3.8))]
+reached = build_plan(P_world, np.concatenate(cols), np.array(cats), Palette(builtin_surface_entries()), enlarge=1.0,
+                     wall_ends=ends, seat_nudge=False, log=lambda m: None)
+short_side, long_side = sorted((reached["metres"]["x"], reached["metres"]["z"]))
+assert abs(short_side - 3.8) < 0.1 and abs(long_side - W) < 0.35, reached["metres"]
+assert min(small["metres"]["x"], small["metres"]["z"]) < 3.5, small["metres"]
+# Without the seating nudge the automatic scale is used as it is.
+assert reached["scale"] == reached["base_scale"], (reached["scale"], reached["base_scale"])
+print("wall ends:", small["metres"], "->", reached["metres"])
 # Duplicates: two overlapping copies of one bed merge; two beds side by side stay two.
 from roomplan import merge_duplicates  # noqa: E402
 bed = lambda x0, z0: {"lo": np.array([x0, 0, z0]), "hi": np.array([x0 + 2.0, 0.5, z0 + 1.0]), "c": np.array([x0 + 1, 0.25, z0 + 0.5]),

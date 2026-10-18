@@ -152,7 +152,9 @@ for a 34-photo scan on a laptop, and only numpy, SciPy, scikit-learn and Pillow.
      one table.
 3. `--segformer` (needs `transformers`) also runs SegFormer so the small things geometry can't name
    (lamps, plants, paintings, TVs, rugs) get named too. Geometry keeps the final say on floor, walls and ceiling.
-4. `roomplan.build_plan` and `walltex.render_walls` then build the plan and wall pictures exactly as for photos.
+4. `roomplan.build_plan` and `walltex.render_walls` then build the plan and wall pictures as for photos, with two
+   differences: a side whose wall was never scanned reaches at least to where RoomPlan's walls end (not just to the
+   furniture), and the scale is not nudged to centre seats on tables, so furniture keeps its measured length.
 
 Photo-only flags (`--perceptron`, `--backend`, model names) are ignored with a log line.
 `python test_lidar.py` checks it on a synthetic scan.
