@@ -64,6 +64,7 @@ PERSON_SHOW = 2           # frames a person must be seen before they are reporte
 PERSON_KEEP = 1.0         # seconds a person stays after they were last seen
 LYING_TOP = 1.2          # metres: a person whose highest point is below this, and
 LYING_SPAN = 0.9         # ... whose height from lowest to highest point is below this, over a bed, is lying on it
+BED_SLACK = 0.15         # metres around the real bed's footprint that still count as lying on it
 LYING_FRAMES = 3         # frames in a row that must agree before a villager lies down or gets up
 KEEP_FIELDS = ("material", "color")   # what a moved piece keeps from the built one
 SAME_KIND = {"coffee_table": "table"}   # a coffee table and a table are matched as one kind
@@ -334,6 +335,11 @@ class Pose:
         return (f"centre block ({frame.block_x(self.c[0]):.1f}, {frame.block_z(self.c[2]):.1f}), "
                 f"{2 * self.half[0]:.2f} x {2 * self.half[1]:.2f} m")
 
+    def contains(self, xz, slack=0.0):
+        """Whether a floor point (room metres) lies within this box's footprint, grown by `slack` metres."""
+        rel = (np.asarray(xz, float) - self.c[[0, 2]]) @ self.axes.T
+        return bool(np.all(np.abs(rel) <= self.half + slack))
+
     def moved_from(self, other: "Pose"):
         """Mostly outside where it was. A partial box RoomPlan has only begun to see, inside the scanned one, has not
         moved, nor has the same box turned in place or described with its axes the other way round."""
@@ -447,6 +453,15 @@ class Furniture:
         self.align = best
         return True
 
+    def real_footprints(self, k):
+        """(plan object index, Pose) of each built piece of kind k with a RoomPlan box: where RoomPlan last placed it
+        (live, once seen and moved), else where the scan had it."""
+        out = {i: pose for kk, pose, i in self.scanned if kk == k and i is not None}
+        for v in self.live.values():
+            if v["index"] is not None and v["anchor"] is not None and kind(self.objects[v["index"]]["type"]) == k:
+                out[v["index"]] = v["anchor"]
+        return list(out.items())
+
     def _unseen_scanned(self, k):
         """How many scanned pieces of kind k no live object has been matched to."""
         claimed = {v["scan"] for v in self.live.values() if v["scan"] is not None}
@@ -531,14 +546,24 @@ class People:
         self.tracks, self.next_id = [], 1
 
     def bed_under(self, xz):
-        """The bed block (x, z) under a point (room metres), if a built bed is there (half a block of slack)."""
+        """The bed block (x, z) under a point (room metres): on a built bed (half a block of slack), or anywhere on
+        the real bed it was built from. A Minecraft bed is much smaller than the real one (a 1 x 2 m bed is 1 x 2
+        blocks, 0.4 x 0.8 m at 2.5 blocks/m), so most of the real mattress is off the built blocks; someone lying
+        there sleeps in the built block nearest them."""
         bx, bz = self.fr.block_x(xz[0]), self.fr.block_z(xz[1])
-        for o in (self.furniture.objects if self.furniture else []):
-            if o["type"] != "bed":
-                continue
-            if o["x"] - 0.5 <= bx < o["x"] + o["w"] + 0.5 and o["z"] - 0.5 <= bz < o["z"] + o["d"] + 0.5:
-                return (int(np.clip(np.floor(bx), o["x"], o["x"] + o["w"] - 1)),
-                        int(np.clip(np.floor(bz), o["z"], o["z"] + o["d"] - 1)))
+        objs = self.furniture.objects if self.furniture else []
+
+        def nearest_block(o):
+            return (int(np.clip(np.floor(bx), o["x"], o["x"] + o["w"] - 1)),
+                    int(np.clip(np.floor(bz), o["z"], o["z"] + o["d"] - 1)))
+
+        for o in objs:
+            if o["type"] == "bed" and o["x"] - 0.5 <= bx < o["x"] + o["w"] + 0.5 \
+                    and o["z"] - 0.5 <= bz < o["z"] + o["d"] + 0.5:
+                return nearest_block(o)
+        for i, pose in (self.furniture.real_footprints("bed") if self.furniture else []):
+            if objs[i]["type"] == "bed" and pose.contains(xz, BED_SLACK):
+                return nearest_block(objs[i])
         return None
 
     def update(self, fr):

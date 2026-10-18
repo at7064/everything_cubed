@@ -187,7 +187,8 @@ objects; no single blocks are ever placed:
 - low-confidence objects, jitter within a footprint, and objects RoomPlan stops reporting change nothing;
 - people are found in the frames (the phone's person mask over LiDAR depth), moved by the same alignment as the
   furniture (nobody is reported before it is agreed), and reported as tracked positions, which the mod shows as
-  villagers.
+  villagers. Someone lying anywhere on the real bed (not just over the smaller Minecraft bed built for it) sleeps in
+  the built bed.
 
 `python test_spectate.py` streams synthetic RoomPlan updates through it. It checks that the room as scanned (and
 with 5 cm jitter) changes nothing, a chair away for 3 updates changes nothing, a chair moved for good moves once as

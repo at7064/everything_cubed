@@ -306,4 +306,24 @@ asleep = [q for q in seen if "sleep" in q]
 assert asleep and wbed["x"] <= asleep[0]["sleep"][0] < wbed["x"] + wbed["w"] \
     and wbed["z"] <= asleep[0]["sleep"][1] < wbed["z"] + wbed["d"], (seen, wbed)
 print(f"person on the bed through the shifted frame: asleep in bed block {asleep[0]['sleep']}")
+
+# At 2.5 blocks/m the built bed (2 x 1 blocks, 0.8 x 0.4 m) is far smaller than the real 2 x 1.1 m one, so someone
+# lying at the real bed's foot end is off the built blocks; they still lie on the bed (and sleep in it). A real
+# session's villager vanished instead: flat and "not on a bed", the person was dropped.
+S25 = 2.5
+ARKIT25 = dict(ARKIT, W=round(W * S25), D=round(D * S25), H=round(H * S25))
+frame25 = sa.PlanFrame(ARKIT25)
+build25 = sa.Furniture({"objects": [], "scale": S25}, frame25, {"objects": []})
+bed25 = build25._place("bed", sa.Pose(frame25, scan["objects"][2]))
+f25 = sa.Furniture({"objects": [bed25], "scale": S25}, frame25, {"objects": [scan["objects"][2]]})
+f25.align = sa.Alignment()                  # live coordinates as the scan's (people wait for an alignment)
+p25 = sa.People(frame25, f25)
+foot = (5.4 - 0.75, 3.9)                    # the bed runs along x (yaw 90): 0.75 m from its centre
+assert not (bed25["x"] - 0.5 <= frame25.block_x(foot[0]) < bed25["x"] + bed25["w"] + 0.5), (bed25, "test needs a spot off the built bed")
+assert p25.bed_under(np.array(foot)) is not None and p25.bed_under(np.array((5.4, 3.9 + 1.6))) is None
+lying25 = ((foot[0] - 0.8, 0.55, foot[1] - 0.25), (foot[0] + 0.3, 0.85, foot[1] + 0.25))
+for i in range(3):
+    seen25 = p25.update(frame_of(body_frame(40 + i, *lying25, (foot[0], 1.6, foot[1] - 2.0), (foot[0], 0.6, foot[1]))))
+assert seen25 and "sleep" in seen25[0], seen25
+print(f"lying on the real bed off the built blocks: asleep in bed block {seen25[0]['sleep']}")
 print("OK")
