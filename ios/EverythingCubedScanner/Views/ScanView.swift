@@ -37,7 +37,7 @@ struct ScanView: View {
             if let hint = model.hint {
                 Text(hint).font(.caption)
             } else if model.framesSent > 3 && model.framesWithDepth == 0 {
-                Text("No LiDAR depth from this mode. Try \"Depth only\".").font(.caption)
+                Text("No LiDAR depth yet. Cancel and scan again.").font(.caption)
             }
         }
         .padding(10)

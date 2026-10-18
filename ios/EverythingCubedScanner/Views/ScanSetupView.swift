@@ -3,30 +3,24 @@ import SwiftUI
 struct ScanSetupView: View {
     @EnvironmentObject private var model: AppModel
     @AppStorage("roomName") private var name = "room"
-    @State private var kind: CaptureKind = CaptureKind.roomPlan.isSupported ? .roomPlan : .depth
+    private let supported = RoomPlanSource.isSupported
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Room name") {
+                Section {
                     TextField("bedroom", text: $name)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                }
-                Section {
-                    Picker("Scan with", selection: $kind) {
-                        ForEach(CaptureKind.allCases) { Text($0.rawValue).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
+                } header: {
+                    Text("Room name")
                 } footer: {
-                    Text(kind == .roomPlan
-                         ? "Guided LiDAR room scan. Walk slowly around the room and point at every wall, the floor and the furniture."
-                         : "LiDAR depth only, without RoomPlan's guidance or room model.")
+                    Text("Guided LiDAR room scan. Walk slowly around the room and point at every wall, the floor and the furniture.")
                 }
                 if let scanError = model.scanError {
                     Section { Text(scanError).foregroundStyle(.red) }
                 }
-                if !kind.isSupported {
+                if !supported {
                     Section {
                         Text("This needs an iPhone or iPad with LiDAR (Pro models).").foregroundStyle(.red)
                     }
@@ -37,8 +31,8 @@ struct ScanSetupView: View {
                         .foregroundStyle(.secondary)
                 }
                 Section {
-                    Button("Start scan") { model.startScan(name: name, kind: kind) }
-                        .disabled(!kind.isSupported || name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button("Start scan") { model.startScan(name: name) }
+                        .disabled(!supported || name.trimmingCharacters(in: .whitespaces).isEmpty)
                     Button("Disconnect", role: .destructive) { model.disconnect() }
                 }
             }

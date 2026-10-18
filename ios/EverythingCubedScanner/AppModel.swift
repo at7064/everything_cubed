@@ -97,17 +97,17 @@ final class AppModel: ObservableObject, FrameSink {
 
     // MARK: scan
 
-    func startScan(name: String, kind: CaptureKind) {
+    func startScan(name: String) {
         scanError = nil
         let status = AVCaptureDevice.authorizationStatus(for: .video)
-        print("[app] start scan '\(name)' with \(kind.rawValue), camera permission \(status.rawValue)")
+        print("[app] start scan '\(name)', camera permission \(status.rawValue)")
         switch status {
         case .authorized:
-            beginCapture(name: name, kind: kind)
+            beginCapture(name: name)
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { granted in
                 Task { @MainActor in
-                    if granted { self.beginCapture(name: name, kind: kind) } else { self.cameraDenied() }
+                    if granted { self.beginCapture(name: name) } else { self.cameraDenied() }
                 }
             }
         default:
@@ -120,8 +120,8 @@ final class AppModel: ObservableObject, FrameSink {
         scanError = "Camera access is off. Turn it on in Settings → Privacy & Security → Camera → Cubed Scanner."
     }
 
-    private func beginCapture(name: String, kind: CaptureKind) {
-        let src = kind.makeSource()
+    private func beginCapture(name: String) {
+        let src: CaptureSource = RoomPlanSource()
         source = src
         framesSent = 0
         framesWithDepth = 0

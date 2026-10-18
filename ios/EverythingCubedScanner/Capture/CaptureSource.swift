@@ -13,24 +13,3 @@ protocol CaptureSource: AnyObject {
     /// Stops capturing. `extra` receives any whole-scan result to send before `end` (RoomPlan's room model).
     func finish(extra: @escaping (WireMessage?) -> Void)
 }
-
-enum CaptureKind: String, CaseIterable, Identifiable {
-    case roomPlan = "Room scan"
-    case depth = "Depth only"
-
-    var id: String { rawValue }
-
-    var isSupported: Bool {
-        switch self {
-        case .roomPlan: return RoomPlanSource.isSupported
-        case .depth: return DepthSource.isSupported
-        }
-    }
-
-    func makeSource() -> CaptureSource {
-        switch self {
-        case .roomPlan: return RoomPlanSource()
-        case .depth: return DepthSource()
-        }
-    }
-}

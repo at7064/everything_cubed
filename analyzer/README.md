@@ -68,6 +68,32 @@ Then `roomplan.py`:
 8. Guarantees a front door on a free stretch of wall, and keeps the floor in front of every door clear.
    Lights are only the ones found in the photos (lamps, chandeliers, ceiling lights): a dark room stays dark.
 
+## LiDAR scans from the iOS app (`lidar_analyzer.py`)
+
+A folder streamed from the iOS scanner app has a `capture.json` (camera pose, intrinsics, LiDAR depth and
+confidence per photo) and usually RoomPlan's `room.json`. `everything_cubed_analyzer.py` hands such folders to
+`lidar_analyzer.py` (unless `--backend mapanything|vggt` is given). It needs no ML model and no GPU: about 3 s
+for a 34-photo scan on a laptop, and only numpy, SciPy, scikit-learn and Pillow.
+
+1. Every depth pixel is unprojected with ARKit's pose. Frames with limited tracking are dropped; depth is kept up
+   to 5 m at medium confidence and up to `--max-depth` (10 m) at high confidence.
+2. Labels come from the geometry, with normals taken straight from the depth image grid:
+   - floor and ceiling: the lowest and highest horizontal planes along gravity;
+   - walls: on each of the room's 4 sides (directions from RoomPlan's walls, else from the LiDAR normals), the
+     innermost vertical plane that faces into the room, is wall-high, and that the LiDAR never sees the floor
+     through. A row of pillars or a railing is not a wall, and the building seen through a window is not either;
+   - windows: depth *behind* a wall can only come through glass, so those pixels are labelled window and placed
+     where their ray crossed the wall;
+   - furniture: RoomPlan's object boxes and doors/windows/openings, plus table tops found as flat surfaces at
+     table height. Each one is filled in as a solid box at its measured size, so a table seen in patches is still
+     one table.
+3. `--segformer` (needs `transformers`) also runs SegFormer so the small things geometry can't name
+   (lamps, plants, paintings, TVs, rugs) get named too. Geometry keeps the final say on floor, walls and ceiling.
+4. `roomplan.build_plan` and `walltex.render_walls` then build the plan and wall pictures exactly as for photos.
+
+Photo-only flags (`--perceptron`, `--backend`, model names) are ignored with a log line.
+`python test_lidar.py` checks it on a synthetic scan.
+
 ## Optional: open-vocabulary detection (`--perceptron`)
 
 Off by default, because it sends the photos to [Perceptron](https://docs.perceptron.inc) (`api.perceptron.inc`).

@@ -31,7 +31,7 @@ import java.util.stream.Stream;
  * Which Python to use is configured in {@code config/everything_cubed.json}.
  */
 public final class AnalyzerRunner {
-	private static final String[] SCRIPTS = {"everything_cubed_analyzer.py", "perception.py", "roomplan.py", "palette.py", "walltex.py",
+	private static final String[] SCRIPTS = {"everything_cubed_analyzer.py", "perception.py", "roomplan.py", "palette.py", "walltex.py", "lidar_analyzer.py",
 			"requirements.txt", "README.md"};
 	private static final Set<String> IMAGE_EXT = Set.of("jpg", "jpeg", "png", "webp", "bmp", "heic");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();

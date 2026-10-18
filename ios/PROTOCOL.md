@@ -23,7 +23,7 @@ Implementations: `ios/EverythingCubedScanner/Network/WireMessage.swift` and
 | type | fields | blobs |
 |---|---|---|
 | `hello` | `protocol` (1), `code` (pairing code from `/everything_cubed phone`), `device`, `app` | |
-| `begin` | `mode` (`capture`), `name`, `source` (`roomplan` / `depth`), `app` | |
+| `begin` | `mode` (`capture`), `name`, `source` (`roomplan`), `app` | |
 | `frame` | `seq`, `kind` (`keyframe` / `photo`), `time`, `tracking`, `imageSize` [w,h], `depthSize` [w,h], `K` (3×3), `cam2world` (4×4) | `image` (jpeg), `depth` (f16), `confidence` (u8) |
 | `room` | | `room` (RoomPlan `CapturedRoom` as JSON) |
 | `end` | `build` (default true), `scale` (blocks per metre, optional) | |

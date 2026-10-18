@@ -5,7 +5,7 @@ Usage:
                                 [--scale BLOCKS_PER_METRE] [--backend auto|arkit|mapanything|vggt]
 
 A folder streamed from the iOS scanner app has a capture.json with LiDAR depth and camera poses;
-`auto` then uses it directly (backend `arkit`) instead of reconstructing the room from the photos.
+`auto` (or `arkit`) then hands it to lidar_analyzer.py, which needs no reconstruction or segmentation model.
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def main(argv=None):
     ap.add_argument("--scale", type=float, help="blocks per metre (default: automatic)")
     ap.add_argument("--known-height", type=float,
                     help="the room's real floor-to-ceiling height in metres; corrects the reconstruction's scale")
-    ap.add_argument("--backend", default="auto", choices=["auto", "mapanything", "vggt"])
+    ap.add_argument("--backend", default="auto", choices=["auto", "arkit", "mapanything", "vggt"])
     ap.add_argument("--device", help="torch device (default: cuda > mps > cpu)")
     ap.add_argument("--mapanything-model", default="facebook/map-anything-apache")
     ap.add_argument("--vggt-model", default="facebook/VGGT-1B-Commercial")
@@ -59,6 +59,9 @@ def main(argv=None):
     ap.add_argument("--no-depth-gate", action="store_true",
                     help="paint whole detection boxes, not only the pixels near the object's depth")
     opts = ap.parse_args(argv)
+    if opts.backend in ("auto", "arkit") and (opts.images / "capture.json").is_file():
+        import lidar_analyzer
+        return lidar_analyzer.main(sys.argv[1:] if argv is None else argv)
 
     from perception import category_lut, fuse, list_images, pick_device, reconstruct, segment
 
