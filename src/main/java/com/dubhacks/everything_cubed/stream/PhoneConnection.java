@@ -144,6 +144,8 @@ public final class PhoneConnection implements Runnable {
 		} finally {
 			if (player != null) BY_PLAYER.remove(player, this);
 			if (session != null) session.onDisconnect();
+			// Only phones that paired were announced as connected.
+			if (player != null) onServer(p -> p.ifPresent(sp -> sp.sendSystemMessage(Component.literal("Phone disconnected: " + device))));
 		}
 	}
 
