@@ -175,6 +175,11 @@ class Pose:
         rel = (pts - other.c[[0, 2]]) @ other.axes.T
         return float(np.all(np.abs(rel) <= other.half + 1e-6, axis=1).mean())
 
+    def describe(self, frame: PlanFrame):
+        """For the log: centre in blocks and footprint size in metres."""
+        return (f"centre block ({frame.block_x(self.c[0]):.1f}, {frame.block_z(self.c[2]):.1f}), "
+                f"{2 * self.half[0]:.2f} x {2 * self.half[1]:.2f} m")
+
     def moved_from(self, other: "Pose"):
         """Mostly outside where it was. A partial box RoomPlan has only begun to see, inside the scanned one, has not
         moved, nor has the same box turned in place or described with its axes the other way round."""
@@ -247,6 +252,8 @@ class Furniture:
             self.live[rid] = {"scan": j, "index": self.scanned[j][2], "anchor": self.scanned[j][1]}
         else:
             self.live[rid] = {"scan": None, "index": None, "anchor": None}
+            log(f"[spectate] live {cat} {rid[:8]} ({pose.describe(self.fr)}) matches no scanned {kind(cat)} within "
+                f"{MATCH_M} m: a new piece if RoomPlan keeps it")
 
     def _stable(self, rid, key):
         prev = self.pending.get(rid)
@@ -273,6 +280,8 @@ class Furniture:
                 # Not one of the built pieces: a new piece, once RoomPlan has kept it in the same place a while.
                 new = self._place(cat, pose)
                 if new is not None and self._stable(rid, ("add", new["x"], new["z"], new["w"], new["d"], new["facing"])):
+                    log(f"[spectate] add {cat} at block ({new['x']}, {new['z']}) {new['w']}x{new['d']} facing "
+                        f"{new['facing']}: live {rid[:8]} {pose.describe(self.fr)}, {rp_confidence(o)} confidence")
                     self.objects.append(new)
                     link.update(index=len(self.objects) - 1, anchor=pose)
                     self.pending.pop(rid, None)
@@ -294,6 +303,10 @@ class Furniture:
                 self.pending.pop(rid, None)   # moved a little, but onto the same blocks
                 continue
             if self._stable(rid, ("move",) + key):
+                log(f"[spectate] move {cur['type']} #{idx} from block ({cur['x']}, {cur['z']}) {cur['w']}x{cur['d']} facing "
+                    f"{cur.get('facing')} to ({new['x']}, {new['z']}) {new['w']}x{new['d']} facing {new['facing']}: "
+                    f"live {rid[:8]} {pose.describe(self.fr)}, {rp_confidence(o)} confidence, "
+                    f"{pose.inside_share(link['anchor']):.0%} inside where it was ({link['anchor'].describe(self.fr)})")
                 moves.append({"from": cur, "to": new})
                 self.objects[idx] = new
                 link["anchor"] = pose
