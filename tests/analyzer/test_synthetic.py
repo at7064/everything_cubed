@@ -2,9 +2,14 @@
 
 Room: 4.0 m (x) by 3.2 m (z), 2.6 m high, wooden floor, blue walls with a green accent (east) wall,
 the south wall never "photographed". Bed against the north wall, window on the east wall, table + chair.
-Run: python test_synthetic.py
+Run: python tests/analyzer/test_synthetic.py
 """
 import json
+import sys
+from pathlib import Path
+
+ANALYZER = Path(__file__).resolve().parents[2] / "analyzer"   # the modules under test
+sys.path.insert(0, str(ANALYZER))
 
 import numpy as np
 

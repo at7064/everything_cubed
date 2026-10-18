@@ -3,10 +3,14 @@
 The walls are painted with a colour gradient that encodes the world position, so every texture pixel
 can be checked against where it should have come from. Also checks that textures are not mirrored:
 image columns must run left-to-right as seen from inside the room.
-Run: python test_textures.py
+Run: python tests/analyzer/test_textures.py
 """
+import sys
 import tempfile
 from pathlib import Path
+
+ANALYZER = Path(__file__).resolve().parents[2] / "analyzer"   # the modules under test
+sys.path.insert(0, str(ANALYZER))
 
 import numpy as np
 from PIL import Image

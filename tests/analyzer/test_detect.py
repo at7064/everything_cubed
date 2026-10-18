@@ -3,11 +3,15 @@
 Covers photo/view alignment (against MapAnything's own crop when it is installed), people blurring,
 box painting (order, kept wall/floor/ceiling, depth gate), name mapping (model + fallback), response
 parsing, and the generic objects that reach plan.json.
-Run: python test_detect.py
+Run: python tests/analyzer/test_detect.py
 """
 import json
+import sys
 import tempfile
 from pathlib import Path
+
+ANALYZER = Path(__file__).resolve().parents[2] / "analyzer"   # the modules under test
+sys.path.insert(0, str(ANALYZER))
 
 import numpy as np
 from PIL import Image

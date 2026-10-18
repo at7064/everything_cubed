@@ -1,7 +1,11 @@
 """Checks that reconstructed surfaces and room plans produce usable 3D artifacts."""
 import json
+import sys
 import tempfile
 from pathlib import Path
+
+ANALYZER = Path(__file__).resolve().parents[2] / "analyzer"   # the modules under test
+sys.path.insert(0, str(ANALYZER))
 
 import numpy as np
 

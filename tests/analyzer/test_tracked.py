@@ -3,11 +3,15 @@ a synthetic scan written the way the mod saves one, with one photo held in portr
 sensor's landscape orientation) and one in landscape, and two marked world points in each.
 Checks that such a scan is told apart from a LiDAR scan, that every photo is turned upright, that its K and pose
 project the marked points onto their marks, and that crop_intrinsics follows MapAnything's resize and crop.
-Run: python test_tracked.py
+Run: python tests/analyzer/test_tracked.py
 """
 import json
+import sys
 import tempfile
 from pathlib import Path
+
+ANALYZER = Path(__file__).resolve().parents[2] / "analyzer"   # the modules under test
+sys.path.insert(0, str(ANALYZER))
 
 import numpy as np
 from PIL import Image, ImageDraw

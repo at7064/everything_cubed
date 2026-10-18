@@ -159,7 +159,7 @@ for a 34-photo scan on a laptop, and only numpy, SciPy, scikit-learn and Pillow.
    wall where RoomPlan found a window its measured rectangle (rounded to blocks) replaces the photos' glass.
 
 Photo-only flags (`--perceptron`, `--backend`, model names) are ignored with a log line.
-`python test_lidar.py` checks it on a synthetic scan.
+`python tests/analyzer/test_lidar.py` checks it on a synthetic scan.
 
 ## Spectate: furniture from RoomPlan, live (`spectate_analyzer.py`)
 
@@ -193,7 +193,7 @@ objects; no single blocks are ever placed:
   anywhere on the real bed (not just over the smaller Minecraft bed built for it) sleeps in
   the built bed.
 
-`python test_spectate.py` streams synthetic RoomPlan updates through it. It checks that the room as scanned (and
+`python tests/analyzer/test_spectate.py` streams synthetic RoomPlan updates through it. It checks that the room as scanned (and
 with 5 cm jitter) changes nothing, a chair away for 3 updates changes nothing, a chair moved for good moves once as
 the same chair, a new sofa is added at medium confidence but not low, a table RoomPlan stops reporting stays, a
 person is reported, and that no single blocks are ever sent.
@@ -276,7 +276,7 @@ CPU and Apple MPS work, but they are slow.
 python everything_cubed_analyzer.py --images ~/rooms/bedroom --mc-jar path/to/minecraft-client.jar [--scale 1.5]
 ```
 
-`python test_synthetic.py` and `python test_textures.py` check the geometry and wall-texture stages on
+`python tests/analyzer/test_synthetic.py` and `python tests/analyzer/test_textures.py` check the geometry and wall-texture stages on
 synthetic rooms without any ML models.
 
 ## Photo tips

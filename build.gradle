@@ -14,6 +14,15 @@ dependencies {
 	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
 }
 
+// The mod's tests live with the analyzer's under tests/ (tests/mod), not in src/test.
+sourceSets {
+	test {
+		java {
+			srcDirs = ["tests/mod"]
+		}
+	}
+}
+
 test {
 	useJUnitPlatform()
 }
@@ -30,7 +39,6 @@ processResources {
 	from("analyzer") {
 		into "everything_cubed_analyzer"
 		include "*.py", "requirements.txt", "README.md"
-		exclude "test_*.py"
 	}
 }
 

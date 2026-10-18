@@ -11,7 +11,7 @@ Live RoomPlan updates (with their own object ids, as a new capture run gives) th
 5. leave the table out: it stays.
 A camera frame with a person (masked by the phone) reports a person; no blocks are ever sent. Someone lying on the
 bed is reported sleeping in it after 3 frames (not 2), and awake again after getting up for 3 frames.
-Run: python test_spectate.py
+Run: python tests/analyzer/test_spectate.py
 """
 import io
 import json
@@ -20,6 +20,9 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+ANALYZER = Path(__file__).resolve().parents[2] / "analyzer"   # the modules under test
+sys.path.insert(0, str(ANALYZER))
 
 import numpy as np
 from PIL import Image
@@ -121,7 +124,6 @@ def person_frame(i):
 
 
 # The scan and its build: the worker's own placement rules give the built objects (as build placed them).
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 import spectate_analyzer as sa  # noqa: E402
 
 scan = {"objects": [rp("scan-chair", "chair", (1.5, 1.5), CHAIR), rp("scan-table", "table", (4.0, 3.0), TABLE),
@@ -138,7 +140,7 @@ tmp = Path(tempfile.mkdtemp())
 (tmp / "plan.json").write_text(json.dumps({"arkit": ARKIT, "scale": S, "objects": built}))
 (tmp / "room.json").write_text(json.dumps(scan))
 
-p = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parent / "spectate_analyzer.py"),
+p = subprocess.Popen([sys.executable, str(ANALYZER / "spectate_analyzer.py"),
                       "--plan", str(tmp / "plan.json")], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 moves, adds, people, ms = [], [], [], []
 

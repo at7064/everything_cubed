@@ -4,11 +4,15 @@ Room: 4.0 m (x) by 3.2 m (z), 2.6 m high, in ARKit's world frame (+Y up). Camera
 look around; half of them hold the phone in portrait, so their images are sideways in sensor orientation.
 Checks that every unprojected point lies on the room's box, that every image ends up upright, and that
 K + cam2world project each point back onto its own pixel (walltex relies on this).
-Run: python test_arkit.py
+Run: python tests/analyzer/test_arkit.py
 """
 import json
+import sys
 import tempfile
 from pathlib import Path
+
+ANALYZER = Path(__file__).resolve().parents[2] / "analyzer"   # the modules under test
+sys.path.insert(0, str(ANALYZER))
 
 import numpy as np
 from PIL import Image

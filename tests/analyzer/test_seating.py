@@ -3,8 +3,14 @@
 out 1 block away on one side, 2 on another and one on a diagonal; as a group, each must sit on its own side, all at
 the same gap. A group that doesn't fit stays where it was. And the scale is nudged so a table side and the seats
 along it differ by an even number of blocks (a 1-block table can't have a 2-block sofa centred on it).
-Run: python test_seating.py
+Run: python tests/analyzer/test_seating.py
 """
+import sys
+from pathlib import Path
+
+ANALYZER = Path(__file__).resolve().parents[2] / "analyzer"   # the modules under test
+sys.path.insert(0, str(ANALYZER))
+
 import numpy as np
 
 from roomplan import Room, arrange_seating, seating_scale

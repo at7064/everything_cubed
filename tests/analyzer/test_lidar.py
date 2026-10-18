@@ -6,11 +6,15 @@ The east wall (x = 6) has a 1.6 m x 1.2 m window that the LiDAR sees through (to
 west wall; the floor is seen behind them, so they must not be taken for the wall.
 Checks the room size, that only the window wall gets glass, and that the table is found from the depth alone
 (no room.json) and from RoomPlan's box, and that "uniform" walls are maps on every block in one flat colour.
-Run: python test_lidar.py
+Run: python tests/analyzer/test_lidar.py
 """
 import json
+import sys
 import tempfile
 from pathlib import Path
+
+ANALYZER = Path(__file__).resolve().parents[2] / "analyzer"   # the modules under test
+sys.path.insert(0, str(ANALYZER))
 
 import numpy as np
 from PIL import Image

@@ -52,3 +52,11 @@ and `roomplan.py` turns that into a block-level `plan.json`.
 ## Build
 
 Requires JDK 25: `./gradlew build`.
+
+## Tests
+
+All tests are under `tests/`:
+
+- `tests/analyzer/`: the Python analyzer's tests, one script each, run with the analyzer's Python environment from
+  anywhere, for example `python tests/analyzer/test_spectate.py`.
+- `tests/mod/`: the mod's JUnit tests, run by `./gradlew test` (and `./gradlew build`).
