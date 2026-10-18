@@ -60,6 +60,23 @@ public final class AnalyzerRunner {
 		}
 	}
 
+	/** {@code "exterior"} in the config: the houses' outside look, "auto" (from each room) or a style name. */
+	public static String exterior() {
+		try {
+			JsonObject cfg = config();
+			return cfg.has("exterior") ? cfg.get("exterior").getAsString() : "auto";
+		} catch (IOException | RuntimeException e) {
+			return "auto";
+		}
+	}
+
+	/** Saves {@code style} ("auto" or a style name) as the config's {@code "exterior"}. */
+	public static void setExterior(String style) throws IOException {
+		JsonObject cfg = config();
+		cfg.addProperty("exterior", style);
+		Files.writeString(configFile(), GSON.toJson(cfg));
+	}
+
 	/** Called as a new phone scan starts recording into {@code current}: see {@link #pruneScans}. */
 	public static void pruneOldScans(Path current) {
 		int keep = keepScans();
@@ -234,8 +251,12 @@ public final class AnalyzerRunner {
 		return dir;
 	}
 
+	private static Path configFile() {
+		return FabricLoader.getInstance().getConfigDir().resolve(EverythingCubed.MOD_ID + ".json");
+	}
+
 	private static JsonObject config() throws IOException {
-		Path file = FabricLoader.getInstance().getConfigDir().resolve(EverythingCubed.MOD_ID + ".json");
+		Path file = configFile();
 		JsonObject cfg = Files.isRegularFile(file) ? JsonParser.parseString(Files.readString(file)).getAsJsonObject() : new JsonObject();
 		boolean changed = false;
 		String bare = isWindows() ? "python" : "python3";
@@ -266,6 +287,10 @@ public final class AnalyzerRunner {
 		}
 		if (!cfg.has("keepScans")) {
 			cfg.addProperty("keepScans", DEFAULT_KEEP_SCANS);
+			changed = true;
+		}
+		if (!cfg.has("exterior")) {
+			cfg.addProperty("exterior", "auto");
 			changed = true;
 		}
 		if (changed) {

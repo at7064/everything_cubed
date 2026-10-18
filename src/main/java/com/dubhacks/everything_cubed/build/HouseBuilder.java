@@ -1,6 +1,7 @@
 package com.dubhacks.everything_cubed.build;
 
 import com.dubhacks.everything_cubed.EverythingCubed;
+import com.dubhacks.everything_cubed.analyzer.AnalyzerRunner;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -71,6 +72,9 @@ public class HouseBuilder {
 	private final Set<BlockPos> noFrame = new HashSet<>();
 	private final String wallMain, wood;
 	private final boolean ridgeAlongX;
+	/** The outside look (see {@link ExteriorStyle}); its outer layer and roof only on a rectangular room. */
+	private ExteriorStyle.Pick exterior;
+	private boolean clad;
 	private int plantIndex;
 
 	public HouseBuilder(ServerLevel level, BlockPos origin, JsonObject plan) {
@@ -100,11 +104,21 @@ public class HouseBuilder {
 		this.ridgeAlongX = "x".equals(roof.get("axis").getAsString());
 	}
 
+	/** The exterior style the last {@link #build()} used. */
+	public ExteriorStyle.Pick exterior() {
+		return exterior;
+	}
+
 	public UndoLog build() {
+		exterior = ExteriorStyle.choose(AnalyzerRunner.exterior(), plan);
+		clad = !irregularFootprint;
 		clearSite();
 		buildShell();
-		if (!irregularFootprint) buildRoof();
+		if (clad) buildCladding();
+		if (clad && exterior.style().roof() == null) buildFlatRoof();
+		else if (clad) buildRoof();
 		buildOpenings();
+		if (clad) cladOpenings();
 		buildObjects(); // lights are only the ones detected in the photos: a dark room stays dark
 		finishShapes();
 		hangWallTextures();
@@ -190,15 +204,21 @@ public class HouseBuilder {
 
 	// ------------------------------------------------------------------------------------- shell
 
+	/** Roof overhang past the inner walls: one block past the outer layer. */
+	private int roofOff() {
+		return clad ? 3 : 2;
+	}
+
 	private int roofHeight() {
 		int across = ridgeAlongX ? D : W;
-		return (across + 4) / 2 + 1;
+		return (across - 1 + 2 * roofOff()) / 2 + 3;   // the ridge, and a chimney with its campfire above it
 	}
 
 	private void clearSite() {
 		BlockState air = Blocks.AIR.defaultBlockState();
-		for (int x = -3; x <= W + 2; x++)
-			for (int z = -3; z <= D + 2; z++)
+		int m = clad ? 5 : 3;   // the outer layer, the roof's overhang and a chimney
+		for (int x = -m; x <= W + m - 1; x++)
+			for (int z = -m; z <= D + m - 1; z++)
 				for (int y = 1; y <= H + 2 + roofHeight(); y++)
 					if (!isAir(x, y, z)) set(x, y, z, air);
 	}
@@ -286,18 +306,20 @@ public class HouseBuilder {
 
 	// ------------------------------------------------------------------------------------- roof
 
-	/** Gable roof of stairs over the long axis with a one block overhang; gable ends use the wall block. */
+	/** Gable roof of stairs over the long axis with a one block overhang, in the exterior style's materials. */
 	private void buildRoof() {
-		int along = ridgeAlongX ? W : D, across = ridgeAlongX ? D : W;
-		BlockState stairs = first(wood + "_stairs", "dark_oak_stairs");
-		BlockState slab = first(wood + "_slab", "dark_oak_slab");
-		BlockState gable = first(wallMain);
+		ExteriorStyle st = exterior.style();
+		int along = ridgeAlongX ? W : D, across = ridgeAlongX ? D : W, off = roofOff();
+		BlockState stairs = first(st.roof() + "_stairs", wood + "_stairs", "dark_oak_stairs");
+		BlockState slab = first(st.roof() + "_slab", wood + "_slab", "dark_oak_slab");
+		BlockState gable = first(st.gable(), wallMain);
 		Direction up = ridgeAlongX ? Direction.SOUTH : Direction.EAST; // direction of increasing "across"
-		int baseY = H + 1;
+		int baseY = H + 1, top = baseY;
 		for (int k = 0; ; k++) {
-			int lo = -2 + k, hi = across + 1 - k, y = baseY + k;
+			int lo = -off + k, hi = across - 1 + off - k, y = baseY + k;
 			if (lo > hi) break;
-			for (int a = -2; a <= along + 1; a++) {
+			top = y;
+			for (int a = -off; a <= along - 1 + off; a++) {
 				if (lo == hi) {
 					put(a, lo, y, with(slab, BlockStateProperties.SLAB_TYPE, SlabType.BOTTOM));
 					continue;
@@ -307,10 +329,97 @@ public class HouseBuilder {
 			}
 			if (k >= 1)
 				for (int b = lo + 1; b < hi; b++) {
-					put(-1, b, y, gable);
-					put(along, b, y, gable);
+					put(1 - off, b, y, gable);
+					put(along + off - 2, b, y, gable);
 				}
 		}
+		if (st.chimney()) {
+			// A stone chimney past one gable end, with a lit campfire on top for the smoke.
+			int a = -off - 1, b = (across - 1) / 2;
+			BlockState stone = first(st.base(), "cobblestone");
+			for (int y = 0; y <= top + 1; y++) put(a, b, y, stone);
+			put(a, b, top + 2, Blocks.CAMPFIRE.defaultBlockState());
+		}
+	}
+
+	/** A flat roof (modern): a parapet in the trim block around a smooth stone deck. */
+	private void buildFlatRoof() {
+		BlockState parapet = first(exterior.style().trim(), wallMain);
+		BlockState deck = with(first("smooth_stone_slab"), BlockStateProperties.SLAB_TYPE, SlabType.BOTTOM);
+		for (int x = -2; x <= W + 1; x++)
+			for (int z = -2; z <= D + 1; z++)
+				set(x, H + 2, z, x == -2 || z == -2 || x == W + 1 || z == D + 1 ? parapet : deck);
+	}
+
+	// ------------------------------------------------------------------------------------- outer layer
+
+	/** World x/z of the outer-layer block at position u along a side (u from -2 to the wall's length + 1). */
+	private int[] cladCell(String side, int u) {
+		return switch (side) {
+			case "north" -> new int[]{u, -2};
+			case "south" -> new int[]{u, D + 1};
+			case "west" -> new int[]{-2, u};
+			default -> new int[]{W + 1, u};
+		};
+	}
+
+	private static Direction.Axis alongAxis(String side) {
+		return side.equals("north") || side.equals("south") ? Direction.Axis.X : Direction.Axis.Z;
+	}
+
+	/**
+	 * The outer layer one block outside the walls (whose inside faces are matched to the photos and stay as they
+	 * are): a base row, the wall material, upright corner (and timber) posts and a top band, in the exterior style.
+	 */
+	private void buildCladding() {
+		ExteriorStyle st = exterior.style();
+		for (String side : new String[]{"north", "south", "west", "east"}) {
+			int len = alongAxis(side) == Direction.Axis.X ? W : D;
+			Direction.Axis along = alongAxis(side);
+			for (int u = -2; u <= len + 1; u++) {
+				int[] c = cladCell(side, u);
+				boolean post = u == -2 || u == len + 1 || (st.postEvery() > 0 && (u + 2) % st.postEvery() == 0);
+				for (int y = 0; y <= H + 1; y++) {
+					BlockState b;
+					if (y == 0) b = first(st.base(), wallMain);
+					else if (post) b = with(first(st.corner(), wallMain), BlockStateProperties.AXIS, Direction.Axis.Y);
+					else if (y == H + 1) b = with(first(st.trim(), wallMain), BlockStateProperties.AXIS, along);
+					else b = with(first(st.wall(), wallMain), BlockStateProperties.AXIS, st.logWall() ? along : Direction.Axis.Y);
+					set(c[0], y, c[1], b);
+				}
+			}
+		}
+	}
+
+	/**
+	 * Windows and doors through the outer layer: framed in the trim block (sill, lintel and sides), and open in it,
+	 * so windows sit in a recess. Frames first, so a frame never fills a neighbouring opening.
+	 */
+	private void cladOpenings() {
+		ExteriorStyle st = exterior.style();
+		List<int[]> holes = new ArrayList<>();
+		for (JsonElement e : plan.getAsJsonArray("openings")) {
+			JsonObject o = e.getAsJsonObject();
+			String type = o.get("type").getAsString(), side = o.get("side").getAsString();
+			if (!type.equals("window") && !type.equals("door")) continue;
+			int u0 = o.get("u").getAsInt(), w = o.get("w").getAsInt(), len = alongAxis(side) == Direction.Axis.X ? W : D;
+			int y0 = type.equals("door") ? 1 : o.get("y").getAsInt() + 1;   // block rows of the opening
+			int y1 = type.equals("door") ? 2 : Math.min(H, o.get("y").getAsInt() + o.get("h").getAsInt());
+			BlockState across = with(first(st.trim(), wallMain), BlockStateProperties.AXIS, alongAxis(side));
+			BlockState upright = with(first(st.trim(), wallMain), BlockStateProperties.AXIS, Direction.Axis.Y);
+			for (int u = u0; u < u0 + w; u++) {
+				int[] c = cladCell(side, u);
+				if (y0 > 1) set(c[0], y0 - 1, c[1], across);       // sill (a door stands on the base row)
+				if (y1 < H + 1) set(c[0], y1 + 1, c[1], across);   // lintel
+				for (int y = y0; y <= y1; y++) holes.add(new int[]{c[0], y, c[1]});
+			}
+			for (int u : new int[]{u0 - 1, u0 + w})
+				if (u >= -1 && u <= len) {
+					int[] c = cladCell(side, u);
+					for (int y = y0; y <= y1; y++) set(c[0], y, c[1], upright);
+				}
+		}
+		for (int[] h : holes) set(h[0], h[1], h[2], Blocks.AIR.defaultBlockState());
 	}
 
 	/** Sets a roof block by (along the ridge, across the ridge) coordinates. */
@@ -350,12 +459,14 @@ public class HouseBuilder {
 						int[] in = insideCell(side, u0 + i);
 						claim(in[0], 1, in[1]);
 						claim(in[0], 2, in[1]);
-						int ox = c[0] + out.getStepX(), oz = c[1] + out.getStepZ();
+						int reach = clad ? 2 : 1;   // past the outer layer
+						int ox = c[0] + reach * out.getStepX(), oz = c[1] + reach * out.getStepZ();
 						set(ox, 0, oz, with(first(wood + "_slab"), BlockStateProperties.SLAB_TYPE, SlabType.TOP));
 					}
 					// A torch above the front door.
 					int[] c = wallCell(side, u0);
-					set(c[0] + out.getStepX(), 3, c[1] + out.getStepZ(),
+					int reach = clad ? 2 : 1;
+					set(c[0] + reach * out.getStepX(), 3, c[1] + reach * out.getStepZ(),
 							with(Blocks.WALL_TORCH.defaultBlockState(), BlockStateProperties.HORIZONTAL_FACING, out));
 				}
 				case "painting" -> {

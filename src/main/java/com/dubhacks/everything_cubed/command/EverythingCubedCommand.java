@@ -2,6 +2,7 @@ package com.dubhacks.everything_cubed.command;
 
 import com.dubhacks.everything_cubed.EverythingCubed;
 import com.dubhacks.everything_cubed.analyzer.AnalyzerRunner;
+import com.dubhacks.everything_cubed.build.ExteriorStyle;
 import com.dubhacks.everything_cubed.build.HouseBuilder;
 import com.dubhacks.everything_cubed.build.UndoLog;
 import com.dubhacks.everything_cubed.stream.PhoneServer;
@@ -84,6 +85,10 @@ public final class EverythingCubedCommand {
 										.executes(ctx -> start(ctx, DoubleArgumentType.getDouble(ctx, "blocksPerMetre"))))))
 				.then(Commands.literal("undo").executes(EverythingCubedCommand::undo))
 				.then(Commands.literal("phone").executes(EverythingCubedCommand::phone))
+				.then(Commands.literal("style")
+						.executes(ctx -> style(ctx.getSource(), ""))
+						.then(Commands.argument("vibe", StringArgumentType.greedyString())
+								.executes(ctx -> style(ctx.getSource(), StringArgumentType.getString(ctx, "vibe")))))
 				.then(Commands.literal("spectate")
 						.executes(ctx -> SpectateSession.invite(ctx.getSource().getPlayerOrException()) ? 1 : 0)
 						.then(Commands.literal("allow").executes(ctx -> answer(ctx, true)))
@@ -161,7 +166,9 @@ public final class EverythingCubedCommand {
 			int cx = at.getX() + facing.getStepX() * ahead;
 			int cz = at.getZ() + facing.getStepZ() * ahead;
 			BlockPos origin = new BlockPos(cx - w / 2, at.getY() - 1, cz - d / 2);
-			UndoLog log = new HouseBuilder(level, origin, plan).build();
+			HouseBuilder builder = new HouseBuilder(level, origin, plan);
+			UndoLog log = builder.build();
+			ExteriorStyle.Pick look = builder.exterior();
 			remember(log);
 			Built b = new Built(level, origin, planFile, w, d, size.get("y").getAsInt());
 			if (src.getEntity() instanceof ServerPlayer p) {
@@ -173,12 +180,40 @@ public final class EverythingCubedCommand {
 			String metres = m == null ? "" : String.format(" (room %.1f x %.1f m)", m.get("x").getAsDouble(), m.get("z").getAsDouble());
 			src.sendSuccess(() -> Component.literal("Built a " + w + " x " + d
 					+ " x " + size.get("y").getAsInt() + " house" + metres + " at " + origin.toShortString()
-					+ ", " + plan.getAsJsonArray("objects").size() + " furnishings. /everything_cubed undo to revert.")
+					+ ", " + plan.getAsJsonArray("objects").size() + " furnishings, " + look.style().name() + " outside"
+					+ (look.reason() == null ? "" : " (auto: " + look.reason() + ")")
+					+ ". /everything_cubed undo to revert.")
 					.withStyle(ChatFormatting.GREEN), true);
 		} catch (Exception ex) {
 			EverythingCubed.LOGGER.error("everything_cubed build failed", ex);
 			src.sendFailure(Component.literal("Build failed: " + ex.getMessage()));
 		}
+	}
+
+	/**
+	 * Sets the houses' outside look for the next builds: a style name or vibe words ("cozy cabin in the woods") matched
+	 * to the closest style, or no words (or "auto") to pick it from each room.
+	 */
+	private static int style(CommandSourceStack src, String words) {
+		String w = words.trim();
+		boolean auto = w.isEmpty() || w.equalsIgnoreCase("auto");
+		ExteriorStyle s = auto ? null : ExteriorStyle.fromWords(w);
+		String names = String.join(", ", ExteriorStyle.ALL.keySet());
+		if (!auto && s == null) {
+			src.sendFailure(Component.literal("No style matches \"" + w + "\". Pick " + names
+					+ ", or describe a vibe (cozy, sleek, campus, woods, ...)."));
+			return 0;
+		}
+		try {
+			AnalyzerRunner.setExterior(auto ? "auto" : s.name());
+		} catch (IOException e) {
+			src.sendFailure(Component.literal("Could not save the style: " + e.getMessage()));
+			return 0;
+		}
+		String msg = auto ? "Outside style: automatic, picked from each room (or choose " + names + ", or a vibe)"
+				: "Outside style: " + s.name() + (w.equalsIgnoreCase(s.name()) ? "" : " (from \"" + w + "\")");
+		src.sendSuccess(() -> Component.literal(msg + ". Applies to your next build."), false);
+		return 1;
 	}
 
 	/** Adds a finished change (a spectate session's blocks) to the undo history. Server thread. */

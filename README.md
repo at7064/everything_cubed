@@ -40,6 +40,8 @@ The build appears a few blocks in front of you. The argument can be a folder nam
 | `/everything_cubed phone` | Pair the iOS scanner with the game. |
 | `/everything_cubed spectate` | Ask the connected phone to spectate the last built LiDAR scan. |
 | `/everything_cubed spectate stop` | End spectating and return to your previous game mode. |
+| `/everything_cubed style cozy cabin in the woods` | Choose the outside look for the next builds: `cottage`, `modern`, `brick`, or `cabin`, by name or by vibe words. |
+| `/everything_cubed style` | Pick the outside look automatically from each room (the default). |
 
 The mod reanalyzes a photo folder each time by default. Passing a `plan.json` path uses that saved plan directly.
 
@@ -120,11 +122,12 @@ The mod creates `config/everything_cubed.json`. For a custom Python path or anal
   "python": "/path/to/venv/bin/python",
   "extraArgs": ["--known-height", "2.7"],
   "alwaysReanalyze": true,
-  "keepScans": 5
+  "keepScans": 5,
+  "exterior": "auto"
 }
 ```
 
-`alwaysReanalyze` defaults to `true`. Set it to `false` to reuse a `plan.json` newer than the photos. `keepScans` keeps the newest five phone scans; `0` keeps all. Photo folders you created yourself are not pruned.
+`alwaysReanalyze` defaults to `true`. Set it to `false` to reuse a `plan.json` newer than the photos. `keepScans` keeps the newest five phone scans; `0` keeps all. Photo folders you created yourself are not pruned. `exterior` is the outside look set by `/everything_cubed style`; `auto` picks brick for dorm and classroom furniture, modern for plain white walls, cabin for a dark wood floor, and cottage otherwise. Rooms with a non-rectangular floor keep a plain outside.
 
 ## Code map
 
