@@ -75,30 +75,95 @@ def view_intrinsics(focal, photo_size, view_size):
     return np.array([[focal * s, 0, Wv / 2], [0, focal * s, Hv / 2], [0, 0, 1.0]])
 
 
-def reconstruct_mapanything(paths, device, model_name, log, use_exif=True):
+def align_reconstruction(batch, reference, overlap=2):
+    """Align a MapAnything batch to earlier views of the same overlapping photos (similarity transform)."""
+    pairs = []
+    for current, previous in zip(batch[:overlap], reference[-overlap:]):
+        a, b = np.asarray(current["points"]), np.asarray(previous["points"])
+        if a.shape != b.shape:
+            raise ValueError("overlap views have different image sizes")
+        mask = np.asarray(current["mask"]) & np.asarray(previous["mask"])
+        mask &= np.isfinite(a).all(-1) & np.isfinite(b).all(-1)
+        aa, bb = a[mask], b[mask]
+        if len(aa):
+            step = max(1, len(aa) // 6000)
+            pairs.append((aa[::step], bb[::step]))
+    if not pairs:
+        raise ValueError("overlapping batches have no matching 3D pixels")
+    a = np.concatenate([p[0] for p in pairs]).astype(np.float64)
+    b = np.concatenate([p[1] for p in pairs]).astype(np.float64)
+    if len(a) < 20:
+        raise ValueError("too few matching pixels to align video batches")
+    keep = np.ones(len(a), bool)
+    for _ in range(3):
+        aa, bb = a[keep], b[keep]
+        am, bm = aa.mean(0), bb.mean(0)
+        u, singular, vt = np.linalg.svd((aa-am).T @ (bb-bm))
+        sign = np.diag([1, 1, np.linalg.det(u @ vt)])
+        rotation = u @ sign @ vt
+        scale = float(np.sum(singular * np.diag(sign)) / np.sum((aa-am)**2))
+        shift = bm - scale * am @ rotation
+        error = np.linalg.norm(scale * a @ rotation + shift - b, axis=1)
+        keep = error <= np.quantile(error, 0.8)
+    if not np.isfinite(scale) or scale <= 0:
+        raise ValueError("invalid scale between video batches")
+    for view in batch:
+        view["points"] = (scale * np.asarray(view["points"]) @ rotation + shift).astype(np.float32)
+        pose = np.asarray(view["cam2world"]).copy()
+        pose[:3, :3] = rotation.T @ pose[:3, :3]
+        pose[:3, 3] = scale * pose[:3, 3] @ rotation + shift
+        view["cam2world"] = pose
+    return float(np.median(error))
+
+
+def reconstruct_mapanything(paths, device, model_name, log, use_exif=True, batch_size=6):
     import torch
     from mapanything.models import MapAnything
     from mapanything.utils.image import load_images
 
     log(f"[recon] MapAnything ({model_name}) on {len(paths)} photo(s), device={device}")
     model = MapAnything.from_pretrained(model_name).to(device)
-    views = load_images([str(p) for p in paths])
-    # The camera geometry, when every photo states its lens: MapAnything then does not have to guess the field of
-    # view, which otherwise feeds straight into the scale.
-    focals = [exif_focal_px(p) for p in paths] if use_exif and len(paths) == len(views) else [None]
-    if all(focals):
-        for v, (f, size) in zip(views, focals):
-            Hv, Wv = v["img"].shape[-2:]
-            v["intrinsics"] = torch.from_numpy(view_intrinsics(f, size, (Wv, Hv))).float()[None]
-        fov = np.degrees(2 * np.arctan(focals[0][1][0] / 2 / focals[0][0]))
-        log(f"[recon] camera geometry from the photos' lens data (horizontal field of view {fov:.0f} deg)")
-    elif use_exif:
+    if batch_size < 3:
+        raise ValueError("MapAnything batch size must be at least 3")
+    focals = [exif_focal_px(p) for p in paths] if use_exif else []
+    if use_exif and not all(focals):
         log("[recon] some photos have no lens data; MapAnything estimates the camera geometry itself")
-    with torch.no_grad():
-        preds = model.infer(views, memory_efficient_inference=True, use_amp=device == "cuda",
-                            amp_dtype="bf16", apply_mask=True, mask_edges=True,
-                            apply_confidence_mask=False, confidence_percentile=10)
-    return _mapanything_views(preds), True
+    all_views = []
+    overlap = 2
+    for start in range(0, len(paths), batch_size - overlap):
+        if start and start + overlap >= len(paths):
+            break
+        subset = paths[start:start + batch_size]
+        inputs = load_images([str(p) for p in subset])
+        if focals and all(focals):
+            for v, (f, size) in zip(inputs, focals[start:start + len(inputs)]):
+                Hv, Wv = v["img"].shape[-2:]
+                v["intrinsics"] = torch.from_numpy(view_intrinsics(f, size, (Wv, Hv))).float()[None]
+            if start == 0:
+                f, size = focals[0]
+                fov = np.degrees(2 * np.arctan(size[0] / 2 / f))
+                log(f"[recon] camera geometry from the photos' lens data (horizontal field of view {fov:.0f} deg)")
+        log(f"[recon] batch {start // (batch_size - overlap) + 1}: frames {start + 1}-{start + len(inputs)}")
+        with torch.no_grad():
+            preds = model.infer(inputs, memory_efficient_inference=True, use_amp=device == "cuda",
+                                amp_dtype="bf16", apply_mask=True, mask_edges=True,
+                                apply_confidence_mask=False, confidence_percentile=10)
+        batch = _mapanything_views(preds)
+        del preds, inputs
+        if start:
+            error = align_reconstruction(batch, all_views, overlap)
+            log(f"[recon] aligned batch to overlap (median error {error:.3f} m)")
+            all_views.extend(batch[overlap:])
+        else:
+            all_views.extend(batch)
+        if device == "cuda":
+            torch.cuda.empty_cache()
+        if start + batch_size >= len(paths):
+            break
+    del model
+    if device == "cuda":
+        torch.cuda.empty_cache()
+    return all_views, True
 
 
 def _mapanything_views(preds):
@@ -330,7 +395,8 @@ def reconstruct(paths, backend, device, opts, log):
                 return reconstruct_arkit(folder, log)
             if b == "mapanything":
                 return reconstruct_mapanything(paths, device, opts.mapanything_model, log,
-                                               use_exif=not getattr(opts, "no_exif_camera", False))
+                                               use_exif=not getattr(opts, "no_exif_camera", False),
+                                               batch_size=getattr(opts, "batch_views", 6))
             if b == "vggt":
                 return reconstruct_vggt(paths, device, opts.vggt_model, opts.depth_model, log)
         except ImportError as ex:

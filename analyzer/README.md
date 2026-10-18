@@ -20,6 +20,8 @@ The output contains `reconstruction.ply`, a coloured triangle mesh of the measur
 surfaces. Open `view.html` directly in a browser. FFmpeg is used only to sample frames when the input is a video.
 Use `--frames 24` for more views, or `--perceptron` to detect additional small objects. A LiDAR `capture.json`
 uses its measured depths and camera poses; ordinary video is reconstructed from the sampled frames.
+Long videos run MapAnything in overlapping batches of six views, align the shared frames, and combine all views
+into one mesh. `--frames 64` uses the full supported frame count; `--batch-views 4` lowers GPU memory use.
 
 ## Pipeline (all established open-source projects)
 

@@ -578,6 +578,23 @@ def test_hallway_templates():
     print("hallway templates OK", bag, lk, fountain[0])
 
 
+def test_video_batch_alignment():
+    """Overlapping views from separately reconstructed batches share one coordinate system."""
+    points = rng.normal(size=(20, 30, 3)).astype(np.float32)
+    angle = 0.6
+    rotation = np.array([[np.cos(angle), 0, np.sin(angle)], [0, 1, 0],
+                         [-np.sin(angle), 0, np.cos(angle)]])
+    target = (1.7 * points @ rotation + [2, -1, 3]).astype(np.float32)
+
+    def view(p):
+        return {"points": p.copy(), "mask": np.ones(p.shape[:2], bool), "cam2world": np.eye(4)}
+
+    batch = [view(points), view(points + 0.1), view(points + 0.2)]
+    reference = [view(target), view((1.7 * (points + 0.1) @ rotation + [2, -1, 3]).astype(np.float32))]
+    error = P.align_reconstruction(batch, reference)
+    assert error < 1e-5 and np.allclose(batch[0]["points"], target, atol=1e-5)
+
+
 if __name__ == "__main__":
     real_post = REAL_POST = P._post
 
@@ -598,6 +615,7 @@ if __name__ == "__main__":
         test_small_fixtures()
         test_exif_camera()
         test_hallway_templates()
+        test_video_batch_alignment()
         test_end_to_end(monkeypatch_post)
         test_plan_generic()
     finally:

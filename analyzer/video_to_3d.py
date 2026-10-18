@@ -53,6 +53,7 @@ def main(argv=None):
     ap.add_argument("--out", type=Path, help="output directory (default: <input stem>_3d)")
     ap.add_argument("--frames", type=int, default=16, help="frames sampled across a video (default 16)")
     ap.add_argument("--max-width", type=int, default=1600, help="maximum extracted frame width")
+    ap.add_argument("--batch-views", type=int, default=6, help="MapAnything views per GPU batch (default 6)")
     ap.add_argument("--backend", choices=("auto", "arkit", "mapanything", "vggt"), default="auto")
     ap.add_argument("--device", help="torch device, e.g. cuda")
     ap.add_argument("--mc-jar", type=Path, help="Minecraft jar for block colour matching")
@@ -67,6 +68,8 @@ def main(argv=None):
         ap.error("--frames must be between 2 and 64")
     if opts.max_width < 320:
         ap.error("--max-width must be at least 320")
+    if opts.batch_views < 3:
+        ap.error("--batch-views must be at least 3")
     out = (opts.out or source.with_name(source.stem + "_3d")).expanduser().resolve()
     if source.is_file() and source.suffix.lower() not in VIDEO_EXT:
         ap.error("input file must be a video; use a folder for photos or LiDAR captures")
@@ -80,7 +83,8 @@ def main(argv=None):
 
     from everything_cubed_analyzer import main as analyze
     plan_path = out / "plan.json"
-    args = ["--images", str(images), "--out", str(plan_path), "--mesh-out", str(out / "reconstruction.ply"), "--backend", opts.backend,
+    args = ["--images", str(images), "--out", str(plan_path), "--mesh-out", str(out / "reconstruction.ply"),
+            "--batch-views", str(opts.batch_views), "--backend", opts.backend,
             "--wall-detail", opts.wall_detail]
     if opts.device: args += ["--device", opts.device]
     if opts.mc_jar: args += ["--mc-jar", str(opts.mc_jar)]
