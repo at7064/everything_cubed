@@ -22,8 +22,8 @@ Only whole pieces of furniture change, and only from RoomPlan's objects; no sing
   MOVE_UPDATES updates, and only as an extra one: while a scanned piece of its kind has not been seen live, a live
   object of that kind is taken to be that piece (RoomPlan once reported the room's one bed 1.8 m off), not a new one;
 - anything RoomPlan is unsure of, or stops reporting, stays as built.
-People are found in the camera frames (the `person` mask the phone sends with LiDAR depth) and reported as tracked
-positions, which the mod shows as villagers. A person lying on a bed (low and flat over a built bed, LYING_FRAMES
+People are found in the camera frames (the `person` mask the phone sends with LiDAR depth), moved by the same
+alignment as the furniture (none are reported before it is agreed), and reported as tracked positions, which the mod shows as villagers. A person lying on a bed (low and flat over a built bed, LYING_FRAMES
 frames in a row) is reported with the bed block they lie on ("sleep": [x, z]); the mod puts the villager to sleep
 there.
 
@@ -545,9 +545,14 @@ class People:
         from scipy import ndimage
 
         found = []
+        align = self.furniture.align if self.furniture else None
+        if self.furniture is not None and align is None:
+            return self.kept()    # RoomPlan's live coordinates not aligned to the scan yet: nobody would be in place
         m = fr["person"] & fr["valid"]
         if m.sum() >= PERSON_MIN_PIXELS:
             loc = self.fr.room_metres(fr["P"][m])
+            if align is not None:     # into the scan's coordinates, as the furniture (the frame's pose is live)
+                loc[:, [0, 2]] = loc[:, [0, 2]] @ _rot2(align.turn).T + align.shift
             gi = np.floor(loc[:, [0, 2]] / PERSON_CELL).astype(int)
             gi -= gi.min(0)
             grid = np.zeros(gi.max(0) + 1, np.int32)

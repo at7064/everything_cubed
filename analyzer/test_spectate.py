@@ -74,8 +74,9 @@ def look_at(eye, target):
     return c2w
 
 
-def body_frame(i, lo, hi, eye, target):
-    """A frame of a person (a box lo..hi in room metres, masked) over the floor, from `eye` looking at `target`."""
+def body_frame(i, lo, hi, eye, target, live=np.eye(4)):
+    """A frame of a person (a box lo..hi in room metres, masked) over the floor, from `eye` looking at `target`.
+    live: how RoomPlan's live coordinates sit against the scan's (the camera pose is reported in them)."""
     K = np.array([[FX, 0, IW / 2], [0, FX, IH / 2], [0, 0, 1]])
     Kd = K.copy(); Kd[:2] *= DW / IW
     cv = look_at(np.asarray(eye, float), target) @ ARKIT_TO_CV
@@ -91,7 +92,7 @@ def body_frame(i, lo, hi, eye, target):
     depth = np.minimum(np.minimum(body, floor), 9.0)
     img = io.BytesIO(); Image.fromarray(np.full((IH // 8, IW // 8, 3), 180, np.uint8)).resize((IW, IH)).save(img, "JPEG")
     header = {"seq": i, "time": i * 0.2, "tracking": "normal", "imageSize": [IW, IH], "depthSize": [DW, DH],
-              "K": K.ravel().tolist(), "cam2world": (WORLD @ look_at(np.asarray(eye, float), target)).ravel().tolist()}
+              "K": K.ravel().tolist(), "cam2world": (live @ WORLD @ look_at(np.asarray(eye, float), target)).ravel().tolist()}
     return message("frame", header, [("image", "jpeg", img.getvalue()),
                                      ("depth", "f16", depth.astype("<f2").tobytes()),
                                      ("confidence", "u8", np.full((DH, DW), 2, np.uint8).tobytes()),
@@ -284,4 +285,25 @@ true_move = builder._place("chair", sa.Pose(frame, live_objs[0]), skip=0)
 assert len(got) == 1 and (got[0]["to"]["x"], got[0]["to"]["z"]) == (true_move["x"], true_move["z"]), (got, true_move)
 print(f"live coordinates 1.75 m off and turned 8 deg: aligned, nothing moved; real chair move -> "
       f"({got[0]['to']['x']}, {got[0]['to']['z']})")
+
+# People come in the same live coordinates (the frame's camera pose): someone lying on the bed, seen through the
+# shifted and turned frame, sleeps in the built bed. Before the furniture is aligned nobody is reported.
+def frame_of(msg):
+    header, blobs = sa.read_message(io.BytesIO(msg))
+    return sa.decode_frame(header, blobs)
+
+
+wbed = next(o for o in fw.objects if o["type"] == "bed")
+wx, wz = frame.metres_x(wbed["x"] + wbed["w"] / 2), frame.metres_z(wbed["z"] + wbed["d"] / 2)
+w_lying = ((wx - 0.25, 0.55, wz - 0.8), (wx + 0.25, 0.85, wz + 0.8))
+w_eye, w_look = (wx - 2.0, 1.6, wz), (wx, 0.6, wz)
+unaligned = sa.People(frame, sa.Furniture({"objects": [dict(o) for o in built], "scale": S}, frame, scan_w))
+assert unaligned.update(frame_of(body_frame(30, *w_lying, w_eye, w_look, live=G))) == []
+crowd = sa.People(frame, fw)
+for i in range(3):
+    seen = crowd.update(frame_of(body_frame(31 + i, *w_lying, w_eye, w_look, live=G)))
+asleep = [q for q in seen if "sleep" in q]
+assert asleep and wbed["x"] <= asleep[0]["sleep"][0] < wbed["x"] + wbed["w"] \
+    and wbed["z"] <= asleep[0]["sleep"][1] < wbed["z"] + wbed["d"], (seen, wbed)
+print(f"person on the bed through the shifted frame: asleep in bed block {asleep[0]['sleep']}")
 print("OK")
