@@ -8,6 +8,10 @@ Spectate starts from a LiDAR scan that has been built: the build is the starting
 keeps the scan's RoomPlan session running, so RoomPlan's live objects (measured with the LiDAR) are in the scan's
 coordinates, and the plan's "arkit" frame (written by lidar_analyzer) maps them onto the plan's blocks.
 
+RoomPlan's live coordinates can still come out shifted from the scan's (once by 1.75 m), so each live room is first
+aligned onto the scan: the shift and turn that put its walls and objects onto the scanned ones, used once at least
+ALIGN_MIN of them agree (see estimate_alignment); until then nothing is matched.
+
 Only whole pieces of furniture change, and only from RoomPlan's objects; no single blocks are ever placed:
 - every built piece of furniture is linked to the RoomPlan object of the scan it came from (room.json);
 - a piece moves when RoomPlan places that object clearly elsewhere (less than MOVE_INSIDE of its live floor
@@ -154,6 +158,155 @@ def kind(cat):
     return SAME_KIND.get(cat, cat)
 
 
+# ----------------------------------------------------------------------------------- live -> scan alignment
+# Spectate runs RoomPlan again, and its live coordinates have come out shifted from the scan's: in one session every
+# live object sat 1.75 m off (tracking normal), so the room's one bed and its chair matched nothing. RoomPlan's live
+# walls and objects are matched to the scanned ones to find that shift (and any turn), on the floor plane in the
+# plan's room metres; every live box is moved by it before matching.
+
+ALIGN_OBJECT_M = 0.5      # a shifted live object agrees when its centre is this close to a scanned one of its kind
+ALIGN_WALL_M = 0.3        # a shifted live wall agrees when it lies along a scanned wall, this close to its line
+ALIGN_PARALLEL = np.sin(np.radians(5))
+ALIGN_MIN = 2             # walls and objects that must agree before an alignment is used
+ALIGN_LOG_M, ALIGN_LOG_DEG = 0.1, 2.0   # an alignment that changes more than this is logged again
+
+
+def _rot2(th):
+    c, s = np.cos(th), np.sin(th)
+    return np.array([[c, -s], [s, c]])
+
+
+def _room_walls(frame: PlanFrame, room):
+    """Walls as (centre, unit direction, length) on the floor plane in room metres."""
+    out = []
+    for w in (room or {}).get("walls", []):
+        T = _mat(w["transform"])
+        u = (frame.R @ T[:3, 0])[[0, 2]]
+        if np.linalg.norm(u) < 1e-6:
+            continue
+        out.append((frame.room_metres(T[:3, 3])[[0, 2]], u / np.linalg.norm(u), float(w["dimensions"][0]) * frame.f))
+    return out
+
+
+def _room_objects(frame: PlanFrame, room):
+    """Objects build makes as (kind, centre) on the floor plane in room metres."""
+    out = []
+    for o in (room or {}).get("objects", []):
+        cat = rp_category(o)
+        if cat is not None:
+            out.append((kind(cat), frame.room_metres(_mat(o["transform"])[:3, 3])[[0, 2]]))
+    return out
+
+
+def _corners(walls):
+    """Where two roughly perpendicular walls' lines cross: (point, index i, index j)."""
+    out = []
+    for i in range(len(walls)):
+        for j in range(i + 1, len(walls)):
+            (ci, ui, _), (cj, uj, _) = walls[i], walls[j]
+            if abs(ui @ uj) > 0.3:
+                continue
+            a = np.linalg.solve(np.stack([ui, -uj], 1), cj - ci)
+            out.append((ci + a[0] * ui, i, j))
+    return out
+
+
+class Alignment:
+    """live room metres (floor plane) -> scan room metres: p -> rot(turn) p + shift."""
+
+    def __init__(self, turn=0.0, shift=(0.0, 0.0), walls=0, objects=0):
+        self.turn, self.shift, self.walls, self.objects = float(turn), np.asarray(shift, float), walls, objects
+
+    @property
+    def support(self):
+        return self.walls + self.objects
+
+    def differs(self, other):
+        return (other is None or np.linalg.norm(self.shift - other.shift) > ALIGN_LOG_M
+                or abs(np.degrees(self.turn - other.turn)) > ALIGN_LOG_DEG)
+
+    def world(self, frame: PlanFrame):
+        """The same move as a 4x4 on ARKit world coordinates (RoomPlan transforms are multiplied by it)."""
+        r2 = _rot2(self.turn)
+        rot = np.eye(3)
+        rot[0, 0], rot[0, 2], rot[2, 0], rot[2, 2] = r2[0, 0], r2[0, 1], r2[1, 0], r2[1, 1]
+        M = np.eye(4)
+        M[:3, :3] = frame.R.T @ rot @ frame.R
+        t_room = np.array([self.shift[0], 0.0, self.shift[1]]) / frame.f
+        M[:3, 3] = frame.origin - M[:3, :3] @ frame.origin + frame.R.T @ t_room
+        return M
+
+    def describe(self):
+        return (f"shift ({self.shift[0]:+.2f}, {self.shift[1]:+.2f}) m, turn {np.degrees(self.turn):+.1f} deg, "
+                f"agreed by {self.walls} wall(s) and {self.objects} object(s)")
+
+
+def _agreement(turn, shift, live_w, live_o, scan_w, scan_o):
+    """How many live walls and objects land on scanned ones under (turn, shift), with what refines the shift:
+    object pairs (live, scanned) and wall pairs (live centre, scanned centre, scanned normal)."""
+    r = _rot2(turn)
+    walls, objs = [], []
+    for c, u, length in live_w:
+        c2, u2 = r @ c + shift, r @ u
+        for cs, us, ls in scan_w:
+            n = np.array([-us[1], us[0]])
+            if abs(u2[0] * us[1] - u2[1] * us[0]) <= ALIGN_PARALLEL and abs(n @ (c2 - cs)) <= ALIGN_WALL_M \
+                    and abs(us @ (c2 - cs)) <= (length + ls) / 2:
+                walls.append((c, cs, n))
+                break
+    used = set()
+    for k, c in live_o:
+        c2 = r @ c + shift
+        best = None
+        for j, (ks, cs) in enumerate(scan_o):
+            if ks == k and j not in used and np.linalg.norm(c2 - cs) <= ALIGN_OBJECT_M:
+                if best is None or np.linalg.norm(c2 - cs) < best[0]:
+                    best = (np.linalg.norm(c2 - cs), j)
+        if best:
+            used.add(best[1])
+            objs.append((c, scan_o[best[1]][1]))
+    return walls, objs
+
+
+def estimate_alignment(live_w, live_o, scan_w, scan_o):
+    """The turn and shift that put the most live walls and objects onto scanned ones (at least ALIGN_MIN), its shift
+    refined by least squares over those that agree; ties go to the smallest move. None when nothing reaches it."""
+    turns = [0.0]
+    for _, u, _ in live_w:
+        for _, us, _ in scan_w:
+            d = np.arctan2(us[1], us[0]) - np.arctan2(u[1], u[0])
+            for t in (d, d + np.pi):     # a wall's direction is only known up to a half turn
+                t = (t + np.pi) % (2 * np.pi) - np.pi
+                if all(abs((t - q + np.pi) % (2 * np.pi) - np.pi) > np.radians(1) for q in turns):
+                    turns.append(t)
+    live_c, scan_c = _corners(live_w), _corners(scan_w)
+    best = None
+    for turn in turns:
+        r = _rot2(turn)
+        shifts = [np.zeros(2)]
+        shifts += [cs - r @ c for k, c in live_o for ks, cs in scan_o if ks == k]
+        shifts += [cs - r @ c for c, _, _ in live_c for cs, _, _ in scan_c]
+        for shift in shifts:
+            walls, objs = _agreement(turn, shift, live_w, live_o, scan_w, scan_o)
+            if len(walls) + len(objs) < ALIGN_MIN:
+                continue
+            # Least squares: objects pin both coordinates, walls only across themselves.
+            A, b = np.zeros((2, 2)), np.zeros(2)
+            for c, cs in objs:
+                A += np.eye(2); b += cs - r @ c
+            for c, cs, n in walls:
+                A += np.outer(n, n); b += n * (n @ (cs - r @ c))
+            if np.linalg.matrix_rank(A) == 2:
+                refined = np.linalg.solve(A, b)
+                w2, o2 = _agreement(turn, refined, live_w, live_o, scan_w, scan_o)
+                if len(w2) + len(o2) >= len(walls) + len(objs):
+                    shift, walls, objs = refined, w2, o2
+            key = (-(len(walls) + len(objs)), float(np.linalg.norm(shift)) + abs(turn))
+            if best is None or key < best[0]:
+                best = (key, Alignment(turn, shift, len(walls), len(objs)))
+    return best[1] if best else None
+
+
 class Pose:
     """A RoomPlan box in room metres: centre, floor footprint and the cluster place_object takes."""
 
@@ -219,6 +372,10 @@ class Furniture:
         self.live = {}             # live RoomPlan id -> {"scan", "index": plan object index or None, "anchor": Pose}
         self.pending = {}          # live id -> (target key, updates in a row)
         self.tracking, self.updates = None, 0   # last tracking state logged, room updates seen
+        self.scan_walls, self.scan_objects = _room_walls(frame, scan_room), _room_objects(frame, scan_room)
+        self.align = None          # Alignment of RoomPlan's live coordinates onto the scan's, once agreed
+        self.align_logged = None   # the alignment last logged
+        self.waiting_logged = False
         self.held = set()          # live ids not added because a scanned piece of their kind is unseen (logged once)
 
     def _occupancy(self, skip=None):
@@ -271,6 +428,26 @@ class Furniture:
         log(f"[spectate] first sight: {cat} {rid[:8]} {pose.describe(self.fr)}, {rp_confidence(o) if o else '?'} "
             f"confidence; {near}")
 
+    def _realign(self, room):
+        """Brings self.align up to date from this live room. False while no alignment has been agreed yet."""
+        live_w, live_o = _room_walls(self.fr, room), _room_objects(self.fr, room)
+        best = estimate_alignment(live_w, live_o, self.scan_walls, self.scan_objects)
+        if self.align is not None:
+            w, o = _agreement(self.align.turn, self.align.shift, live_w, live_o, self.scan_walls, self.scan_objects)
+            if best is None or best.support <= len(w) + len(o):
+                return True        # the current alignment still explains this update as well as anything
+        if best is None:
+            if self.align is None and not self.waiting_logged:
+                self.waiting_logged = True
+                log(f"[spectate] waiting to align RoomPlan's live coordinates with the scan: fewer than {ALIGN_MIN} "
+                    f"of {len(live_w)} live wall(s) and {len(live_o)} object(s) agree on a shift yet")
+            return self.align is not None
+        if best.differs(self.align_logged):
+            log(f"[spectate] RoomPlan's live coordinates aligned to the scan: {best.describe()}")
+            self.align_logged = best
+        self.align = best
+        return True
+
     def _unseen_scanned(self, k):
         """How many scanned pieces of kind k no live object has been matched to."""
         claimed = {v["scan"] for v in self.live.values() if v["scan"] is not None}
@@ -290,7 +467,11 @@ class Furniture:
             self.tracking = tracking
         self.updates += 1
         moves, adds = [], []
+        if not self._realign(room):
+            return moves, adds
+        M = self.align.world(self.fr)
         for o in room.get("objects", []):
+            o = dict(o, transform=(M @ _mat(o["transform"])).T.ravel().tolist())   # in the scan's coordinates
             cat = rp_category(o)
             rid = o.get("identifier")
             if cat is None or rid is None:

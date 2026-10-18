@@ -172,6 +172,9 @@ answers each with one JSON line.
 The build is the starting state, taken as certain. Only whole pieces of furniture change, and only from RoomPlan's
 objects; no single blocks are ever placed:
 
+- RoomPlan's live coordinates are first aligned onto the scan's: they have come out 1.75 m off, so the shift (and any
+  turn) that puts the live walls and objects onto the scanned ones is found, once at least two of them agree, and
+  applied to every live box. Until then nothing is matched; the alignment is logged;
 - every built piece is linked to the RoomPlan object of the scan it came from (`room.json`), by kind and position;
 - a piece moves when RoomPlan places its object mostly outside where it was (less than half of its live floor
   footprint inside the scanned box), onto a different footprint, the same one for 5 updates in a row. Spectate runs

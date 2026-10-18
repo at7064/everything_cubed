@@ -245,4 +245,43 @@ print("got up: awake after 3 frames")
 p.stdin.close()
 p.wait(timeout=10)
 print(f"median {np.median(ms):.0f} ms per message")
+# RoomPlan's live coordinates off from the scan's (a real session: every object 1.75 m off), here also turned 8 deg.
+# The worker aligns the live walls and objects onto the scanned ones first, so nothing moves or is added; a chair that
+# really moves still moves, to where it really went.
+def wall(x0, z0, x1, z1, h=2.5):
+    d = rot_y(TURN) @ [x1 - x0, 0, z1 - z0]
+    T = np.eye(4)
+    T[:3, 0] = d / np.linalg.norm(d); T[:3, 1] = [0, 1, 0]; T[:3, 2] = np.cross(T[:3, 0], T[:3, 1])
+    T[:3, 3] = rot_y(TURN) @ [(x0 + x1) / 2, h / 2, (z0 + z1) / 2]
+    return {"transform": T.T.ravel().tolist(), "dimensions": [float(np.hypot(x1 - x0, z1 - z0)), h, 0]}
+
+
+walls = [wall(0, 0, W, 0), wall(W, 0, W, D), wall(0, D, 0, 0)]          # the south wall was never scanned
+scan_w = dict(scan, walls=walls)
+G = np.eye(4); G[:3, :3] = rot_y(np.radians(8)); G[:3, 3] = rot_y(TURN) @ [-1.75, 0, -0.17]   # live = G @ scan
+
+
+def shifted(o):
+    return dict(o, transform=(G @ np.array(o["transform"], float).reshape(4, 4).T).T.ravel().tolist())
+
+
+fw = sa.Furniture({"objects": [dict(o) for o in built], "scale": S}, frame, scan_w)
+live_objs = [rp("al-chair", "chair", (1.5, 1.5), CHAIR), rp("al-table", "table", (4.0, 3.0), TABLE),
+             rp("al-bed", "bed", (5.4, 3.9), BED, yaw=90)]
+got = []
+for _ in range(8):
+    m, a = fw.update({"walls": [shifted(w) for w in walls], "objects": [shifted(o) for o in live_objs]}, "normal")
+    got += m + a
+assert not got, got
+back = fw.align.world(frame) @ G
+assert np.allclose(back, np.eye(4), atol=0.02), np.round(back, 3)
+assert {v["index"] for v in fw.live.values()} == {0, 1, 2}, fw.live
+live_objs[0] = rp("al-chair", "chair", (1.5, 2.7), CHAIR)                 # the chair really moves 1.2 m
+for _ in range(8):
+    m, a = fw.update({"walls": [shifted(w) for w in walls], "objects": [shifted(o) for o in live_objs]}, "normal")
+    got += m + a
+true_move = builder._place("chair", sa.Pose(frame, live_objs[0]), skip=0)
+assert len(got) == 1 and (got[0]["to"]["x"], got[0]["to"]["z"]) == (true_move["x"], true_move["z"]), (got, true_move)
+print(f"live coordinates 1.75 m off and turned 8 deg: aligned, nothing moved; real chair move -> "
+      f"({got[0]['to']['x']}, {got[0]['to']['z']})")
 print("OK")
