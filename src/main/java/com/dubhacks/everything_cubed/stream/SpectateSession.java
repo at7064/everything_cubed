@@ -114,7 +114,7 @@ public final class SpectateSession implements StreamSession {
 			askedAt = System.currentTimeMillis();
 			phone.send(StreamMessage.of("waiting").with("text", "Allow spectating in game (click Allow in chat)."));
 			player.sendSystemMessage(Component.literal("Your phone (" + phone.device() + ") wants to spectate "
-					+ folderOf(built) + ": you go into spectator mode and furniture follows the real room. ")
+					+ folderOf(built) + ". ")
 					.withStyle(ChatFormatting.AQUA)
 					.append(button("[Allow]", "/everything_cubed spectate allow", ChatFormatting.GREEN))
 					.append(Component.literal(" "))
@@ -154,6 +154,7 @@ public final class SpectateSession implements StreamSession {
 		}
 		world = w;
 		phone.setReadTimeout(LOST_MS);   // the phone sends something every second: silence means it is gone
+		player.sendSystemMessage(Component.literal("You are spectating from " + phone.device() + ".").withStyle(ChatFormatting.GREEN));
 		player.sendSystemMessage(Component.literal("Spectating " + folderOf(built)
 				+ ". Furniture you move in the room moves here; /everything_cubed spectate stop to exit.").withStyle(ChatFormatting.AQUA));
 		phone.send(StreamMessage.of("ready").with("mode", "spectate"));

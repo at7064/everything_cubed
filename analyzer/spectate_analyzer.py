@@ -400,8 +400,6 @@ def main(argv=None):
     frame = PlanFrame(plan["arkit"])
     furniture = Furniture(plan, frame, json.loads(room_file.read_text()))
     people = People(frame, furniture)
-    emit({"type": "status", "level": "success",
-          "text": "Spectate: furniture you move in the room moves in game once RoomPlan clearly sees it."})
     stdin = sys.stdin.buffer
     while True:
         msg = read_message(stdin)
