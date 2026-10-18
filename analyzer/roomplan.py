@@ -157,6 +157,8 @@ RAISED_SHARE, LOW_SHARE = 0.35, 0.2
 UNDER_LOFT = {"desk", "table", "dresser", "cabinet", "wardrobe", "sofa", "storage", "fridge", "bookshelf",
               "student_desk"}
 UNDER_SHARE = 0.5                   # of the furniture's own footprint that is under the bed
+PAINTING_MAX_M = 1.2                # posters and paintings, per side
+TALL_CABINET_M = 1.3                # a cabinet lower than this is built one block high
 UPPER_BUNK = 3                      # block y of a raised bed: two blocks of headroom below it
 PRIORITY += ["locker", "umbrella_stand", "backpack"]
 MAX_HEIGHT.update({"locker": 2, "umbrella_stand": 1, "backpack": 1})
@@ -789,7 +791,13 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             width_m = max(0.1, (hi - lo)[0 if side in ("north", "south") else 2])
             kind = "projection_screen" if (hi[1] - lo[1]) / width_m > 0.55 else "whiteboard"
             entry.update(type=kind, y=y0, h=max(1, y1 - y0 + 1), color="white")
-        elif cat in ("painting", "tv"):
+        elif cat == "painting":
+            # A poster's mask spreads past its edges (and runs into neighbouring frames): at most PAINTING_MAX_M a
+            # side, around the middle of what was seen.
+            cap = max(1, int(round(PAINTING_MAX_M * scale)))
+            w, h = min(entry["w"], cap), min(y1 - y0 + 1, cap)
+            entry.update(type="painting", u=u0 + (entry["w"] - w) // 2, w=w, y=y0 + (y1 - y0 + 1 - h) // 2, h=max(1, h))
+        elif cat == "tv":
             entry.update(type=cat, y=y0, h=max(1, y1 - y0 + 1))
         elif cat == "sconce":
             entry.update(type="sconce", y=min(H - 1, max(1, y1)), w=1, h=1)
@@ -1071,6 +1079,8 @@ def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
         obj["material"] = WOOD_PALETTE.nearest(cl["rgb"])
         if cat in ("nightstand", "podium"):
             w = d = 1
+        if cat == "cabinet" and hi[1] < TALL_CABINET_M:
+            h = 1  # dresser height, level with the desks and tables beside it (they are one block)
         if cat == "piano":
             w, d = max(2, w), 1
     elif cat in ("lamp", "plant", "trash", "toilet", "microwave", "fridge", "stove", "sink", "washer", "fan",

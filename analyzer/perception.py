@@ -251,34 +251,57 @@ def prepare_tracked(folder: Path, max_views=TRACKED_MAX_VIEWS, out_dir=None):
     return out
 
 
-def reconstruct_tracked(folder: Path, device, model_name, log, max_views=TRACKED_MAX_VIEWS, work_dir=None):
+def reconstruct_tracked(folder: Path, device, model_name, log, max_views=TRACKED_MAX_VIEWS, work_dir=None,
+                        batch_views=0):
     """MapAnything given each photo's real camera pose and intrinsics from ARKit, marked metric: it no longer
-    guesses the scale or where the photos were taken, only the depth. Returns (views, metric, upright paths)."""
+    guesses the scale or where the photos were taken, only the depth. Returns (views, metric, upright paths).
+    batch_views > 0: the photos (in the order they were taken) go through MapAnything that many at a time, so memory
+    no longer grows with the number of photos. Every batch is put back into ARKit's world on its own (no chaining
+    from batch to batch, so no drift); each photo's depth is then judged only against its batch's photos."""
+    import gc
     import torch
     from mapanything.models import MapAnything
     from mapanything.utils.image import load_images
 
     shots = prepare_tracked(folder, max_views, work_dir)
-    log(f"[recon] {len(shots)} photo(s) with ARKit camera positions -> MapAnything ({model_name}), device={device}")
+    n = len(shots)
+    size = batch_views if 3 <= batch_views < n else n
+    batches = np.array_split(np.arange(n), int(np.ceil(n / size)))   # even sizes: no tiny last batch
+    log(f"[recon] {n} photo(s) with ARKit camera positions -> MapAnything ({model_name}), device={device}"
+        + (f", {len(batches)} batches of {len(batches[0])}" if len(batches) > 1 else ""))
     model = MapAnything.from_pretrained(model_name).to(device)
-    views = load_images([str(p) for p, *_ in shots])
-    for v, (_, K, c2w, size, _f) in zip(views, shots):
-        Hv, Wv = v["img"].shape[-2:]
-        v["intrinsics"] = torch.from_numpy(crop_intrinsics(K, size, (Wv, Hv))).float()[None]
-        v["camera_poses"] = torch.from_numpy(c2w).float()[None]
-        v["is_metric_scale"] = torch.tensor([True])
-    with torch.no_grad():
-        preds = model.infer(views, memory_efficient_inference=True, use_amp=device == "cuda",
-                            amp_dtype="bf16", apply_mask=True, mask_edges=True,
-                            apply_confidence_mask=False, confidence_percentile=10)
-    out = _mapanything_views(preds)
-    # MapAnything answers in its first camera's frame. It honours ARKit's poses (within ~1 cm on a real scan), so one
-    # rigid map takes everything back to ARKit's world, where the feature points and the planes are.
-    to_arkit = rigid_fit(np.stack([v["cam2world"] for v in out]), np.stack([s[2] for s in shots]))
+    out = []
+    for b, idx in enumerate(batches):
+        sub = [shots[i] for i in idx]
+        views = load_images([str(p) for p, *_ in sub])
+        for v, (_, K, c2w, size_, _f) in zip(views, sub):
+            Hv, Wv = v["img"].shape[-2:]
+            v["intrinsics"] = torch.from_numpy(crop_intrinsics(K, size_, (Wv, Hv))).float()[None]
+            v["camera_poses"] = torch.from_numpy(c2w).float()[None]
+            v["is_metric_scale"] = torch.tensor([True])
+        with torch.no_grad():
+            preds = model.infer(views, memory_efficient_inference=True, use_amp=device == "cuda",
+                                amp_dtype="bf16", apply_mask=True, mask_edges=True,
+                                apply_confidence_mask=False, confidence_percentile=10)
+        part = _mapanything_views(preds)
+        del preds, views
+        # MapAnything answers in its first camera's frame. It honours ARKit's poses (within ~1 cm on a real scan), so
+        # one rigid map takes the batch back to ARKit's world, where the feature points and the planes are.
+        to_arkit = rigid_fit(np.stack([v["cam2world"] for v in part]), np.stack([s[2] for s in sub]))
+        for v, s in zip(part, sub):
+            v["points"] = v["points"] @ to_arkit[:3, :3].T + to_arkit[:3, 3]
+            v["cam2world"] = s[2]
+        out += part
+        gc.collect()
+        if device == "cuda":
+            torch.cuda.empty_cache()
+        elif device == "mps":
+            torch.mps.empty_cache()
+        if len(batches) > 1:
+            log(f"[recon] batch {b + 1}/{len(batches)} done")
+    del model
     scales = []
     for v, (_, _K, c2w, _size, frame) in zip(out, shots):
-        v["points"] = v["points"] @ to_arkit[:3, :3].T + to_arkit[:3, 3]
-        v["cam2world"] = c2w
         pts = load_feature_points(folder, frame)
         if pts is not None:
             s = depth_scale_from_points(v, pts)

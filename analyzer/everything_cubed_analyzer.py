@@ -47,6 +47,9 @@ def main(argv=None):
     # Apache variant: on a taped 9.45 x 4.57 m room it measured 0.91x / 1.10x, the research variant
     # (facebook/map-anything, CC-BY-NC 4.0) 1.22x / 1.25x; the research variant was closer only on a 20 m high hall.
     ap.add_argument("--mapanything-model", default="facebook/map-anything-apache")
+    ap.add_argument("--tracked-batch", type=int, default=0,
+                    help="phone photo scans: MapAnything photos per batch, each batch placed with ARKit's poses "
+                         "(0 = all photos in one run, the default; with batches --max-views can be raised)")
     ap.add_argument("--max-views", type=int, default=24,
                     help="photos of an iOS photo scan given to MapAnything at once (default 24; more needs more memory)")
     ap.add_argument("--no-exif-camera", action="store_true",
@@ -110,7 +113,7 @@ def main(argv=None):
         work = tempfile.mkdtemp(prefix="everything_cubed_upright_")
         atexit.register(shutil.rmtree, work, ignore_errors=True)
         views, metric, paths = reconstruct_tracked(opts.images, device, opts.mapanything_model, log, opts.max_views,
-                                                   work_dir=work)
+                                                   work_dir=work, batch_views=opts.tracked_batch)
     else:
         views, metric = reconstruct(paths, opts.backend, device, opts, log)
     label_maps, id2label = segment(views, device, opts.seg_model, log, paths=paths)

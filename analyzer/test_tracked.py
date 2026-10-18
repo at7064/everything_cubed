@@ -117,4 +117,90 @@ s = depth_scale_from_points(view, true_pts)
 assert abs(s - 1.3) < 0.02, s
 assert depth_scale_from_points(view, true_pts[:5]) is None, "too few points: no correction"
 print("rigid fit + depth correction OK", round(s, 3))
+
+# Batches (reconstruct_tracked batch_views): a stand-in for MapAnything answers every batch in its own frame (a
+# different turn and shift each time, as the real one answers in its first camera's frame). Every photo must still
+# land in ARKit's world, batches must be even and in the order the photos were taken, and no batch may be tiny.
+import sys
+import types
+import torch
+from perception import reconstruct_tracked
+
+ring = tmp / "ring"
+ring.mkdir()
+fr = []
+for i in range(10):
+    a = 2 * np.pi * i / 10   # walking a circle of radius 1.5 m, looking outwards (ARKit axes: camera looks along -Z)
+    c2w_ar = np.eye(4)
+    c2w_ar[:3, :3] = [[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]]
+    c2w_ar[:3, 3] = [1.5 * np.sin(-a), 1.4, -1.5 * np.cos(a)]
+    Image.new("RGB", (64, 48), (90, 90, 90)).save(ring / f"r{i:02d}.jpg")
+    fr.append({"image": f"r{i:02d}.jpg", "kind": "keyframe", "tracking": "normal", "imageSize": [64, 48],
+               "K": [50.0, 0, 32, 0, 50.0, 24, 0, 0, 1], "cam2world": c2w_ar.ravel().tolist()})
+(ring / "capture.json").write_text(json.dumps({"frames": fr}))
+
+calls = []
+gen = np.random.default_rng(1)
+
+
+class FakeModel:
+    def to(self, device):
+        return self
+
+    def infer(self, views, **kw):
+        ang, shift = gen.uniform(0, 2 * np.pi), gen.uniform(-3, 3, 3)
+        G = np.eye(4)
+        G[:3, :3] = [[np.cos(ang), 0, np.sin(ang)], [0, 1, 0], [-np.sin(ang), 0, np.cos(ang)]]
+        G[:3, 3] = shift
+        calls.append([float(v["camera_poses"][0, 0, 3]) for v in views])
+        preds = []
+        for v in views:
+            c2w = v["camera_poses"][0].numpy().astype(np.float64)
+            H, W = v["img"].shape[-2:]
+            yy, xx = np.mgrid[0:H, 0:W]
+            K_ = v["intrinsics"][0].numpy()
+            ray = np.stack([(xx - K_[0, 2]) / K_[0, 0], (yy - K_[1, 2]) / K_[1, 1], np.ones((H, W))], -1)
+            world = (ray * 2.0) @ c2w[:3, :3].T + c2w[:3, 3]           # a surface 2 m in front of every camera
+            preds.append({"pts3d": torch.from_numpy(world @ G[:3, :3].T + G[:3, 3]).float()[None],
+                          "camera_poses": torch.from_numpy(G @ c2w).float()[None],
+                          "intrinsics": v["intrinsics"], "conf": torch.ones(1, H, W),
+                          "mask": torch.ones(1, H, W, 1), "img_no_norm": torch.zeros(1, H, W, 3)})
+        return preds
+
+
+def fake_load_images(paths):
+    return [{"img": torch.zeros(1, 3, 28, 42)} for _ in paths]
+
+
+mods = {"mapanything": types.ModuleType("mapanything"), "mapanything.models": types.ModuleType("mapanything.models"),
+        "mapanything.utils": types.ModuleType("mapanything.utils"),
+        "mapanything.utils.image": types.ModuleType("mapanything.utils.image")}
+mods["mapanything.models"].MapAnything = types.SimpleNamespace(from_pretrained=lambda name: FakeModel())
+mods["mapanything.utils.image"].load_images = fake_load_images
+saved = {k: sys.modules.get(k) for k in mods}
+sys.modules.update(mods)
+try:
+    for batch, sizes in ((0, [10]), (4, [4, 3, 3]), (3, [3, 3, 2, 2]), (20, [10])):
+        calls.clear()
+        views, metric, paths = reconstruct_tracked(ring, "cpu", "fake", lambda m: None, max_views=24,
+                                                   work_dir=tmp / f"up{batch}", batch_views=batch)
+        assert [len(c) for c in calls] == sizes, (batch, [len(c) for c in calls])
+        order = [x for c in calls for x in c]
+        shots = prepare_tracked(ring, 24, tmp / "chk")
+        assert np.allclose(order, [s[2][0, 3] for s in shots], atol=1e-5), "batches keep the photos in order"
+        for v, (_, _K, c2w, _size, _f) in zip(views, shots):
+            Kv = v["K"]
+            H, W = v["points"].shape[:2]
+            yy, xx = np.mgrid[0:H, 0:W]
+            ray = np.stack([(xx - Kv[0, 2]) / Kv[0, 0], (yy - Kv[1, 2]) / Kv[1, 1], np.ones((H, W))], -1)
+            want = (ray * 2.0) @ c2w[:3, :3].T + c2w[:3, 3]
+            assert np.abs(v["points"] - want).max() < 1e-3, (batch, np.abs(v["points"] - want).max())
+            assert np.allclose(v["cam2world"], c2w)
+finally:
+    for k, m in saved.items():
+        if m is None:
+            sys.modules.pop(k, None)
+        else:
+            sys.modules[k] = m
+print("batched reconstruction OK")
 print("OK")

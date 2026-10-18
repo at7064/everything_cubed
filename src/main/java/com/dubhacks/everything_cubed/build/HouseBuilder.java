@@ -6,14 +6,18 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.PaintingVariantTags;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Interaction;
 import net.minecraft.world.entity.decoration.ItemFrame;
 import net.minecraft.world.entity.decoration.painting.Painting;
+import net.minecraft.world.entity.decoration.painting.PaintingVariant;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
@@ -37,6 +41,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -320,7 +325,7 @@ public class HouseBuilder {
 				case "painting" -> {
 					int[] in = insideCell(side, u0 + w / 2);
 					BlockPos pos = origin.offset(in[0], 1 + Math.min(H - 1, y0 + h / 2), in[1]);
-					Painting.create(level, pos, out.getOpposite()).ifPresent(p -> {
+					paintingWithin(pos, out.getOpposite(), w, Math.max(1, h)).ifPresent(p -> {
 						level.addFreshEntity(p);
 						undo.rememberEntity(p);
 					});
@@ -831,6 +836,24 @@ public class HouseBuilder {
 	/** Inside the room and not yet claimed. */
 	private boolean free(int x, int y, int z) {
 		return inside(x, z) && !occupied.contains(BlockPos.asLong(x, y, z));
+	}
+
+	/**
+	 * A vanilla painting no bigger than {@code w} x {@code h} blocks (the poster's measured size) that fits the wall
+	 * at {@code pos}: the largest such, a random one of those. Vanilla's own pick takes the largest that fits the free
+	 * wall, which on a bare wall is far bigger than the real poster.
+	 */
+	private Optional<Painting> paintingWithin(BlockPos pos, Direction facing, int w, int h) {
+		List<Painting> fits = new ArrayList<>();
+		for (Holder<PaintingVariant> v : level.registryAccess().lookupOrThrow(Registries.PAINTING_VARIANT)
+				.getTagOrEmpty(PaintingVariantTags.PLACEABLE)) {
+			if (v.value().width() > w || v.value().height() > h) continue;
+			Painting p = new Painting(level, pos, facing, v);
+			if (p.survives()) fits.add(p);
+		}
+		int best = fits.stream().mapToInt(p -> p.getVariant().value().area()).max().orElse(0);
+		fits.removeIf(p -> p.getVariant().value().area() < best);
+		return fits.isEmpty() ? Optional.empty() : Optional.of(fits.get(level.getRandom().nextInt(fits.size())));
 	}
 
 	private boolean inside(int x, int z) {

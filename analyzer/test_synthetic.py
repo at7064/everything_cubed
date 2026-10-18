@@ -209,6 +209,23 @@ a, b = beds3
 assert not (a["x"] < b["x"] + b["w"] and b["x"] < a["x"] + a["w"] and a["z"] < b["z"] + b["d"] and b["z"] < a["z"] + a["d"]), \
     ("two beds in one footprint", beds3)
 
+# Posters and cabinets: a 2.2 m wide poster mask is built at most PAINTING_MAX_M a side; a 1.0 m cabinet is one block
+# (level with the desks), a 1.8 m one stays tall.
+from roomplan import PAINTING_MAX_M
+pts3, cols3, cats3 = [], [], []
+add3(30000, (0, 0, 0), (6, 0, 4), "floor"); add3(15000, (0, 2.6, 0), (6, 2.6, 4), "ceiling")
+for lo, hi in (((0, 0, 0), (6, 2.6, 0)), ((0, 0, 4), (6, 2.6, 4)), ((0, 0, 0), (0, 2.6, 4)), ((6, 0, 0), (6, 2.6, 4))):
+    add3(9000, lo, hi, "wall")
+add3(1500, (1.5, 1.0, 0.0), (3.7, 2.2, 0.03), "painting", (200, 60, 120))
+add3(1500, (4.5, 0, 3.5), (5.5, 1.0, 3.95), "cabinet", (150, 80, 40))
+add3(1500, (0.05, 0, 1.5), (0.5, 1.8, 2.5), "cabinet", (60, 40, 30))
+P3 = np.concatenate(pts3)
+rp4 = build_plan(P3, np.concatenate(cols3), np.array(cats3), Palette(builtin_surface_entries()), scale=2.0, enlarge=1.0,
+                 log=lambda m: None)
+pa = [o for o in rp4["openings"] if o["type"] == "painting"]
+assert len(pa) == 1 and pa[0]["w"] <= round(PAINTING_MAX_M * 2) and pa[0]["h"] <= round(PAINTING_MAX_M * 2), pa
+assert sorted(o["h"] for o in rp4["objects"] if o["type"] == "cabinet") == [1, 2], rp4["objects"]
+
 # A RoomPlan bed box 1.2 m high (its headboard), sampled down its sides the way lidar_analyzer does: an ordinary bed.
 from lidar_analyzer import _box_surface
 from roomplan import heights
