@@ -97,7 +97,7 @@ public class HouseBuilder {
 	}
 
 	/** First block id that exists in this game version. */
-	static BlockState first(String... ids) {
+	public static BlockState first(String... ids) {
 		for (String id : ids) {
 			BlockState s = block(id);
 			if (s != null) return s;

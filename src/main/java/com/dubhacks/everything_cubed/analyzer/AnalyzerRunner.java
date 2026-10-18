@@ -31,7 +31,7 @@ import java.util.stream.Stream;
  * Which Python to use is configured in {@code config/everything_cubed.json}.
  */
 public final class AnalyzerRunner {
-	private static final String[] SCRIPTS = {"everything_cubed_analyzer.py", "perception.py", "roomplan.py", "palette.py", "walltex.py", "wallitems.py", "vanilla.py", "lidar_analyzer.py",
+	private static final String[] SCRIPTS = {"everything_cubed_analyzer.py", "perception.py", "roomplan.py", "palette.py", "walltex.py", "wallitems.py", "vanilla.py", "lidar_analyzer.py", "spectate_analyzer.py",
 			"requirements.txt", "README.md"};
 	private static final Set<String> IMAGE_EXT = Set.of("jpg", "jpeg", "png", "webp", "bmp", "heic");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -132,6 +132,22 @@ public final class AnalyzerRunner {
 			throw new IOException("analyzer exited with code " + code + ": " + String.join(" | ", tail)
 					+ " (python: " + cmd.getFirst() + ", see " + scripts.resolve("README.md") + ")");
 		return readPlan(plan);
+	}
+
+	/**
+	 * Starts the spectate worker ({@code spectate_analyzer.py}): it reads phone frames on stdin and writes one JSON
+	 * line of block changes per frame on stdout; stderr is its log. Same Python as the analyzer.
+	 */
+	public static Process startSpectate(Double scale) throws IOException {
+		Path scripts = unpackScripts();
+		List<String> cmd = new ArrayList<>();
+		cmd.add(config().get("python").getAsString());
+		cmd.add("-u");
+		cmd.add(scripts.resolve("spectate_analyzer.py").toString());
+		minecraftJar().ifPresent(j -> { cmd.add("--mc-jar"); cmd.add(j.toString()); });
+		if (scale != null) { cmd.add("--scale"); cmd.add(Double.toString(scale)); }
+		EverythingCubed.LOGGER.info("Starting spectate worker: {}", String.join(" ", cmd));
+		return new ProcessBuilder(cmd).directory(scripts.toFile()).start();
 	}
 
 	/** TCP port for the iOS scanner app, {@code "phonePort"} in the config. */
