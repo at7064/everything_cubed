@@ -30,19 +30,24 @@ struct ScanView: View {
                     Button("Cancel", role: .cancel) { model.cancelScan() }
                 }
                 Label("\(model.framesSent)", systemImage: "photo.stack")
-                Label("\(model.framesWithDepth)", systemImage: "cube.transparent")
-                    .foregroundStyle(model.framesSent > 3 && model.framesWithDepth == 0 ? .red : .primary)
+                if expectsDepth {
+                    Label("\(model.framesWithDepth)", systemImage: "cube.transparent")
+                        .foregroundStyle(model.framesSent > 3 && model.framesWithDepth == 0 ? .red : .primary)
+                }
             }
             .font(.headline.monospacedDigit())
             if let hint = model.hint {
                 Text(hint).font(.caption)
-            } else if model.framesSent > 3 && model.framesWithDepth == 0 {
+            } else if expectsDepth && model.framesSent > 3 && model.framesWithDepth == 0 {
                 Text("No LiDAR depth yet. Cancel and scan again.").font(.caption)
             }
         }
         .padding(10)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
+
+    /// Only RoomPlan scans need LiDAR depth; photo scans with ARKit tracking work without it.
+    private var expectsDepth: Bool { model.source?.name == "roomplan" }
 
     private var logPanel: some View {
         ScrollViewReader { proxy in

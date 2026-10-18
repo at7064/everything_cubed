@@ -68,9 +68,13 @@ def main(argv=None):
     ap.add_argument("--no-depth-gate", action="store_true",
                     help="paint whole detection boxes, not only the pixels near the object's depth")
     opts = ap.parse_args(argv)
+    tracked = False
     if opts.backend in ("auto", "arkit") and (opts.images / "capture.json").is_file():
-        import lidar_analyzer
-        return lidar_analyzer.main(sys.argv[1:] if argv is None else argv)
+        from perception import capture_has_depth
+        if capture_has_depth(opts.images):   # a LiDAR scan
+            import lidar_analyzer
+            return lidar_analyzer.main(sys.argv[1:] if argv is None else argv)
+        tracked = True                       # photos from the iOS app with ARKit camera positions, no depth
 
     from perception import category_lut, fuse, list_images, pick_device, reconstruct, segment
 
@@ -78,7 +82,13 @@ def main(argv=None):
     paths = list_images(opts.images)
     device = pick_device(opts.device)
     log(f"[analyzer] {len(paths)} photo(s) from {opts.images}")
-    views, metric = reconstruct(paths, opts.backend, device, opts, log)
+    # ARKit measured where each photo was taken (camera + motion sensors): built at measured size like LiDAR.
+    enlarge = 1.0 if tracked else opts.enlarge
+    if tracked:
+        from perception import reconstruct_tracked
+        views, metric, paths = reconstruct_tracked(opts.images, device, opts.mapanything_model, log)
+    else:
+        views, metric = reconstruct(paths, opts.backend, device, opts, log)
     label_maps, id2label = segment(views, device, opts.seg_model, log)
     ade_to_category, detections = ADE_TO_CATEGORY, None
     if opts.perceptron:
@@ -99,8 +109,9 @@ def main(argv=None):
     ctx = {}
     object_instances = detections.pop("_instances", []) if detections else []
     plan = build_plan(pts, rgb, cats, surface_palette(opts.mc_jar, cache), scale=opts.scale, metric=metric, log=log, ctx=ctx,
-                      known_height=opts.known_height, object_instances=object_instances, enlarge=opts.enlarge)
-    plan["source"] = {"photos": [p.name for p in paths], "metric": metric, "enlarge": None if opts.scale else opts.enlarge}
+                      known_height=opts.known_height, object_instances=object_instances, enlarge=enlarge)
+    plan["source"] = {"photos": [p.name for p in paths], "metric": metric, "tracked": tracked,
+                      "enlarge": None if opts.scale else enlarge}
     out = opts.out or opts.images / "plan.json"
     if detections:
         # Every detected name and what it became, so missing templates are easy to spot.

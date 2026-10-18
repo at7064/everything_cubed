@@ -97,17 +97,18 @@ final class AppModel: ObservableObject, FrameSink {
 
     // MARK: scan
 
-    func startScan(name: String) {
+    /// `lidar`: Apple RoomPlan's guided LiDAR scan; otherwise photos with ARKit tracking (any iPhone).
+    func startScan(name: String, lidar: Bool) {
         scanError = nil
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         print("[app] start scan '\(name)', camera permission \(status.rawValue)")
         switch status {
         case .authorized:
-            beginCapture(name: name)
+            beginCapture(name: name, lidar: lidar)
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { granted in
                 Task { @MainActor in
-                    if granted { self.beginCapture(name: name) } else { self.cameraDenied() }
+                    if granted { self.beginCapture(name: name, lidar: lidar) } else { self.cameraDenied() }
                 }
             }
         default:
@@ -120,8 +121,8 @@ final class AppModel: ObservableObject, FrameSink {
         scanError = "Camera access is off. Turn it on in Settings → Privacy & Security → Camera → Cubed Scanner."
     }
 
-    private func beginCapture(name: String) {
-        let src: CaptureSource = RoomPlanSource()
+    private func beginCapture(name: String, lidar: Bool) {
+        let src: CaptureSource = lidar && RoomPlanSource.isSupported ? RoomPlanSource() : TrackedPhotoSource()
         source = src
         framesSent = 0
         framesWithDepth = 0
