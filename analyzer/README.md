@@ -157,6 +157,33 @@ for a 34-photo scan on a laptop, and only numpy, SciPy, scikit-learn and Pillow.
 Photo-only flags (`--perceptron`, `--backend`, model names) are ignored with a log line.
 `python test_lidar.py` checks it on a synthetic scan.
 
+## Spectate: furniture from RoomPlan, live (`spectate_analyzer.py`)
+
+The mod starts this worker when the iOS app spectates a room it has scanned with RoomPlan and built, and keeps it
+running. The app continues the scan's RoomPlan session, so RoomPlan's live objects (measured with the LiDAR) are in
+the scan's coordinates; `lidar_analyzer.py` saves an `arkit` frame in every LiDAR plan that maps them onto the
+plan's blocks. The worker reads RoomPlan's live room model and camera frames on stdin (about 5 a second each) and
+answers each with one JSON line.
+
+The build is the starting state, taken as certain. Only whole pieces of furniture change, and only from RoomPlan's
+objects; no single blocks are ever placed:
+
+- every built piece is linked to the RoomPlan object of the scan it came from (`room.json`), by kind and position;
+- a piece moves when RoomPlan places its object more than 25 cm or 25 degrees from where it was, onto a different
+  footprint, the same one for 5 updates in a row. The new footprint, height and facing come from
+  `roomplan.place_object`, as in build; material and colour stay. The mod takes the whole model away and builds it
+  again at the new place;
+- a new piece is added only when RoomPlan identifies a new object with medium or high confidence, stable for 5
+  updates;
+- low-confidence objects, jitter within a footprint, and objects RoomPlan stops reporting change nothing;
+- people are found in the frames (the phone's person mask over LiDAR depth) and reported as tracked positions,
+  which the mod shows as villagers.
+
+`python test_spectate.py` streams synthetic RoomPlan updates through it. It checks that the room as scanned (and
+with 5 cm jitter) changes nothing, a chair away for 3 updates changes nothing, a chair moved for good moves once as
+the same chair, a new sofa is added at medium confidence but not low, a table RoomPlan stops reporting stays, a
+person is reported, and that no single blocks are ever sent.
+
 ## Optional: open-vocabulary detection (`--perceptron`)
 
 Off by default, because it sends the photos to [Perceptron](https://docs.perceptron.inc) (`api.perceptron.inc`).

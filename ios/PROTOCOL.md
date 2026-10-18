@@ -23,9 +23,9 @@ Implementations: `ios/EverythingCubedScanner/Network/WireMessage.swift` and
 | type | fields | blobs |
 |---|---|---|
 | `hello` | `protocol` (1), `code` (pairing code from `/everything_cubed phone`), `device`, `app` | |
-| `begin` | `mode` (`capture`), `name`, `source` (`roomplan`: RoomPlan's LiDAR scan; `tracked`: photos under ARKit world tracking, any iPhone), `app` | |
-| `frame` | `seq`, `kind` (`keyframe` / `photo`), `time`, `tracking`, `imageSize` [w,h], `depthSize` [w,h], `K` (3×3), `cam2world` (4×4), `pointCount` | `image` (jpeg), `depth` (f16), `confidence` (u8), `points` (f32xyz: ARKit's tracked feature points, world metres) |
-| `room` | | `room` (RoomPlan `CapturedRoom` as JSON) |
+| `begin` | `mode` (`capture` / `spectate`), `folder` (spectate: the scan to spectate, from `ready`), `name`, `source` (`roomplan`: RoomPlan's LiDAR scan; `tracked`: photos under ARKit world tracking, any iPhone), `app` | |
+| `frame` | `seq`, `kind` (`keyframe` / `photo`), `time`, `tracking`, `imageSize` [w,h], `depthSize` [w,h], `K` (3×3), `cam2world` (4×4), `pointCount` | `image` (jpeg), `depth` (f16), `confidence` (u8), `points` (f32xyz: ARKit's tracked feature points, world metres), `person` (u8, spectate) |
+| `room` | | `room` (RoomPlan `CapturedRoom` as JSON: the finished scan's, or the live one while spectating) |
 | `planes` | | `planes` (JSON `{"planes": [...]}`: per ARKit plane anchor `transform` 4×4 row-major, `center`, `extent` [w,h], `alignment`, `classification` (wall/floor/ceiling/table/seat/window/door/none), `boundary`), sent at the end of a `tracked` scan |
 | `end` | `build` (default true), `scale` (blocks per metre, optional) | |
 | `ping` | | |
@@ -34,7 +34,8 @@ Implementations: `ios/EverythingCubedScanner/Network/WireMessage.swift` and
 down -Z with +Y up, and `K` belongs to the image in the sensor's landscape orientation (the analyzer turns
 portrait shots upright). `depth` is little-endian float16 metres, `confidence` is ARKit's 0 (low) to 2 (high),
 both `depthSize` pixels and aligned with the image. Frames from a phone without LiDAR (`tracked`) have no `depthSize`,
-`depth` or `confidence`; their `K` and `cam2world` are still ARKit's, in metres.
+`depth` or `confidence`; their `K` and `cam2world` are still ARKit's, in metres. `person` (spectate only) is 1 where a
+person is, also per depth pixel; it is left out when nobody is in view.
 
 ## Mod to phone
 
@@ -42,7 +43,9 @@ both `depthSize` pixels and aligned with the image. Frames from a phone without 
 |---|---|
 | `welcome` | `protocol`, `modes` (supported `begin` modes) |
 | `error` | `text`; the mod closes the connection after a failed `hello` |
-| `ready` | `folder`, the scan's folder under `everything_cubed/photos` |
+| `ready` | `folder`, the scan's folder under `everything_cubed/photos` (capture); `mode` = `spectate` (spectate) |
+| `built` | `folder`: a capture's house stands in game; the app can now offer to spectate it |
+| `stopped` | `text`: the game ended spectating (`/everything_cubed spectate stop`, the player left, ...) |
 | `status` | `level` (`info` / `progress` / `success` / `error`), `text`: progress and chat lines for the app's log |
 | `pong` | |
 
@@ -61,6 +64,17 @@ photos/<name>-<yyyyMMdd-HHmmss>/
 The analyzer reads `capture.json`: frames with depth go to `analyzer/lidar_analyzer.py`; frames without depth
 (`tracked`) are reconstructed by MapAnything given each photo's ARKit camera pose and intrinsics
 (`perception.reconstruct_tracked`), so the room's scale comes from ARKit instead of being guessed.
+
+## Mode `spectate`
+
+Starts from a RoomPlan scan the player has built (their last build, named by `folder`); the mod refuses it
+otherwise. The phone continues that scan's RoomPlan session, so everything is in the scan's coordinates, and sends
+`room` (RoomPlan's live room model) and `frame` (LiDAR frames with a `person` mask, for people) about every 0.2 s
+each, until `end` (or until the mod sends `stopped`). Nothing is saved: they go to
+`analyzer/spectate_analyzer.py`, which the mod keeps running with the scan's `plan.json` (its `arkit` frame maps
+ARKit metres onto the plan's blocks) and `room.json`. It answers with whole pieces of furniture to move or add, never
+single blocks. While it works on one message, only the newest of each kind that arrives is kept. The player is in
+spectator mode until the session ends.
 
 ## Extending
 

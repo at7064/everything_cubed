@@ -9,14 +9,15 @@ protocol FrameSink: AnyObject {
     func send(frame: WireMessage, hasDepth: Bool)
 }
 
-/// Samples the AR session about 15 times a second, keeps keyframes (and shutter photos),
-/// encodes them off the main thread and hands them to the sink in order.
+/// Samples the AR session about 15 times a second, keeps the frames its selector wants (keyframes for a scan,
+/// a steady 5 a second for spectate) and shutter photos, encodes them off the main thread and hands them to the
+/// sink in order.
 @MainActor
 final class FramePump {
     private let session: ARSession
     private weak var sink: FrameSink?
-    private var selector = KeyframeSelector()
-    private let encoder = FrameEncoder()
+    private var selector: any FrameSelector
+    private let encoder: FrameEncoder
     private let queue = DispatchQueue(label: "everything_cubed.encode", qos: .userInitiated)
     private var link: CADisplayLink?
     private var inFlight = 0
@@ -26,9 +27,12 @@ final class FramePump {
     /// Set when the user should know why nothing is being kept (tracking lost, network behind, ...).
     var onHint: ((String?) -> Void)?
 
-    init(session: ARSession, sink: FrameSink) {
+    init(session: ARSession, sink: FrameSink, selector: any FrameSelector = KeyframeSelector(),
+         options: FrameEncoder.Options = .scan) {
         self.session = session
         self.sink = sink
+        self.selector = selector
+        self.encoder = FrameEncoder(options: options)
     }
 
     func start() {
@@ -65,6 +69,9 @@ final class FramePump {
         guard let frame = session.currentFrame, let sink else { stats.noFrame += 1; return }
         guard case .normal = frame.camera.trackingState else {
             stats.limited += 1
+            if case .limited(.relocalizing) = frame.camera.trackingState {
+                return hint("Point at the scanned room to line up with it")
+            }
             return hint("Move slowly, tracking is limited")
         }
         let kind: FrameKind

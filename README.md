@@ -21,6 +21,17 @@ Run `/everything_cubed phone` and scan the room with the iOS app in [ios/](ios/R
 into the game and is built in front of you. LiDAR gives depth and camera positions directly, so the 3D
 reconstruction step is skipped.
 
+### Spectate: the room, live
+
+Spectate starts from a room you have just scanned with LiDAR (RoomPlan) and built. When the house stands, the app
+offers **Scan another room** or **Spectate this room**. Spectating continues the scan's RoomPlan session, and the
+furniture in game follows the real room: move a chair or the table and it moves in game, as the same piece of
+furniture, once RoomPlan has clearly placed it somewhere else for about a second. Something new only appears when
+RoomPlan identifies it as an object (with medium or high confidence). No single blocks are ever placed, and anything
+RoomPlan is unsure of stays as built. People show up as villagers. You are in spectator mode so nothing you do
+disturbs the house. `/everything_cubed spectate stop` (or **Stop** in the app) gives you your game mode back, and
+`/everything_cubed undo` reverts the changes.
+
 Furniture is drawn as detailed models (legs, drawers, cushions, burners, ...) around the real blocks that do the work:
 open cabinets, wardrobes and fridges, sleep in beds, cook on stoves, fill bottles at sinks. Right-click a chair, sofa
 or toilet to sit (sneak to stand up), and right-click a lamp to switch it on or off. Breaking the block inside a model,

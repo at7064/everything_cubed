@@ -1,9 +1,15 @@
 import ARKit
 import simd
 
+/// Decides which AR frames the `FramePump` keeps.
+protocol FrameSelector {
+    func wants(_ frame: ARFrame) -> Bool
+    mutating func kept(_ frame: ARFrame)
+}
+
 /// Keeps a frame when the phone has moved or turned enough since the last kept one, so the scan covers
 /// the room from many viewpoints without sending near-duplicate photos.
-struct KeyframeSelector {
+struct KeyframeSelector: FrameSelector {
     var minDistance: Float = 0.3            // metres
     var minAngle: Float = 15 * .pi / 180    // radians
     var minInterval: TimeInterval = 0.25
@@ -26,5 +32,22 @@ struct KeyframeSelector {
 
     mutating func reset() {
         last = nil
+    }
+}
+
+/// Keeps a frame every `interval` seconds whatever the phone does: a steady stream for spectate.
+struct IntervalSelector: FrameSelector {
+    var interval: TimeInterval = 0.2    // 5 frames a second
+
+    private var last: TimeInterval?
+
+    func wants(_ frame: ARFrame) -> Bool {
+        guard let last else { return true }
+        // A little early is fine: display-link ticks don't land exactly on the interval.
+        return frame.timestamp - last >= interval * 0.9
+    }
+
+    mutating func kept(_ frame: ARFrame) {
+        last = frame.timestamp
     }
 }

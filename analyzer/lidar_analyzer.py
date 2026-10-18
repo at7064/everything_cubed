@@ -121,9 +121,35 @@ def _normals(P, valid, depth, C, step=2):
     return n
 
 
+def frame_geometry(f, depth, conf, img, max_depth=FAR_DEPTH, width=ARKIT_WIDTH):
+    """One frame's depth-resolution geometry ("geo") used for labelling and the photo at `width` ("view", the
+    format perception's backends return) used for wall textures. `f` holds the frame's capture.json fields,
+    `depth` its depth map (metres, depthSize), `conf` its ARKit confidence (or None), `img` its PIL photo."""
+    from PIL import Image
+
+    dh, dw = depth.shape
+    depth = depth.astype(np.float64)
+    if conf is None:
+        conf = np.full((dh, dw), 2, np.uint8)
+    valid = np.isfinite(depth) & (depth > 0.1) & (((depth < ARKIT_MAX_DEPTH) & (conf >= 1)) |
+                                                  ((depth < max_depth) & (conf >= 2)))
+    iw, ih = f.get("imageSize", (dw * 7.5, dh * 7.5))
+    K = np.array(f["K"], dtype=np.float64).reshape(3, 3)
+    c2w = np.array(f["cam2world"], dtype=np.float64).reshape(4, 4) @ ARKIT_TO_CV
+    Kd = K.copy(); Kd[:2] *= dw / iw
+    P = _unproject(np.where(valid, depth, 0), Kd, c2w)
+    C = c2w[:3, 3]
+    img = img.convert("RGB")
+    W, H = width, round(ih * width / iw)
+    rgb = img.resize((W, H), Image.BILINEAR)
+    return {"name": f.get("image"), "depth": depth, "conf": conf, "valid": valid, "P": P, "C": C, "c2w": c2w,
+            "K": K, "imageSize": (iw, ih), "normal": _normals(P, valid, depth, C),
+            "area": (depth / Kd[0, 0]) * (depth / Kd[1, 1]),   # m^2 a pixel covers, facing the camera
+            "rgb_d": np.asarray(rgb.resize((dw, dh), Image.BOX)), "rgb": np.asarray(rgb)}
+
+
 def load_scan(folder: Path, max_depth=FAR_DEPTH, width=ARKIT_WIDTH):
-    """Frames of a capture.json: per frame the depth-resolution geometry ("geo") used for labelling and the
-    photo at `width` ("view", the format perception's backends return) used for wall textures."""
+    """Frames of a capture.json, each as frame_geometry() returns it, and RoomPlan's room model (or None)."""
     from PIL import Image
 
     cap = json.loads((folder / "capture.json").read_text())
@@ -138,24 +164,9 @@ def load_scan(folder: Path, max_depth=FAR_DEPTH, width=ARKIT_WIDTH):
         dw, dh = f["depthSize"]
         fmt = f["depth"].get("format", "f16")
         depth = np.fromfile(folder / f["depth"]["file"], dtype="<f2" if fmt == "f16" else "<f4").reshape(dh, dw)
-        depth = depth.astype(np.float64)
         conf = (np.fromfile(folder / f["confidence"]["file"], dtype=np.uint8).reshape(dh, dw)
-                if "confidence" in f else np.full((dh, dw), 2, np.uint8))
-        valid = np.isfinite(depth) & (depth > 0.1) & (((depth < ARKIT_MAX_DEPTH) & (conf >= 1)) |
-                                                      ((depth < max_depth) & (conf >= 2)))
-        iw, ih = f.get("imageSize", (dw * 7.5, dh * 7.5))
-        K = np.array(f["K"], dtype=np.float64).reshape(3, 3)
-        c2w = np.array(f["cam2world"], dtype=np.float64).reshape(4, 4) @ ARKIT_TO_CV
-        Kd = K.copy(); Kd[:2] *= dw / iw
-        P = _unproject(np.where(valid, depth, 0), Kd, c2w)
-        C = c2w[:3, 3]
-        img = Image.open(folder / f["image"]).convert("RGB")
-        W, H = width, round(ih * width / iw)
-        rgb = img.resize((W, H), Image.BILINEAR)
-        out.append({"name": f["image"], "depth": depth, "valid": valid, "P": P, "C": C, "c2w": c2w,
-                    "K": K, "imageSize": (iw, ih), "normal": _normals(P, valid, depth, C),
-                    "area": (depth / Kd[0, 0]) * (depth / Kd[1, 1]),   # m^2 a pixel covers, facing the camera
-                    "rgb_d": np.asarray(rgb.resize((dw, dh), Image.BOX)), "rgb": np.asarray(rgb)})
+                if "confidence" in f else None)
+        out.append(frame_geometry(f, depth, conf, Image.open(folder / f["image"]), max_depth, width))
     room = None
     if (folder / cap.get("room", "room.json")).is_file():
         room = json.loads((folder / cap.get("room", "room.json")).read_text())
@@ -294,6 +305,50 @@ def _area_past(frames, ax, sign, c, floor_y, low=0.5):
     return total
 
 
+def roomplan_walls(frames, room, ex, ez, log):
+    """RoomPlan's walls, as {(axis, sign): coordinate} like find_walls. RoomPlan fits each wall to the whole scan,
+    so where it found one it wins over the LiDAR's innermost plane, which can land on a fridge front or a desk
+    side and turn everything behind it into glass. On a side with several RoomPlan walls (an L-shaped room) the
+    longest one is used."""
+    if not room or not room.get("walls"):
+        return {}
+    cam = np.median([fr["C"] for fr in frames], axis=0)
+    best = {}
+    for wl in room["walls"]:
+        T = _mat(wl["transform"])
+        n = T[:3, 2]                       # a RoomPlan wall's normal is its local z
+        ai = 0 if abs(n @ ex) >= abs(n @ ez) else 1
+        ax = (ex, ez)[ai]
+        c = float(T[:3, 3] @ ax)
+        key = (ai, 1 if c > cam @ ax else -1)
+        if key not in best or wl["dimensions"][0] > best[key][1]:
+            best[key] = (c, wl["dimensions"][0])
+    names = {(0, -1): "x-", (0, 1): "x+", (1, -1): "z-", (1, 1): "z+"}
+    log("[lidar] RoomPlan walls used: " + ", ".join(f"{names[k]} {v[0] - cam @ (ex, ez)[k[0]]:+.2f} m"
+                                                   for k, v in sorted(best.items())))
+    return {k: v[0] for k, v in best.items()}
+
+
+def _under_roomplan_object(table, room, log, share=0.3):
+    """A table top found in the depth that is mostly the top of something RoomPlan already reported (a bed's
+    mattress is at table height, so is a dresser, and RoomPlan's own tables), which would otherwise be built a
+    second time as a table. Chairs and sofas don't count: they stand partly under tables."""
+    t_lo, t_hi, cells, x0, z0, m, sl = table
+    i, k = np.nonzero(m)
+    P = np.stack([x0 + (i + sl[0].start + 0.5) * 0.05, np.full(len(i), (t_lo + t_hi) / 2),
+                  z0 + (k + sl[1].start + 0.5) * 0.05], 1)
+    for o in (room or {}).get("objects", []):
+        if next(iter(o["category"])) in ("chair", "sofa"):   # seats tuck under tables
+            continue
+        T, d = _mat(o["transform"]), np.asarray(o["dimensions"], float)
+        loc = (P - T[:3, 3]) @ T[:3, :3]
+        inside = (np.abs(loc[:, 0]) <= d[0] / 2 + 0.1) & (np.abs(loc[:, 2]) <= d[2] / 2 + 0.1)
+        if inside.mean() >= share:
+            log(f"[lidar] a table top found in the depth is RoomPlan's {next(iter(o['category']))}: not a table")
+            return True
+    return False
+
+
 # ----------------------------------------------------------------------------------- per-pixel labels
 
 def _box_mask(P, T, dims, margin=0.04):
@@ -341,9 +396,11 @@ def label_frame(fr, ex, ez, floor_y, ceil_y, walls, room, tables):
         between = (y > floor_y + 0.5 * tol) & (y < top - 0.5 * tol)
         lab[valid & (np.abs(cp - c) < 1.5 * tol) & faces & between] = L["wall"]
         # Seen through the wall plane: through glass (or an open door). The ray crossed the wall between the
-        # floor and the ceiling, inside the other two walls.
+        # floor and the ceiling, inside the other two walls. When RoomPlan measured the walls, only its own
+        # windows, doors and openings (below) are see-through: a wall plane a little off, or depth leaking past
+        # a corner, would otherwise turn the furniture behind the plane and the wall itself into glass.
         C = fr["C"]
-        if (C @ ax - c) * sign >= 0:
+        if (C @ ax - c) * sign >= 0 or (room or {}).get("walls"):
             continue
         other = axes[1 - ai]
         lo_o, hi_o = walls.get((1 - ai, -1), -np.inf), walls.get((1 - ai, 1), np.inf)
@@ -578,7 +635,8 @@ def main(argv=None):
     ex, ez = manhattan_axes(frames, room, log)
     floor_y, ceil_y = floor_ceiling(frames, room, log)
     walls = find_walls(frames, ex, ez, floor_y, ceil_y, log)
-    tables = find_tables(frames, floor_y, log)
+    walls.update(roomplan_walls(frames, room, ex, ez, log))
+    tables = [t for t in find_tables(frames, floor_y, log) if not _under_roomplan_object(t, room, log)]
     labels = [label_frame(fr, ex, ez, floor_y, ceil_y, walls, room, tables) for fr in frames]
     geo_views, geo_labels, views, label_maps = to_views(frames, labels)
     if opts.mesh_out:
@@ -614,6 +672,15 @@ def main(argv=None):
                       ctx=ctx, known_height=opts.known_height, enlarge=1.0)
     plan["source"] = {"photos": [v_name for v_name in (f.get("image") for f in cap["frames"]) if v_name],
                       "metric": True, "lidar": True, "roomplan": room is not None}
+    # How ARKit world coordinates map onto the plan's blocks, for spectate (spectate_analyzer.PlanFrame): a point P
+    # is at room metres loc = ((P - origin) @ R.T - [0, y_shift, 0]) * f, block x = (loc.x - xmin) / (xmax - xmin) * W,
+    # z likewise, interior row y / hm * H (row 0 = first air layer). Spectate continues this scan's RoomPlan
+    # session, so its live objects are in this scan's world coordinates.
+    r = ctx["room"]
+    plan["arkit"] = {"origin": [float(v) for v in ctx["origin"]], "R": [[float(v) for v in row] for row in ctx["R"]],
+                     "y_shift": float(ctx["y_shift"]), "f": float(ctx["f"]),
+                     "xmin": float(r.xmin), "xmax": float(r.xmax), "zmin": float(r.zmin), "zmax": float(r.zmax),
+                     "hm": float(r.hm), "W": int(r.W), "D": int(r.D), "H": int(r.H)}
     out = opts.out or opts.images / "plan.json"
     if opts.wall_detail != "none":
         try:
@@ -626,7 +693,7 @@ def main(argv=None):
             plan["walls"] = tex.pop("wall_blocks")
             plan["wall_main"] = tex.pop("wall_main")
             plan["textures"] = tex
-            apply_wall_features(plan, tex.pop("features"), log, mirror=opts.mirror_walls)
+            apply_wall_features(plan, tex.pop("features"), log, mirror=opts.mirror_walls, tex_dir=out.parent)
         except Exception as ex_:  # never lose the whole analysis over the wall pictures
             import traceback
             traceback.print_exc()
