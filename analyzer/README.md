@@ -36,7 +36,23 @@ Then `roomplan.py`:
    completely. Frames are lit per entity and can never blend with smoothly lit blocks, so they are not used
    for plain paint. Players can punch the frames off and break the blocks.
 
-   **Room style** (`--wall-detail style`, the default): one wall style for the whole room, so every wall
+   Before that, the lighting is taken out (`walltex.even_lighting`): every photo's exposure is matched on the
+   paint, and slow shading, lamp glare and shadows across a wall are divided out. One paint is then one colour,
+   and only real things on the wall stand out. Wall pictures are never dithered (no speckle on the maps).
+
+   **Default (`--wall-detail uniform`)**: every wall block is a map. The room is assumed to have one plain paint
+   colour, measured from the photos; each wall is filled evenly with its own measured shade of it. Each photo is
+   first white-balanced on its own (per colour channel, so the paint it saw becomes the room's paint), which
+   removes lamp colour, sun patches and exposure seams. The things on the wall (paintings, posters, clocks,
+   switches, sockets, thermostats, signs, whiteboards) are then copied from the photo on top at full detail.
+   They are found by an open-vocabulary detector, OWLv2 (`wallitems.py`, Google, Apache-2.0, ~600 MB downloaded
+   once from Hugging Face, needs torch + transformers), run on every photo; its boxes are projected onto the
+   walls and kept where enough of the photos seeing that spot agree, and where something in them really differs
+   from the paint (a blank panel taken for a whiteboard is dropped). Sun patches, glare and chairs against the
+   wall stay paint. Without torch the walls are plain paint. The paint's own grain never shows. Blown-out glare is never an item. With LiDAR scans only photo pixels within 6 cm
+   of the wall plane count, so chairs and people in front of a wall are not painted onto it.
+
+   **Room style** (`--wall-detail style`): one wall style for the whole room, so every wall
    matches. It is the look shared by the most walls (an accent wall, such as dark acoustic panels, is left
    out rather than averaged in): its colour at each height is the median over all clean wall pixels of those
    walls, posterised into a few flat bands (a white wall, a wood trim line, a wainscot) by an optimal
@@ -47,7 +63,8 @@ Then `roomplan.py`:
    With `--wall-detail pattern`, each wall is instead judged **plain** or **patterned** on its own. A plain wall
    is built as above: real blocks plus framed wall items. A patterned wall (stone, brick, panelling,
    wallpaper) gets a map on every block: the photo where a camera saw it well, and everywhere else patches of
-   that same surface grown outward, brightness-matched and blended at the seams (patch-based filling in the
+   that same surface grown outward, brightness-matched and blended at the seams, all reduced to at most 8 flat
+   colours so it reads as a block texture rather than a photo (patch-based filling in the
    spirit of image quilting, Efros & Freeman, SIGGRAPH 2001). Only pixels seen within about 60 degrees of
    straight on are kept or copied, since steep views are smeared. The photos' own lighting (sun bands, cast
    shadows, glare) is evened out first: brightness changes slower than about 2 blocks are removed, colour and

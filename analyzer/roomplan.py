@@ -806,7 +806,6 @@ def apply_wall_features(plan, features, log=print, mirror=False):
     wall become vanilla bookshelf furniture standing on the floor right in front of it (never part of the wall
     itself), and bookcases already placed at those spots are dropped as duplicates. mirror=True: a wall the photos hardly saw copies the
     opposite wall when that one was seen well (halls, libraries, churches)."""
-    H = plan["size"]["y"]
     decided = {}
     for side, f in features.items():
         rows, cols = f["seen"].shape

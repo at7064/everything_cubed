@@ -435,7 +435,7 @@ def map_names(names, templates, ade_to_category, key, log, use_model=True, vanil
         else:
             rest.append(n)
     if out:
-        log(f"[det] vanilla blocks: " + ", ".join(f"{n} -> {t.split(':')[1]}" for n, (t, _) in sorted(out.items())))
+        log("[det] vanilla blocks: " + ", ".join(f"{n} -> {t.split(':')[1]}" for n, (t, _) in sorted(out.items())))
     names = rest
     model = {}
     if use_model and names:

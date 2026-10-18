@@ -194,7 +194,7 @@ print("pattern walls OK")
 # Viewing angle and excluded pixels: the cosine of the chosen view stays in (0.2, 1]; pixels masked as
 # window or door in every view are never taken as wall.
 side0 = "north"
-img0, seen0, cos0 = walltex.project_wall(side0, room, to_world, R, views, labels, category_lut(ID2LABEL, ADE_TO_CATEGORY), 8, 0.12 / f)
+_, seen0, cos0 = walltex.project_wall(side0, room, to_world, R, views, labels, category_lut(ID2LABEL, ADE_TO_CATEGORY), 8, 0.12 / f)
 mid = cos0[cos0.shape[0] // 2, cos0.shape[1] // 2]
 print(f"{side0}: seen {seen0.mean():.0%}, head-on cosine at the centre {mid:.2f}, min seen {cos0[seen0].min():.2f}")
 assert seen0.mean() > 0.9 and cos0[seen0].min() > 0.2 and (cos0 <= 1.0001).all() and cos0.max() > 0.8
@@ -234,7 +234,7 @@ apply_wall_features(p1, {"north": {"seen": seen_all, "window": glass, "bookshelf
                          "south": {"seen": none, "window": none, "bookshelf": none}}, log=print)
 nw = [o for o in p1["openings"] if o["side"] == "north" and o["type"] == "window"]
 assert sorted((o["u"], o["w"], o["y"], o["h"]) for o in nw) == [(1, 2, 2, 3), (6, 2, 2, 3)], nw
-sw = _grid = np.zeros((rows, cols), bool)
+sw = np.zeros((rows, cols), bool)
 for o in p1["openings"]:
     if o["side"] == "south" and o["type"] == "window":
         sw[o["y"]:o["y"] + o["h"], o["u"]:o["u"] + o["w"]] = True
@@ -263,11 +263,10 @@ light[2 * px:5 * px, 10 * px:13 * px] *= 0.45                               # a 
 lit = (base * light[..., None]).clip(0, 255)
 lit[0:px // 2, 0:px // 2] = 255                                             # a glare spot
 seen_l = np.ones(xx.shape, bool)
-even, seen_e = walltex.even_lighting(lit, seen_l, px)
+even, seen_e = walltex.even_wall_lighting(lit, seen_l, px)
 Yb = lambda im: ndimage_gauss(im @ np.array([0.299, 0.587, 0.114]), 2 * px)
 from scipy.ndimage import gaussian_filter as ndimage_gauss  # noqa: E402
 spread_before = np.std(Yb(lit)[seen_e]); spread_after = np.std(Yb(even)[seen_e])
-stripe = lambda im: np.abs(im[4 * px, 6 * px:7 * px].mean(0) - im[4 * px, 6 * px + px // 2:7 * px + px // 2].mean(0)).mean()
 print(f"lighting spread {spread_before:.1f} -> {spread_after:.1f}; glare dropped {not seen_e[:2, :2].any()}")
 assert spread_after < 0.4 * spread_before and not seen_e[:2, :2].any()
 yl = 4 * px

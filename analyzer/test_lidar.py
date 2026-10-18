@@ -5,7 +5,7 @@ The east wall (x = 6) has a 1.6 m x 1.2 m window that the LiDAR sees through (to
 1.2 m x 0.8 m table with its top at 0.75 m stands in the room. Two pillars stand 1.5 m in front of the
 west wall; the floor is seen behind them, so they must not be taken for the wall.
 Checks the room size, that only the window wall gets glass, and that the table is found from the depth alone
-(no room.json) and from RoomPlan's box.
+(no room.json) and from RoomPlan's box, and that "uniform" walls are maps on every block in one flat colour.
 Run: python test_lidar.py
 """
 import json
@@ -97,17 +97,24 @@ def write_scan(folder: Path, with_room: bool):
     (folder / "capture.json").write_text(json.dumps(cap))
 
 
-def run(with_room):
+def run(with_room, detail):
     import lidar_analyzer
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
         write_scan(folder, with_room)
-        lidar_analyzer.main(["--images", str(folder), "--wall-detail", "items"])
-        return json.loads((folder / "plan.json").read_text())
+        lidar_analyzer.main(["--images", str(folder), "--wall-detail", detail])
+        plan = json.loads((folder / "plan.json").read_text())
+        if detail == "uniform":
+            # Every wall block is a map; the plain walls are one colour, with nothing drawn on them.
+            for side, w in plan["textures"]["walls"].items():
+                assert all(all(row) for row in w["tiles"]), side
+                img = np.asarray(Image.open(folder / w["image"]))
+                assert len(np.unique(img.reshape(-1, 3), axis=0)) == 1, side
+        return plan
 
 
-for with_room in (False, True):
-    plan = run(with_room)
+for with_room, detail in ((False, "items"), (True, "uniform")):
+    plan = run(with_room, detail)
     m = plan["metres"]
     dims = sorted([m["x"], m["z"]])
     assert abs(dims[0] - D) < 0.15 and abs(dims[1] - W) < 0.15, m
@@ -116,5 +123,5 @@ for with_room in (False, True):
     assert len(glass) == 1, plan["openings"]
     tables = [o for o in plan["objects"] if o["type"] == "table"]
     assert len(tables) == 1, plan["objects"]
-    print(f"room.json={with_room}: room {m}, window on {glass}, table {tables[0]}")
+    print(f"room.json={with_room}, walls {detail}: room {m}, window on {glass}, table {tables[0]}")
 print("OK")

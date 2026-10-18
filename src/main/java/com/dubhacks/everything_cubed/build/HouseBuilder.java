@@ -619,6 +619,9 @@ public class HouseBuilder {
 		JsonObject tex = plan.getAsJsonObject("textures");
 		int px = tex.get("px").getAsInt();
 		boolean dither = !tex.has("dither") || tex.get("dither").getAsBoolean();
+		// "lit": every frame gets an invisible full-strength light block in its cell. A frame shows its map at the
+		// one light level of its own cell, so walls of maps under real (uneven) light look like a grid of tiles.
+		boolean lit = tex.has("lit") && tex.get("lit").getAsBoolean();
 		Path dir = Path.of(plan.get("_dir").getAsString());
 		int frames = 0;
 		for (Map.Entry<String, JsonElement> entry : tex.getAsJsonObject("walls").entrySet()) {
@@ -653,6 +656,8 @@ public class HouseBuilder {
 					// A regular frame is lit by the world exactly like the wall blocks around it.
 					ItemFrame frame = new ItemFrame(level, framePos, into);
 					if (!frame.survives()) continue; // painting or another frame already there
+					if (lit && inFront.isAir())
+						set(in[0], row + 1, in[1], Blocks.LIGHT.defaultBlockState().setValue(LightBlock.LEVEL, LightBlock.MAX_LEVEL));
 					int col = flip ? len - 1 - u : u, imgRow = H - 1 - row;
 					frame.setItem(mapOf(pixels, len * 128, col * 128, imgRow * 128), false);
 					frame.setInvisible(true);
