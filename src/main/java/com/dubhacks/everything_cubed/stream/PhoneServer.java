@@ -96,7 +96,7 @@ public final class PhoneServer {
 			try {
 				Socket s = ss.accept();
 				s.setTcpNoDelay(true);
-				s.setSoTimeout(5 * 60_000);
+				s.setSoTimeout(PhoneConnection.IDLE_TIMEOUT_MS);
 				Thread t = new Thread(new PhoneConnection(s, server), "everything_cubed-phone-" + s.getInetAddress().getHostAddress());
 				t.setDaemon(true);
 				t.start();

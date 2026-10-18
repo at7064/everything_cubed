@@ -21,6 +21,14 @@ struct ScanView: View {
             .padding()
         }
         .background(Color.black)
+        .alert("Spectate this room?", isPresented: Binding(
+            get: { model.spectateInvite != nil },
+            set: { if !$0 && model.spectateInvite != nil { model.declineInvite() } })) {
+            Button("Allow") { model.acceptInvite() }
+            Button("Don't Allow", role: .cancel) { model.declineInvite() }
+        } message: {
+            Text("The game wants to spectate this room: furniture you move here moves in the game, and you show up there. Stop any time.")
+        }
     }
 
     private var stats: some View {

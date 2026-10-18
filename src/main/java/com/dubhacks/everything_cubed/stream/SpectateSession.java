@@ -8,6 +8,7 @@ import com.google.gson.JsonParser;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.ChatFormatting;
+import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 
@@ -34,6 +35,15 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class SpectateSession implements StreamSession {
 	private static final Map<UUID, SpectateSession> ACTIVE = new ConcurrentHashMap<>();
+	/** Scan folders the player asked their phone to spectate (/everything_cubed spectate): the player's yes. */
+	private static final Map<UUID, Invite> INVITES = new ConcurrentHashMap<>();
+	/** How long a request waits for the other side's yes. */
+	private static final long ANSWER_MS = 60_000;
+	/** While spectating, both sides send something every second; this long without anything ends it. */
+	private static final int LOST_MS = 5_000;
+
+	private record Invite(String folder, long at) {
+	}
 
 	private final PhoneConnection phone;
 	/** Started on the server thread once the build is found; frames before that are dropped. */
@@ -46,14 +56,28 @@ public final class SpectateSession implements StreamSession {
 	private volatile boolean closed;
 	/** Set on the server thread once the player is in spectator mode. */
 	private volatile SpectateWorld world;
+	/** Waiting for the player's yes in game (the phone asked first), since this time; 0 once allowed. */
+	private volatile long askedAt;
+	private EverythingCubedCommand.Built built;
+	private ServerPlayer player;
 	private int updates;
 
 	/** Called once from the mod initializer. */
 	public static void register() {
-		ServerTickEvents.END_SERVER_TICK.register(server -> ACTIVE.values().forEach(s -> {
-			SpectateWorld w = s.world;
-			if (w != null) w.tick();
-		}));
+		ServerTickEvents.END_SERVER_TICK.register(server -> {
+			boolean second = server.getTickCount() % 20 == 0;
+			long now = System.currentTimeMillis();
+			for (SpectateSession s : ACTIVE.values()) {
+				SpectateWorld w = s.world;
+				if (w != null) {
+					w.tick();
+					if (second) s.phone.send(StreamMessage.of("alive"));   // the phone's sign that the game is there
+				} else if (s.askedAt > 0 && now - s.askedAt > ANSWER_MS) {
+					s.close("it was not allowed in game in time", true);
+				}
+			}
+			if (second) INVITES.values().removeIf(i -> now - i.at() > ANSWER_MS);
+		});
 		// Before the player is saved, so they never stay in spectator mode.
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> stop(handler.getPlayer().getUUID(), "you left the game"));
 	}
@@ -67,41 +91,116 @@ public final class SpectateSession implements StreamSession {
 				close("the player is not in the game", true);
 				return;
 			}
-			ServerPlayer player = p.get();
-			Optional<EverythingCubedCommand.Built> built = EverythingCubedCommand.lastBuild(player.getUUID())
-					.filter(b -> folder.isEmpty() || b.plan().getParent().getFileName().toString().equals(folder));
-			if (built.isEmpty()) {
+			player = p.get();
+			Optional<EverythingCubedCommand.Built> b = EverythingCubedCommand.lastBuild(player.getUUID())
+					.filter(x -> folder.isEmpty() || folderOf(x).equals(folder));
+			if (b.isEmpty()) {
 				phone.status("error", "Spectate starts from a room you have scanned and built: finish a scan and wait for "
 						+ "\"Built a ... house\" first.");
 				close("there is no built scan to spectate", true);
 				return;
 			}
+			built = b.get();
 			SpectateSession old = ACTIVE.put(player.getUUID(), this);
 			if (old != null) old.close("a new spectate session started", true);
 			if (closed) return;
-			SpectateWorld w;
-			try {
-				w = new SpectateWorld(player, built.get());
-			} catch (IOException e) {
-				phone.status("error", "Could not read the scan's plan: " + e.getMessage());
-				close("the scan's plan could not be read", true);
+			// Both sides must say yes. The game said yes first (/everything_cubed spectate): start now.
+			Invite invite = INVITES.remove(player.getUUID());
+			if (invite != null && invite.folder().equals(folderOf(built))) {
+				start();
 				return;
 			}
-			try {
-				startWorker(built.get().plan());
-			} catch (IOException e) {
-				EverythingCubed.LOGGER.warn("Could not start spectating", e);
-				phone.status("error", "Could not start the spectate analyzer: " + e.getMessage());
-				world = w;   // so close() gives the player their game mode back
-				close("the analyzer could not start", true);
-				return;
-			}
-			world = w;
-			player.sendSystemMessage(Component.literal("Spectating " + built.get().plan().getParent().getFileName()
-					+ ". Furniture you move in the room moves here; /everything_cubed spectate stop to exit.").withStyle(ChatFormatting.AQUA));
-			phone.send(StreamMessage.of("ready").with("mode", "spectate"));
+			// The phone asked first: the player says yes or no in game.
+			askedAt = System.currentTimeMillis();
+			phone.send(StreamMessage.of("waiting").with("text", "Allow spectating in game (click Allow in chat)."));
+			player.sendSystemMessage(Component.literal("Your phone (" + phone.device() + ") wants to spectate "
+					+ folderOf(built) + ": you go into spectator mode and furniture follows the real room. ")
+					.withStyle(ChatFormatting.AQUA)
+					.append(button("[Allow]", "/everything_cubed spectate allow", ChatFormatting.GREEN))
+					.append(Component.literal(" "))
+					.append(button("[Deny]", "/everything_cubed spectate deny", ChatFormatting.RED)));
 		});
 		EverythingCubed.LOGGER.info("Spectate requested by {} for '{}'", phone.device(), folder);
+	}
+
+	private static Component button(String label, String command, ChatFormatting colour) {
+		return Component.literal(label).withStyle(st -> st.withColor(colour).withBold(true)
+				.withClickEvent(new ClickEvent.RunCommand(command)));
+	}
+
+	private static String folderOf(EverythingCubedCommand.Built b) {
+		return b.plan().getParent().getFileName().toString();
+	}
+
+	/** Both sides said yes: spectator mode, the worker, and the phone may stream. Server thread. */
+	private void start() {
+		askedAt = 0;
+		SpectateWorld w;
+		try {
+			w = new SpectateWorld(player, built);
+		} catch (IOException e) {
+			phone.status("error", "Could not read the scan's plan: " + e.getMessage());
+			close("the scan's plan could not be read", true);
+			return;
+		}
+		try {
+			startWorker(built.plan());
+		} catch (IOException e) {
+			EverythingCubed.LOGGER.warn("Could not start spectating", e);
+			phone.status("error", "Could not start the spectate analyzer: " + e.getMessage());
+			world = w;   // so close() gives the player their game mode back
+			close("the analyzer could not start", true);
+			return;
+		}
+		world = w;
+		phone.setReadTimeout(LOST_MS);   // the phone sends something every second: silence means it is gone
+		player.sendSystemMessage(Component.literal("Spectating " + folderOf(built)
+				+ ". Furniture you move in the room moves here; /everything_cubed spectate stop to exit.").withStyle(ChatFormatting.AQUA));
+		phone.send(StreamMessage.of("ready").with("mode", "spectate"));
+	}
+
+	/** {@code /everything_cubed spectate}: asks the player's phone to spectate their last build. Server thread. */
+	public static boolean invite(ServerPlayer player) {
+		Optional<EverythingCubedCommand.Built> b = EverythingCubedCommand.lastBuild(player.getUUID());
+		Optional<PhoneConnection> phone = PhoneConnection.of(player.getUUID());
+		if (b.isEmpty() || phone.isEmpty()) {
+			player.sendSystemMessage(Component.literal(b.isEmpty()
+					? "Scan a room with the phone (LiDAR) and build it first; spectate follows that room."
+					: "No phone is connected. Run /everything_cubed phone and connect the app first.").withStyle(ChatFormatting.RED));
+			return false;
+		}
+		if (ACTIVE.containsKey(player.getUUID())) {
+			player.sendSystemMessage(Component.literal("Already spectating; /everything_cubed spectate stop ends it.").withStyle(ChatFormatting.RED));
+			return false;
+		}
+		String folder = folderOf(b.get());
+		INVITES.put(player.getUUID(), new Invite(folder, System.currentTimeMillis()));
+		phone.get().send(StreamMessage.of("spectate_invite").with("folder", folder));
+		player.sendSystemMessage(Component.literal("Asked your phone to spectate " + folder + "; allow it on the phone.").withStyle(ChatFormatting.GRAY));
+		return true;
+	}
+
+	/** {@code /everything_cubed spectate allow}: the player's yes to their phone's request. Server thread. */
+	public static boolean allow(UUID player) {
+		SpectateSession s = ACTIVE.get(player);
+		if (s == null || s.askedAt == 0 || s.closed) return false;
+		s.start();
+		return true;
+	}
+
+	/** {@code /everything_cubed spectate deny}. Server thread. */
+	public static boolean deny(UUID player) {
+		SpectateSession s = ACTIVE.get(player);
+		if (s == null || s.askedAt == 0) return false;
+		s.close("you said no in game", true);
+		return true;
+	}
+
+	/** The phone said no to the game's invite. Any thread. */
+	static void declined(PhoneConnection phone, String why) {
+		INVITES.remove(phone.player());
+		phone.onServer(p -> p.ifPresent(sp -> sp.sendSystemMessage(
+				Component.literal("Your phone did not start spectating: " + why + ".").withStyle(ChatFormatting.GRAY))));
 	}
 
 	private void startWorker(Path plan) throws IOException {
@@ -223,6 +322,7 @@ public final class SpectateSession implements StreamSession {
 		}
 		if (worker != null) worker.destroy();
 		phone.send(StreamMessage.of("stopped").with("text", "Spectating ended: " + why + "."));
+		phone.setReadTimeout(PhoneConnection.IDLE_TIMEOUT_MS);
 		if (onServerThread) finishWorld(why);
 		else phone.onServer(p -> finishWorld(why));
 		EverythingCubed.LOGGER.info("Spectate ended: {}", why);

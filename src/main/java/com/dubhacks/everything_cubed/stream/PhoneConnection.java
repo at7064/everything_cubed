@@ -13,8 +13,10 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.Socket;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /**
@@ -22,6 +24,11 @@ import java.util.function.Consumer;
  * {@code /everything_cubed phone}; the phone then acts for the player who ran that command.
  */
 public final class PhoneConnection implements Runnable {
+	/** Read timeout while nothing time-critical runs (a scan can pause a while). */
+	static final int IDLE_TIMEOUT_MS = 5 * 60_000;
+	/** The connected phone of each player, so the game can ask it something (spectate invites). */
+	private static final Map<UUID, PhoneConnection> BY_PLAYER = new ConcurrentHashMap<>();
+
 	private final Socket socket;
 	private final MinecraftServer server;
 	private final DataOutputStream out;
@@ -36,6 +43,27 @@ public final class PhoneConnection implements Runnable {
 
 	public String device() {
 		return device;
+	}
+
+	public UUID player() {
+		return player;
+	}
+
+	/** The phone connected for {@code player}, if there is one. */
+	public static Optional<PhoneConnection> of(UUID player) {
+		return Optional.ofNullable(BY_PLAYER.get(player));
+	}
+
+	/**
+	 * How long a read may wait before the connection counts as lost. Spectating sets a few seconds (both sides
+	 * send something every second), so a dropped connection ends it quickly.
+	 */
+	public void setReadTimeout(int ms) {
+		try {
+			socket.setSoTimeout(ms);
+		} catch (IOException e) {
+			EverythingCubed.LOGGER.debug("could not set the phone read timeout", e);
+		}
 	}
 
 	/** Runs {@code action} on the server thread with the paired player, if they are online. */
@@ -93,6 +121,7 @@ public final class PhoneConnection implements Runnable {
 				StreamMessage msg = StreamMessage.read(in);
 				switch (msg.type()) {
 					case "ping" -> send(StreamMessage.of("pong"));
+					case "spectate_decline" -> SpectateSession.declined(this, msg.string("text", "the phone declined"));
 					case "begin" -> {
 						if (session != null) session.onDisconnect();
 						session = begin(msg);
@@ -113,6 +142,7 @@ public final class PhoneConnection implements Runnable {
 			EverythingCubed.LOGGER.error("Phone stream failed", e);
 			status("error", "Server error: " + e.getMessage());
 		} finally {
+			if (player != null) BY_PLAYER.remove(player, this);
 			if (session != null) session.onDisconnect();
 		}
 	}
@@ -129,6 +159,7 @@ public final class PhoneConnection implements Runnable {
 			return false;
 		}
 		player = owner.get();
+		BY_PLAYER.put(player, this);
 		JsonArray modes = new JsonArray();
 		StreamModes.names().forEach(modes::add);
 		send(StreamMessage.of("welcome").with("protocol", StreamMessage.PROTOCOL).with("modes", modes));

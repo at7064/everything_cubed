@@ -15,7 +15,9 @@ struct SpectateView: View {
                 VStack(spacing: 4) {
                     Label("Live · \(model.framesSent) frames", systemImage: "dot.radiowaves.left.and.right")
                         .font(.headline.monospacedDigit())
-                    if let hint = model.hint {
+                    if !model.spectateAllowed {
+                        Text("Waiting for the game to allow spectating…").font(.caption)
+                    } else if let hint = model.hint {
                         Text(hint).font(.caption)
                     } else if model.framesSent > 5 && model.framesWithDepth == 0 {
                         Text("No LiDAR depth: this needs a Pro iPhone or iPad.").font(.caption).foregroundStyle(.red)

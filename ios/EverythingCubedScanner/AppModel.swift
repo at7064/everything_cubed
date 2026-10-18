@@ -38,6 +38,15 @@ final class AppModel: ObservableObject, FrameSink {
     /// The last scan was a LiDAR room scan (RoomPlan) on a device with LiDAR: the only kind spectate can follow.
     /// The Spectate button is hidden otherwise (photo scans, phones without LiDAR).
     @Published private(set) var scanIsLidar = false
+    /// Spectating and the game said yes too (both sides must allow it); until then nothing is streamed.
+    @Published private(set) var spectateAllowed = false
+    /// The game asked to spectate this scan (/everything_cubed spectate): the folder, until answered.
+    @Published private(set) var spectateInvite: String?
+
+    /// While spectating, both sides send something every second; this long without hearing the game ends it.
+    private let lostAfter: TimeInterval = 5
+    private var lastHeard = CACurrentMediaTime()
+    private var heartbeat: Timer?
 
     /// The last scan's folder in the mod, and its RoomPlan source, kept running: spectate continues that RoomPlan
     /// session, so its live objects are in the same coordinates as the scan (and the built house).
@@ -92,6 +101,7 @@ final class AppModel: ObservableObject, FrameSink {
     }
 
     private func received(_ msg: WireMessage) {
+        lastHeard = CACurrentMediaTime()
         switch msg.type {
         case "welcome":
             phase = .paired
@@ -101,7 +111,8 @@ final class AppModel: ObservableObject, FrameSink {
             append(msg.string("level") ?? "info", msg.string("text") ?? "")
         case "ready":
             if msg.string("mode") == "spectate" {
-                append("info", "Spectating. Point the phone at the scanned room; changes you clearly see update live.")
+                spectateAllowed = true   // the game said yes: stream from now on
+                append("success", "Spectating. Furniture you move in the room moves in the game.")
             } else {
                 scanFolder = msg.string("folder")
                 append("info", "Saving as \(msg.string("folder") ?? "a new scan")")
@@ -112,14 +123,28 @@ final class AppModel: ObservableObject, FrameSink {
                 canSpectate = true
                 append("success", "You can spectate this room now.")
             }
+        case "waiting":
+            // The phone asked first: the player has to allow it in game.
+            append("info", msg.string("text") ?? "Waiting for the game to allow spectating.")
+        case "spectate_invite":
+            // The game asked first: the phone has to allow it (or says why it can't).
+            let folder = msg.string("folder") ?? ""
+            if phase == .done, canSpectate, folder == scanFolder {
+                spectateInvite = folder
+            } else {
+                declineInvite(phase == .spectating ? "it is already spectating"
+                              : canSpectate ? "the phone's last scan is a different room"
+                              : "the phone has no LiDAR room scan of it running (scan it, then spectate)")
+            }
+        case "alive", "pong":
+            break   // the game is there (lastHeard is updated above)
         case "stopped":
             // The game ended spectating (/everything_cubed spectate stop, the player left, ...).
             append("info", msg.string("text") ?? "Spectating ended.")
             if phase == .spectating {
                 pump?.stop()
                 scanSource?.finishLive()
-                stopCapture()
-                phase = .done
+                endSpectating()
             }
         default:
             break
@@ -197,7 +222,9 @@ final class AppModel: ObservableObject, FrameSink {
         framesSent = 0
         framesWithDepth = 0
         log.removeAll()
+        spectateAllowed = false
         client.send(WireMessage("begin", ["mode": "spectate", "folder": folder, "source": src.name, "app": Self.appVersion]))
+        startHeartbeat()
         let p = FramePump(session: src.arSession, sink: self, selector: IntervalSelector(), options: .live)
         p.onHint = { [weak self] text in if self?.hint != text { self?.hint = text } }
         pump = p
@@ -212,8 +239,50 @@ final class AppModel: ObservableObject, FrameSink {
         pump?.stop()
         scanSource?.finishLive()
         client.send(WireMessage("end", ["build": false]))
+        endSpectating()
+    }
+
+    /// Back to the finished scan: spectate again or scan another room.
+    private func endSpectating() {
+        heartbeat?.invalidate()
+        heartbeat = nil
+        spectateAllowed = false
         stopCapture()
-        phase = .done   // back to the finished scan: spectate again or scan another room
+        phase = .done
+    }
+
+    /// Yes to the game's invite: spectate this scan (the game already allowed it, so it starts at once).
+    func acceptInvite() {
+        spectateInvite = nil
+        startSpectate()
+    }
+
+    /// No to the game's invite; the game is told why.
+    func declineInvite(_ why: String = "declined on the phone") {
+        spectateInvite = nil
+        client.send(WireMessage("spectate_decline", ["text": why]))
+    }
+
+    /// Every second while spectating: a ping to the game, and a check that the game is still there.
+    private func startHeartbeat() {
+        heartbeat?.invalidate()
+        lastHeard = CACurrentMediaTime()
+        heartbeat = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.beat() }
+        }
+    }
+
+    private func beat() {
+        guard phase == .spectating else { return }
+        client.send(WireMessage("ping"))
+        // Before the game says yes it may take a while (up to a minute); after that it sends "alive" every second.
+        if spectateAllowed, CACurrentMediaTime() - lastHeard > lostAfter {
+            print("[app] lost the game while spectating")
+            pump?.stop()
+            scanSource?.finishLive()
+            endSpectating()
+            fail("Lost the connection to the game, so spectating stopped.")
+        }
     }
 
     private var captureRunning = false
@@ -262,7 +331,7 @@ final class AppModel: ObservableObject, FrameSink {
     /// Spectating: RoomPlan's live room model to the mod, at most every `roomInterval` and not while Wi-Fi is behind.
     private func sendLiveRoom(_ room: CapturedRoom) {
         let now = CACurrentMediaTime()
-        guard phase == .spectating, now - lastRoomSent >= roomInterval, canAcceptFrame,
+        guard phase == .spectating, spectateAllowed, now - lastRoomSent >= roomInterval, canAcceptFrame,
               let json = try? JSONEncoder().encode(room) else { return }
         lastRoomSent = now
         client.send(WireMessage("room", blobs: [.init(name: "room", format: "roomplan.json", data: json)]))
@@ -303,7 +372,8 @@ final class AppModel: ObservableObject, FrameSink {
     // MARK: FrameSink
 
     var canAcceptFrame: Bool {
-        client.queuedBytes < (phase == .spectating ? maxQueuedLiveBytes : maxQueuedBytes)
+        if phase == .spectating && !spectateAllowed { return false }   // nothing until the game says yes
+        return client.queuedBytes < (phase == .spectating ? maxQueuedLiveBytes : maxQueuedBytes)
     }
 
     func send(frame: WireMessage, hasDepth: Bool) {

@@ -43,7 +43,9 @@ import java.util.function.Consumer;
  * /everything_cubed buildscaled <blocksPerMetre> <...> same, with a fixed scale
  * /everything_cubed undo                               revert the last build
  * /everything_cubed phone                              pair the iOS scanner app, which then builds in front of you
- * /everything_cubed spectate stop                      stop mirroring the phone's live view (started from the app)
+ * /everything_cubed spectate                           ask the connected phone to spectate your last build
+ * /everything_cubed spectate allow | deny              answer the phone's request to spectate
+ * /everything_cubed spectate stop                      stop spectating (the phone can stop it too)
  */
 public final class EverythingCubedCommand {
 	private static final ExecutorService WORKER = Executors.newSingleThreadExecutor(r -> {
@@ -83,11 +85,9 @@ public final class EverythingCubedCommand {
 				.then(Commands.literal("undo").executes(EverythingCubedCommand::undo))
 				.then(Commands.literal("phone").executes(EverythingCubedCommand::phone))
 				.then(Commands.literal("spectate")
-						.executes(ctx -> {
-							info(ctx.getSource(), "Run /everything_cubed phone, then choose Spectate in the iPhone app. "
-									+ "/everything_cubed spectate stop ends it.");
-							return 1;
-						})
+						.executes(ctx -> SpectateSession.invite(ctx.getSource().getPlayerOrException()) ? 1 : 0)
+						.then(Commands.literal("allow").executes(ctx -> answer(ctx, true)))
+						.then(Commands.literal("deny").executes(ctx -> answer(ctx, false)))
 						.then(Commands.literal("stop").executes(EverythingCubedCommand::stopSpectate))));
 	}
 
@@ -185,6 +185,15 @@ public final class EverythingCubedCommand {
 	public static void remember(UndoLog log) {
 		HISTORY.push(log);
 		while (HISTORY.size() > MAX_UNDO) HISTORY.removeLast();
+	}
+
+	private static int answer(CommandContext<CommandSourceStack> ctx, boolean yes) throws CommandSyntaxException {
+		ServerPlayer player = ctx.getSource().getPlayerOrException();
+		if (!(yes ? SpectateSession.allow(player.getUUID()) : SpectateSession.deny(player.getUUID()))) {
+			ctx.getSource().sendFailure(Component.literal("Your phone is not asking to spectate."));
+			return 0;
+		}
+		return 1;
 	}
 
 	private static int stopSpectate(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
