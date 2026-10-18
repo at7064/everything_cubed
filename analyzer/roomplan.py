@@ -431,7 +431,37 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
         sel = facing & ((wp[:, axis] < centre) if neg else (wp[:, axis] > centre))
         if sel.sum() < max(40, 0.02 * len(wp)):
             return None
-        return float(np.median(wp[sel, axis]))
+        # A reconstruction can repeat the same wall behind its real surface. Find
+        # supported parallel layers, then take the one facing the room interior.
+        pts = wp[sel]
+        values = pts[:, axis]
+        tangent = pts[:, 2 if axis == 0 else 0]
+        span = np.percentile(loc[:, axis], 99) - np.percentile(loc[:, axis], 1)
+        edge = np.percentile(values, 2 if neg else 98)
+        band = max(1.2, 0.3 * span)
+        eligible = (values <= edge + band) if neg else (values >= edge - band)
+        values, tangent, heights = values[eligible], tangent[eligible], pts[eligible, 1]
+        if len(values) < 40:
+            return float(np.median(pts[:, axis]))
+        width = 0.08
+        edges = np.arange(values.min() - width, values.max() + 2 * width, width)
+        counts, _ = np.histogram(values, bins=edges)
+        smooth = np.convolve(counts, [0.25, 0.5, 0.25], mode="same")
+        peaks = np.flatnonzero((smooth >= np.r_[smooth[0], smooth[:-1]]) &
+                                   (smooth >= np.r_[smooth[1:], smooth[-1]]))
+        peaks = sorted(peaks, reverse=neg)
+        min_support = max(40, 0.12 * float(smooth.max()))
+        for peak in peaks:
+            centre_layer = (edges[peak] + edges[peak + 1]) / 2
+            support = np.abs(values - centre_layer) < 0.14
+            if support.sum() < min_support:
+                continue
+            if np.ptp(np.percentile(heights[support], [10, 90])) < 0.6:
+                continue
+            if np.ptp(np.percentile(tangent[support], [10, 90])) < 0.2 * max(0.5, np.ptp(np.percentile(tangent, [10, 90]))):
+                continue
+            return float(np.median(values[support]))
+        return float(np.median(values))
 
     known_cats = cats != "other"
     def inferred(axis, neg):
@@ -792,6 +822,10 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
     roof_wood = "spruce" if dom_lab[0] < 40 else "dark_oak"
     return {
         "version": 1,
+        "interior_shell": {"origin": origin.tolist(), "rotation": R.tolist(),
+                           "y_shift": float(y_shift), "scale": float(f),
+                           "bounds": {**{k: float(v) for k, v in bounds.items()},
+                                      "ymin": 0.0, "ymax": float(hm)}},
         "scale": round(float(scale), 3),
         "metres": {"x": round(wm, 2), "z": round(dm, 2), "y": round(hm, 2)},
         "size": {"x": W, "z": D, "y": H},

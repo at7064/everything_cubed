@@ -70,8 +70,8 @@ def main(argv=None):
     source = opts.input.expanduser().resolve()
     if not source.exists():
         ap.error(f"input does not exist: {source}")
-    if opts.frames < 2 or opts.frames > 64:
-        ap.error("--frames must be between 2 and 64")
+    if opts.frames < 2 or opts.frames > 512:
+        ap.error("--frames must be between 2 and 512")
     if opts.max_width < 320:
         ap.error("--max-width must be at least 320")
     if opts.batch_views < 3:
@@ -118,7 +118,7 @@ def main(argv=None):
         from perception import list_images
         from photo_texture import write_photo_viewer
         write_photo_viewer(out / "reconstruction.ply", list_images(images), out / "photo_view.html",
-                           max_faces_per_frame=opts.photo_faces)
+                           max_faces_per_frame=opts.photo_faces, shell=plan.get("interior_shell"))
         photo_view = True
     scene = write_viewer(plan, out / "view.html", out / "solid.ply", photo_view=photo_view)
     write_obj(scene, out / "model.obj")

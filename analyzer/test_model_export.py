@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from mesh_export import mesh_arrays, write_ply
-from photo_texture import photo_scene, write_photo_viewer
+from photo_texture import align_wall_patches, photo_scene, write_photo_viewer
 from plan_viewer import scene_from_plan, write_obj, write_viewer
 from solid_export import write_solid
 
@@ -53,7 +53,21 @@ def test_export():
                                        dtype="<f4").reshape(-1, 5)
         assert np.all((photo_vertices[:, 3:] > 0) & (photo_vertices[:, 3:] < 1))
         write_photo_viewer(ply, [photo], root / "photo_view.html", max_faces_per_frame=100)
-        assert "Original video frames" in (root / "photo_view.html").read_text()
+        assert "Original video pixels" in (root / "photo_view.html").read_text()
+        shell = {"origin": [0, 0, 0], "rotation": np.eye(3).tolist(),
+                 "y_shift": 0, "scale": 1,
+                 "bounds": {"xmin": -1, "xmax": 100, "zmin": -1, "zmax": 100,
+                            "ymin": -1, "ymax": 100}}
+        clipped = photo_scene(ply, [photo], max_faces_per_frame=100, shell=shell)
+        assert clipped["total_faces"] == textured["total_faces"]
+        shell["bounds"]["xmax"] = -0.5
+        outside = photo_scene(ply, [photo], max_faces_per_frame=100, shell=shell)
+        assert outside["total_faces"] == textured["total_faces"]
+        shell["bounds"]["xmax"] = 100
+        shell["bounds"]["xmin"] = 0
+        patch = np.array([[0.07, 1, 2, 0.5, 0.5]], dtype="<f4")
+        aligned = align_wall_patches(patch, shell)
+        assert aligned[0, 0] == 0 and np.array_equal(aligned[0, 3:], patch[0, 3:])
         assert any(b[8] == "Fire Alarm" for b in scene["boxes"])
         assert all(p.is_file() for p in (ply, html, obj, obj.with_suffix(".mtl")))
         assert "Reconstructed surfaces" in html.read_text()

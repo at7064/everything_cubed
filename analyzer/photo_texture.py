@@ -114,7 +114,7 @@ def crop_frame(path, aspect):
     return "data:image/jpeg;base64," + base64.b64encode(stream.getvalue()).decode("ascii")
 
 
-def photo_patches(vertices, vertex_start, uv, connected, uv_min, size, tri, spacing):
+def photo_patches(vertices, vertex_start, uv, connected, uv_min, size, tri, spacing, inside=None):
     """Cut a frame into continuous image patches; split them where depth has no mesh edge."""
     width, height = map(int, size)
     lookup = np.full((height, width), -1, np.int32)
@@ -140,6 +140,8 @@ def photo_patches(vertices, vertex_start, uv, connected, uv_min, size, tri, spac
             corners = [lookup[y0, x0], lookup[y0, x1], lookup[y1, x0], lookup[y1, x1]]
             if min(corners) < 0:
                 continue
+            if inside is not None and not np.all(inside[corners]):
+                continue
             continuity = (horizontal[y0:y1 + 1, x0:x1].sum() + vertical[y0:y1, x0:x1 + 1].sum())
             possible = (y1 - y0 + 1) * (x1 - x0) + (y1 - y0) * (x1 - x0 + 1)
             if continuity < 0.985 * possible:
@@ -153,7 +155,30 @@ def photo_patches(vertices, vertex_start, uv, connected, uv_min, size, tri, spac
     return np.asarray(records, dtype="<f4").reshape(-1, 5)
 
 
-def photo_scene(ply, frames, max_faces_per_frame=6000):
+def align_wall_patches(patches, shell):
+    """Put nearby frame cutouts on one measured interior wall surface."""
+    if shell is None or not len(patches):
+        return patches
+    origin = np.asarray(shell["origin"])
+    rotation = np.asarray(shell["rotation"])
+    local = (patches[:, :3].astype(np.float64) - origin) @ rotation.T
+    local[:, 1] -= shell["y_shift"]
+    local *= shell["scale"]
+    bounds = shell["bounds"]
+    sides = np.array([bounds["xmin"], bounds["xmax"], bounds["zmin"], bounds["zmax"]])
+    distance = np.abs(local[:, [0, 0, 2, 2]] - sides)
+    nearest = np.argmin(distance, axis=1)
+    select = np.flatnonzero((distance[np.arange(len(local)), nearest] < 0.12) &
+                            (local[:, 1] > 0.1) & (local[:, 1] < bounds["ymax"] - 0.1))
+    local[select, np.where(nearest[select] < 2, 0, 2)] = sides[nearest[select]]
+    aligned = patches.copy()
+    local /= shell["scale"]
+    local[:, 1] += shell["y_shift"]
+    aligned[:, :3] = (local @ rotation + origin).astype("<f4")
+    return aligned
+
+
+def photo_scene(ply, frames, max_faces_per_frame=6000, shell=None):
     """Return compact textured triangle batches, one original photo for each view."""
     vertices, faces = read_ply(ply)
     ranges = frame_face_ranges(faces)
@@ -170,31 +195,57 @@ def photo_scene(ply, frames, max_faces_per_frame=6000):
         vertex_stop = max(int(block[k].max()) for k in ("a", "b", "c")) + 1
         tri = np.stack([block[k] - vertex_start for k in ("a", "b", "c")], axis=1)
         uv, connected = recover_uv(tri, vertex_stop - vertex_start)
+        inside = None
+        if shell is not None:
+            source = vertices[vertex_start:vertex_stop]
+            xyz = np.stack([source[k] for k in ("x", "y", "z")], axis=1)
+            local = (xyz - np.asarray(shell["origin"])) @ np.asarray(shell["rotation"]).T
+            local[:, 1] -= shell["y_shift"]
+            local *= shell["scale"]
+            limits = shell["bounds"]
+            margin = 0.15
+            inside = ((local[:, 0] >= limits["xmin"] - margin) &
+                      (local[:, 0] <= limits["xmax"] + margin) &
+                      (local[:, 2] >= limits["zmin"] - margin) &
+                      (local[:, 2] <= limits["zmax"] + margin) &
+                      (local[:, 1] >= limits["ymin"] - margin) &
+                      (local[:, 1] <= limits["ymax"] + margin))
+            # A long video may visit another room. Its frames cannot be clipped
+            # against this room's shell, or the entire visit would disappear.
+            if np.count_nonzero(inside & connected) < 0.15 * np.count_nonzero(connected):
+                inside = None
+        frame_shell = shell if inside is not None else None
         good_uv = uv[connected]
         uv_min = good_uv.min(axis=0)
         uv_max = good_uv.max(axis=0)
         size = (uv_max - uv_min + 1).astype(np.int32)
         spacing = max(2, int(np.sqrt(2 * int(size[0]) * int(size[1]) / max_faces_per_frame)))
-        main = photo_patches(vertices, vertex_start, uv, connected, uv_min, size, tri, spacing)
+        main = photo_patches(vertices, vertex_start, uv, connected, uv_min, size, tri, spacing, inside)
         if not len(main):
             step = max(1, int(np.ceil(len(tri) / max_faces_per_frame)))
             sample = tri[::step]
             sample = sample[connected[sample].all(axis=1)]
+            if inside is not None:
+                sample = sample[inside[sample].all(axis=1)]
             ids = sample.ravel()
             source = vertices[vertex_start + ids]
             main = np.stack([source["x"], source["y"], source["z"],
                              (uv[ids, 0] - uv_min[0] + 0.5) / size[0],
                              (uv[ids, 1] - uv_min[1] + 0.5) / size[1]], axis=1).astype("<f4")
         if not len(main):
-            raise ValueError(f"no textured geometry could be recovered for {path}")
+            print(f"[photo] frame {index + 1}: no geometry inside the room shell", flush=True)
+            continue
+        main = align_wall_patches(main, frame_shell)
         packed = main.view(record).reshape(-1)
         for axis, key in enumerate(("x", "y", "z")):
             bounds_lo[axis] = min(bounds_lo[axis], float(packed[key].min()))
             bounds_hi[axis] = max(bounds_hi[axis], float(packed[key].max()))
-        fallback = photo_patches(vertices, vertex_start, uv, connected, uv_min, size, tri, 28)
+        fallback = photo_patches(vertices, vertex_start, uv, connected, uv_min, size, tri, 28, inside)
         if not len(fallback):
             triangles = main.reshape(-1, 3, 5)
             fallback = triangles[:: max(1, len(triangles) // 1000)].reshape(-1, 5)
+        else:
+            fallback = align_wall_patches(fallback, frame_shell)
         batches.append({"name": Path(path).name, "grid": size.tolist(), "faces": len(packed) // 3,
                         "image": crop_frame(path, float(size[0] / size[1])),
                         "coarse_b64": base64.b64encode(fallback.tobytes()).decode("ascii"),
@@ -280,8 +331,8 @@ frameSlider.addEventListener('input',draw);combine.addEventListener('change',dra
 </script></body></html>'''
 
 
-def write_photo_viewer(ply, frames, out, max_faces_per_frame=6000):
-    scene = photo_scene(ply, frames, max_faces_per_frame=max_faces_per_frame)
+def write_photo_viewer(ply, frames, out, max_faces_per_frame=6000, shell=None):
+    scene = photo_scene(ply, frames, max_faces_per_frame=max_faces_per_frame, shell=shell)
     encoded = json.dumps(scene, separators=(",", ":")).replace("<", "\\u003c")
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
