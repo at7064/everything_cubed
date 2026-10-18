@@ -13,6 +13,7 @@ final class AppModel: ObservableObject, FrameSink {
         case scanning
         case finishing   // waiting for RoomPlan's room model and the upload
         case done        // the mod is analysing and building; its messages show in the log
+        case spectating  // streaming live; the game world follows the room
     }
 
     struct LogLine: Identifiable {
@@ -35,6 +36,8 @@ final class AppModel: ObservableObject, FrameSink {
     private var pump: FramePump?
     /// Keyframes are skipped while more than this is waiting to go out.
     private let maxQueuedBytes = 12 << 20
+    /// Spectate frames are skipped sooner: an old frame is worth less than staying live.
+    private let maxQueuedLiveBytes = 1 << 20
 
     init() {
         client.onState = { [weak self] in self?.connectionChanged($0) }
@@ -81,7 +84,20 @@ final class AppModel: ObservableObject, FrameSink {
         case "status":
             append(msg.string("level") ?? "info", msg.string("text") ?? "")
         case "ready":
-            append("info", "Saving as \(msg.string("folder") ?? "a new scan")")
+            if msg.string("mode") == "spectate" {
+                append("info", "Spectating. Hold still for the initial scan, then the world follows the room.")
+            } else {
+                append("info", "Saving as \(msg.string("folder") ?? "a new scan")")
+            }
+        case "stopped":
+            // The game ended spectating (/everything_cubed spectate stop, the player left, ...).
+            append("info", msg.string("text") ?? "Spectating ended.")
+            if phase == .spectating {
+                pump?.stop()
+                source?.finish { _ in }
+                stopCapture()
+                phase = .paired
+            }
         default:
             break
         }
@@ -98,16 +114,27 @@ final class AppModel: ObservableObject, FrameSink {
     // MARK: scan
 
     func startScan(name: String) {
+        print("[app] start scan '\(name)'")
+        withCamera { self.beginCapture(name: name) }
+    }
+
+    /// Streams the camera live; the mod mirrors the room into the world around the player.
+    func startSpectate() {
+        print("[app] start spectate")
+        withCamera { self.beginSpectate() }
+    }
+
+    private func withCamera(_ then: @escaping @MainActor () -> Void) {
         scanError = nil
         let status = AVCaptureDevice.authorizationStatus(for: .video)
-        print("[app] start scan '\(name)', camera permission \(status.rawValue)")
+        print("[app] camera permission \(status.rawValue)")
         switch status {
         case .authorized:
-            beginCapture(name: name)
+            then()
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { granted in
                 Task { @MainActor in
-                    if granted { self.beginCapture(name: name) } else { self.cameraDenied() }
+                    if granted { then() } else { self.cameraDenied() }
                 }
             }
         default:
@@ -134,11 +161,36 @@ final class AppModel: ObservableObject, FrameSink {
         phase = .scanning
     }
 
+    private func beginSpectate() {
+        let src = LiveSource()
+        source = src
+        framesSent = 0
+        framesWithDepth = 0
+        log.removeAll()
+        client.send(WireMessage("begin", ["mode": "spectate", "source": src.name, "app": Self.appVersion]))
+        let p = FramePump(session: src.arSession, sink: self, selector: IntervalSelector(), options: .live)
+        p.onHint = { [weak self] text in if self?.hint != text { self?.hint = text } }
+        pump = p
+        captureRunning = false
+        phase = .spectating
+    }
+
+    /// Ends spectating; the game gives the player their game mode back and keeps the mirrored blocks.
+    func stopSpectate() {
+        guard phase == .spectating else { return }
+        print("[app] spectate stopped")
+        pump?.stop()
+        source?.finish { _ in }
+        client.send(WireMessage("end", ["build": false]))
+        stopCapture()
+        phase = .paired
+    }
+
     private var captureRunning = false
 
     /// Called once the source's camera view is on screen: RoomPlan only starts reliably inside a window.
     func captureViewAppeared() {
-        guard phase == .scanning, !captureRunning, let src = source else { return }
+        guard phase == .scanning || phase == .spectating, !captureRunning, let src = source else { return }
         captureRunning = true
         src.start()
         pump?.start()
@@ -198,7 +250,7 @@ final class AppModel: ObservableObject, FrameSink {
     // MARK: FrameSink
 
     var canAcceptFrame: Bool {
-        client.queuedBytes < maxQueuedBytes
+        client.queuedBytes < (phase == .spectating ? maxQueuedLiveBytes : maxQueuedBytes)
     }
 
     func send(frame: WireMessage, hasDepth: Bool) {

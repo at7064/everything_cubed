@@ -33,6 +33,14 @@ struct ScanSetupView: View {
                 Section {
                     Button("Start scan") { model.startScan(name: name) }
                         .disabled(!supported || name.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                Section {
+                    Button("Spectate") { model.startSpectate() }
+                        .disabled(!LiveSource.isSupported)
+                } footer: {
+                    Text("Streams the camera live: the world around you in game follows the room about 5 times a second, and people show up as villagers. You are put in spectator mode until you stop. Hold still for the first few seconds while the room is scanned.")
+                }
+                Section {
                     Button("Disconnect", role: .destructive) { model.disconnect() }
                 }
             }

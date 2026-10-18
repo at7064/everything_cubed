@@ -23,6 +23,8 @@ struct ContentView: View {
             ScanSetupView()
         case .scanning, .finishing, .done:
             ScanView()
+        case .spectating:
+            SpectateView()
         }
     }
 }
