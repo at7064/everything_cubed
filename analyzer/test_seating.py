@@ -89,3 +89,17 @@ taken2[2:5, 0:2] = 1; taken2[1, 0] = 1; taken2[3, 2] = 1   # something already s
 ch2 = place_object("chair", chair_cl, dorm, taken2, tables_cl, lambda x, z: ("north", z))
 assert (ch2["x"], ch2["z"]) in ((3, 3), (2, 2)), ch2
 print(f"lone chair in front of the table: (3, 2); spot taken: ({ch2['x']}, {ch2['z']}): OK")
+
+# A chair pulled up to a table that stands against the north wall (newest scan): the chair's centre is 0.58 m from
+# the wall, the table's 0.51 m from it, so the chair faces the table (back to the south), not the wall.
+by_wall = np.full((dorm.W, dorm.D), -1)
+by_wall[2:5, 0:2] = 1
+tucked = {**cl([4.59 / 2.5, 0.4, 1.41 / 2.5], [0.6, 0.8, 0.6]), "rgb": np.array([110.0, 80, 50]), "n": 1000}
+near_table = [cl([4.48 / 2.5, 0.4, 0.9 / 2.5], [1.3, 0.8, 0.6])]
+ch3 = place_object("chair", tucked, dorm, by_wall, near_table, lambda x, z: ("north", z))
+assert ch3["facing"] == "south", ch3
+# A sofa against the wall with its coffee table in front keeps its back to the wall.
+sofa = place_object("sofa", {**cl([1.0, 0.4, 0.35], [1.6, 0.8, 0.7]), "rgb": np.array([90.0, 90, 90]), "n": 1000},
+                    dorm, np.full((dorm.W, dorm.D), -1), [cl([1.0, 0.2, 1.3], [0.9, 0.4, 0.5])], lambda x, z: ("north", z))
+assert sofa["facing"] == "north", sofa
+print("seat by a table at the wall faces the table; sofa at the wall keeps its back to it: OK")

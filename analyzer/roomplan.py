@@ -1115,13 +1115,13 @@ def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
         obj["facing"], h = head, 1
         obj["color"] = DYE_PALETTE.nearest(cl["rgb"])
     elif cat in ("chair", "sofa", "student_desk", "chair_stack"):
-        if dist < 0.8:
-            obj["facing"] = side  # back against the wall
-        elif tables:
-            t = min(tables, key=lambda t: np.hypot(*(t["c"] - c)[[0, 2]]))
+        # (A seat's facing is the way its back points.) Back away from the nearest table when it is closer than the
+        # wall: a chair pulled up to a table by the wall has the table, not the wall, behind its front.
+        t = min(tables, key=lambda t: np.hypot(*(t["c"] - c)[[0, 2]])) if tables else None
+        if t is not None and (dist >= 0.8 or np.hypot(*(t["c"] - c)[[0, 2]]) < dist):
             obj["facing"] = axis_dir(c[0] - t["c"][0], c[2] - t["c"][2])  # back away from the table
         else:
-            obj["facing"] = side
+            obj["facing"] = side  # back against the wall
         obj["material"] = WOOD_PALETTE.nearest(cl["rgb"])
         if cat == "sofa":
             obj["color"] = DYE_PALETTE.nearest(cl["rgb"])  # upholstery
