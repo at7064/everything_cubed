@@ -1,16 +1,15 @@
-"""Sanity test for spectate_analyzer.py: a synthetic live stream through its stdin / stdout, as the mod runs it, over
-a room already scanned and built.
+"""Sanity test for spectate_analyzer.py: RoomPlan's live room model (and camera frames) through its stdin / stdout,
+as the mod runs it, over a room already scanned and built.
 
 Room: 6.0 m (x) by 5.0 m (z), 2.6 m high, in ARKit's world frame turned 20 degrees about gravity, built at 1.25
-blocks/m (8 x 6 x 3 blocks). The build has a 1 m crate and a low 0.4 m box (half its block) in it. The phone stands
-in the middle and keeps turning (30 degrees a frame, slower to see a new box), 5 frames a second, in the
-scan's coordinates (it has relocalised).
-1. Seeing the room as built changes nothing; the low box stays though most of its block is empty.
-2. A box seen in one frame only, and the crate gone but seen only at low confidence, change nothing.
-3. The crate carried away: its blocks go once the empty floor is clearly seen; nothing else goes.
-4. A new box put down appears; the floor, walls and ceiling never become blocks.
-5. A person (masked by the phone) walks in: reported as a person, never built.
-6. Frames while the phone is still relocalising are no evidence.
+blocks/m (8 x 6 x 3 blocks). The scan's RoomPlan model has a chair and a table, built as a chair and a table.
+Live RoomPlan updates (with their own object ids, as a new capture run gives) then:
+1. show the room as scanned, and with a few cm of jitter: nothing changes;
+2. show the chair 1.2 m away for 3 updates, then back: nothing changes;
+3. show the chair 1.2 m away for good: it moves once, as a whole chair (same material), and nothing else does;
+4. show a new sofa at low confidence: nothing; at medium confidence: one sofa is added;
+5. leave the table out: it stays.
+A camera frame with a person (masked by the phone) reports a person; no blocks are ever sent.
 Run: python test_spectate.py
 """
 import io
@@ -26,159 +25,151 @@ from PIL import Image
 
 from perception import ARKIT_TO_CV
 
-W, D, H = 6.0, 5.0, 2.6
-S = 1.25
-IW, IH, DW, DH = 1920, 1440, 256, 192
-FX = 1450.0
+W, D, H, S = 6.0, 5.0, 2.6, 1.25
 TURN = np.radians(20)
-CRATE = (np.array([3.8, 0.0, 3.4]), np.array([4.8, 1.0, 4.2]))
-LOW = (np.array([1.55, 0.0, 1.75]), np.array([2.2, 0.4, 2.45]))      # inside block (2, 1, 2), 0.4 of 0.87 m high
-GHOST = (np.array([1.0, 0.0, 0.8]), np.array([1.8, 1.2, 1.5]))
-NEW = (np.array([0.9, 0.0, 3.5]), np.array([1.6, 0.7, 4.1]))
-PERSON = (np.array([3.2, 0.0, 1.0]), np.array([3.6, 1.75, 1.3]))
-CAM = np.array([3.0, 1.4, 2.5])
+IW, IH, DW, DH, FX = 1920, 1440, 256, 192, 1450.0
 
 
 def rot_y(a):
     return np.array([[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]])
 
 
-def rot_x(a):
-    return np.array([[1, 0, 0], [0, np.cos(a), -np.sin(a)], [0, np.sin(a), np.cos(a)]])
-
-
-def blocks_of(box):
-    """The plan blocks a box fills, as the build would have placed it."""
-    (x0, y0, z0), (x1, y1, z1) = box
-    xs = range(int(x0 / W * 8), int(np.ceil(x1 / W * 8)))
-    zs = range(int(z0 / D * 6), int(np.ceil(z1 / D * 6)))
-    ys = range(1, int(np.ceil(y1 / H * 3)) + 1)
-    return {(x, y, z) for x in xs for y in ys for z in zs}
-
-
-def slab(o, dirs, lo, hi):
-    with np.errstate(divide="ignore", invalid="ignore"):
-        t1, t2 = (lo - o) / dirs, (hi - o) / dirs
-    tn = np.nanmax(np.minimum(t1, t2), -1)
-    tf = np.nanmin(np.maximum(t1, t2), -1)
-    return np.where((tn <= tf) & (tn > 0), tn, np.inf)
-
-
-def render(c2w_cv, K, boxes, person):
-    u, v = np.meshgrid(np.arange(DW) + 0.5, np.arange(DH) + 0.5)
-    rays = np.stack([(u - K[0, 2]) / K[0, 0], (v - K[1, 2]) / K[1, 1], np.ones_like(u)], -1)
-    dirs = rays @ c2w_cv[:3, :3].T
-    o = c2w_cv[:3, 3]
-    with np.errstate(divide="ignore", invalid="ignore"):
-        t = np.where(dirs > 0, (np.array([W, H, D]) - o) / dirs, (0 - o) / dirs)
-    t[~np.isfinite(t)] = np.inf
-    depth = t.min(-1)
-    for lo, hi in boxes:
-        depth = np.minimum(depth, slab(o, dirs, lo, hi))
-    mask = np.zeros(depth.shape, bool)
-    if person:
-        tp = slab(o, dirs, *PERSON)
-        mask = tp < depth
-        depth = np.minimum(depth, tp)
-    return depth, mask
-
-
 WORLD = np.eye(4); WORLD[:3, :3] = rot_y(TURN)
+ARKIT = {"origin": [0.0, 0.0, 0.0], "R": [(rot_y(TURN) @ [1.0, 0, 0]).tolist(), [0.0, 1.0, 0.0],
+                                          (rot_y(TURN) @ [0, 0, 1.0]).tolist()],
+         "y_shift": 0.0, "f": 1.0, "xmin": 0.0, "xmax": W, "zmin": 0.0, "zmax": D, "hm": H,
+         "W": round(W * S), "D": round(D * S), "H": round(H * S)}
 
 
-def frame_message(i, boxes, conf=2, person=False, tracking="normal", turn=np.pi / 6):
-    R = rot_y(i * turn) @ rot_x(np.radians(-35 if i % 2 else -15))
-    c2w = np.eye(4); c2w[:3, :3] = R; c2w[:3, 3] = CAM
+def rp(ident, cat, centre, dims, conf="high", yaw=0.0, **attrs):
+    """A RoomPlan object at a room-local centre (x, z), standing on the floor, as CapturedRoom encodes it."""
+    T = np.eye(4)
+    T[:3, :3] = rot_y(TURN) @ rot_y(np.radians(yaw))
+    T[:3, 3] = rot_y(TURN) @ [centre[0], dims[1] / 2, centre[1]]
+    return {"identifier": ident, "category": {cat: {}}, "transform": T.T.ravel().tolist(), "dimensions": list(dims),
+            "confidence": {conf: {}}, "attributes": attrs}
+
+
+CHAIR, TABLE, SOFA = (0.5, 0.86, 0.55), (1.4, 0.75, 0.8), (1.8, 0.85, 0.9)
+
+
+def message(type_, header=None, blobs=()):
+    h = dict(header or {}, type=type_, blobs=[{"name": n, "format": f, "length": len(b)} for n, f, b in blobs])
+    hb = json.dumps(h).encode()
+    payload = b"".join(b for _, _, b in blobs)
+    return struct.pack(">I", len(hb)) + hb + struct.pack(">I", len(payload)) + payload
+
+
+def room_message(objects):
+    return message("room", blobs=[("room", "roomplan.json", json.dumps({"objects": objects}).encode())])
+
+
+def person_frame(i):
+    """A camera frame looking at a person (masked) standing at room (3.4, 1.15)."""
     K = np.array([[FX, 0, IW / 2], [0, FX, IH / 2], [0, 0, 1]])
     Kd = K.copy(); Kd[:2] *= DW / IW
-    depth, mask = render(c2w @ ARKIT_TO_CV, Kd, boxes, person)
-    img = io.BytesIO()
-    Image.fromarray(np.full((IH // 8, IW // 8, 3), 180, np.uint8)).resize((IW, IH)).save(img, "JPEG")
-    blobs = [("image", "jpeg", img.getvalue()),
-             ("depth", "f16", np.minimum(depth, 60).astype("<f2").tobytes()),
-             ("confidence", "u8", np.full((DH, DW), conf, np.uint8).tobytes()),
-             ("person", "u8", mask.astype(np.uint8).tobytes())]
-    header = {"type": "frame", "seq": i, "time": i * 0.2, "tracking": tracking, "imageSize": [IW, IH],
-              "depthSize": [DW, DH], "K": K.ravel().tolist(), "cam2world": (WORLD @ c2w).ravel().tolist(),
-              "blobs": [{"name": n, "format": f, "length": len(b)} for n, f, b in blobs]}
-    h = json.dumps(header).encode()
-    payload = b"".join(b for _, _, b in blobs)
-    return struct.pack(">I", len(h)) + h + struct.pack(">I", len(payload)) + payload
+    c2w = np.eye(4); c2w[:3, 3] = [3.4, 1.4, 3.5]              # looking down -z (ARKit), at the person
+    u, v = np.meshgrid(np.arange(DW) + 0.5, np.arange(DH) + 0.5)
+    cv = c2w @ ARKIT_TO_CV
+    dirs = np.stack([(u - Kd[0, 2]) / Kd[0, 0], (v - Kd[1, 2]) / Kd[1, 1], np.ones_like(u)], -1) @ cv[:3, :3].T
+    depth = np.full((DH, DW), 2.3)                              # the person's front at z = 1.2
+    hit = cv[:3, 3] + depth[..., None] * dirs
+    mask = (np.abs(hit[..., 0] - 3.4) < 0.25) & (hit[..., 1] > 0) & (hit[..., 1] < 1.75)
+    depth = np.where(mask, depth, 4.0)
+    img = io.BytesIO(); Image.fromarray(np.full((IH // 8, IW // 8, 3), 180, np.uint8)).resize((IW, IH)).save(img, "JPEG")
+    header = {"seq": i, "time": i * 0.2, "tracking": "normal", "imageSize": [IW, IH], "depthSize": [DW, DH],
+              "K": K.ravel().tolist(), "cam2world": (WORLD @ c2w).ravel().tolist()}
+    return message("frame", header, [("image", "jpeg", img.getvalue()),
+                                     ("depth", "f16", depth.astype("<f2").tobytes()),
+                                     ("confidence", "u8", np.full((DH, DW), 2, np.uint8).tobytes()),
+                                     ("person", "u8", mask.astype(np.uint8).tobytes())])
 
 
-class Worker:
-    def __init__(self, built):
-        tmp = Path(tempfile.mkdtemp())
-        ex, ez = rot_y(TURN) @ [1.0, 0, 0], rot_y(TURN) @ [0, 0, 1.0]
-        plan = {"arkit": {"origin": [0.0, 0.0, 0.0], "R": [ex.tolist(), [0.0, 1.0, 0.0], ez.tolist()], "y_shift": 0.0,
-                          "f": 1.0, "xmin": 0.0, "xmax": W, "zmin": 0.0, "zmax": D, "hm": H,
-                          "W": round(W * S), "D": round(D * S), "H": round(H * S)}}
-        (tmp / "plan.json").write_text(json.dumps(plan))
-        (tmp / "baseline.json").write_text(json.dumps(sorted(built)))
-        script = Path(__file__).resolve().parent / "spectate_analyzer.py"
-        self.p = subprocess.Popen([sys.executable, str(script), "--plan", str(tmp / "plan.json"),
-                                   "--baseline", str(tmp / "baseline.json")], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-        self.solid = set(built)
-        self.people, self.i, self.ms = [], 0, []
+# The scan and its build: the worker's own placement rules give the built objects (as build placed them).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import spectate_analyzer as sa  # noqa: E402
 
-    def send(self, boxes, **kw):
-        self.p.stdin.write(frame_message(self.i, boxes, **kw)); self.p.stdin.flush()
-        self.i += 1
-        while True:
-            out = json.loads(self.p.stdout.readline())
-            if out["type"] == "update":
-                break
-        assert "error" not in out, out
-        self.ms.append(out["ms"])
-        for x, y, z, b in out["changes"]:
-            (self.solid.discard if b == "minecraft:air" else self.solid.add)((x, y, z))
-        self.people = out["people"]
-        return out
+scan = {"objects": [rp("scan-chair", "chair", (1.5, 1.5), CHAIR), rp("scan-table", "table", (4.0, 3.0), TABLE)]}
+frame = sa.PlanFrame(ARKIT)
+builder = sa.Furniture({"objects": [], "scale": S}, frame, {"objects": []})
+built = []
+for o in scan["objects"]:
+    obj = builder._place(sa.rp_category(o), sa.Pose(frame, o))
+    obj["material"] = "spruce"
+    builder.objects.append(obj)
+    built.append(obj)
+tmp = Path(tempfile.mkdtemp())
+(tmp / "plan.json").write_text(json.dumps({"arkit": ARKIT, "scale": S, "objects": built}))
+(tmp / "room.json").write_text(json.dumps(scan))
+
+p = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parent / "spectate_analyzer.py"),
+                      "--plan", str(tmp / "plan.json")], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+moves, adds, people, ms = [], [], [], []
 
 
-crate, low = blocks_of(CRATE), blocks_of(LOW)
-assert low == {(2, 1, 2)}, low
-built = crate | low
-w = Worker(built)
+def send(data):
+    global people
+    p.stdin.write(data); p.stdin.flush()
+    while True:
+        out = json.loads(p.stdout.readline())
+        if out["type"] == "update":
+            break
+    assert "error" not in out, out
+    assert set(out) <= {"type", "moves", "adds", "people", "ms"}, out   # furniture only, never single blocks
+    moves.extend(out["moves"]); adds.extend(out["adds"]); people = out["people"]; ms.append(out["ms"])
 
-for _ in range(15):
-    w.send([CRATE, LOW])
-assert w.solid == built, f"the room as built changed: {w.solid ^ built}"
-print(f"as built: {len(built)} block(s) inside, unchanged; the low box stays")
 
-w.send([CRATE, LOW, GHOST])
+def live(chair=(1.5, 1.5), table=True, sofa=None, jitter=0.0):
+    rng = np.random.default_rng(len(ms))
+    j = lambda c: (c[0] + rng.uniform(-jitter, jitter), c[1] + rng.uniform(-jitter, jitter))
+    objs = [rp("live-chair", "chair", j(chair), CHAIR)]
+    if table:
+        objs.append(rp("live-table", "table", j((4.0, 3.0)), TABLE))
+    if sofa:
+        objs.append(rp("live-sofa", "sofa", (1.5, 4.0), SOFA, conf=sofa))
+    send(room_message(objs))
+
+
+for _ in range(5):
+    live()
+for _ in range(10):
+    live(jitter=0.05)
+assert not moves and not adds, (moves, adds)
+print("room as scanned, and with 5 cm jitter: nothing changes")
+
 for _ in range(3):
-    w.send([CRATE, LOW])
-for _ in range(15):
-    w.send([LOW], conf=1)
-assert w.solid == built, f"a one-frame box or low-confidence depth changed the world: {w.solid ^ built}"
-print("one-frame box and low-confidence views: no change")
+    live(chair=(1.5, 2.7))
+for _ in range(5):
+    live()
+assert not moves, moves
+print("chair away for 3 updates, then back: nothing changes")
 
-for _ in range(15):
-    w.send([LOW], tracking="limited")
-assert w.solid == built, "frames while relocalising changed the world"
-print("relocalising frames: no change")
+for _ in range(8):
+    live(chair=(1.5, 2.7))
+assert len(moves) == 1, moves
+mv = moves[0]
+assert mv["from"] == built[0] and mv["to"]["type"] == "chair" and mv["to"]["material"] == "spruce", mv
+assert mv["to"]["z"] > mv["from"]["z"], mv
+print(f"chair moved for good: one move, ({mv['from']['x']}, {mv['from']['z']}) -> ({mv['to']['x']}, {mv['to']['z']})")
 
-for _ in range(48):   # the crate is in view 2-3 frames per turn; 5 clear views in a row are needed
-    w.send([LOW])
-assert w.solid == low, f"after the crate went: {w.solid}"
-print(f"crate removed: {len(crate)} block(s) cleared, nothing else")
+for _ in range(8):
+    live(chair=(1.5, 2.7), sofa="low")
+assert not adds, adds
+for _ in range(8):
+    live(chair=(1.5, 2.7), sofa="medium")
+assert len(adds) == 1 and adds[0]["type"] == "sofa", adds
+print(f"new sofa: nothing at low confidence, added once at medium ({adds[0]['x']}, {adds[0]['z']})")
 
-for _ in range(48):   # turning slowly, as someone looking around does: a new thing is in view for ~9 frames
-    w.send([LOW, NEW], turn=np.pi / 24)
-added = w.solid - low
-assert added and all(1 <= y <= 2 for _, y, _ in added) and added <= blocks_of(NEW) | {(x + dx, y, z + dz) for x, y, z in blocks_of(NEW) for dx in (-1, 0, 1) for dz in (-1, 0, 1)}, added
-print(f"new box: {len(added)} block(s) added where it stands, no floor, wall or ceiling blocks")
+for _ in range(10):
+    live(chair=(1.5, 2.7), table=False, sofa="medium")
+assert len(moves) == 1 and len(adds) == 1, (moves, adds)
+print("table left out of RoomPlan's updates: it stays")
 
-before = set(w.solid)
-for _ in range(12):
-    w.send([LOW, NEW], person=True)
-assert w.people, "no person reported"
-assert w.solid == before, f"the person was built: {w.solid ^ before}"
-p = w.people[0]
-print(f"person at block ({p['x']:.1f}, {p['z']:.1f}), {len(w.people)} reported")
-w.p.stdin.close()
-w.p.wait(timeout=10)
-print(f"median {np.median(w.ms):.0f} ms per frame")
-assert np.median(w.ms) < 200, "too slow for 5 updates a second"
+for i in range(4):
+    send(person_frame(i))
+assert people and abs(people[0]["x"] - 3.4 / W * 8) < 1 and abs(people[0]["z"] - 1.15 / D * 6) < 1, people
+print(f"person at block ({people[0]['x']:.1f}, {people[0]['z']:.1f})")
+p.stdin.close()
+p.wait(timeout=10)
+print(f"median {np.median(ms):.0f} ms per message")
 print("OK")

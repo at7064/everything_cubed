@@ -65,6 +65,10 @@ public class HouseBuilder {
 	private int plantIndex;
 
 	public HouseBuilder(ServerLevel level, BlockPos origin, JsonObject plan) {
+		this(level, origin, plan, new UndoLog(level));
+	}
+
+	private HouseBuilder(ServerLevel level, BlockPos origin, JsonObject plan, UndoLog undo) {
 		this.level = level;
 		this.origin = origin;
 		this.plan = plan;
@@ -72,7 +76,7 @@ public class HouseBuilder {
 		this.W = size.get("x").getAsInt();
 		this.D = size.get("z").getAsInt();
 		this.H = size.get("y").getAsInt();
-		this.undo = new UndoLog(level);
+		this.undo = undo;
 		this.wallMain = plan.get("wall_main").getAsString();
 		JsonObject roof = plan.getAsJsonObject("roof");
 		this.wood = roof.get("wood").getAsString();
@@ -88,6 +92,35 @@ public class HouseBuilder {
 		finishShapes();
 		hangWallTextures();
 		return undo;
+	}
+
+	/**
+	 * Spectate: builds one piece of furniture ({@code o}, an entry like the plan's "objects") into the standing house
+	 * {@code plan} was built as, at {@code origin}. Its blocks and entities go into {@code undo}.
+	 */
+	public static void placeObject(ServerLevel level, BlockPos origin, JsonObject plan, JsonObject o, UndoLog undo) {
+		HouseBuilder b = new HouseBuilder(level, origin, plan, undo);
+		b.buildObject(o);
+		b.finishShapes();
+	}
+
+	/**
+	 * Spectate: takes a piece of furniture built from {@code o} out of the house at {@code origin}: its model (with
+	 * everything of it, hitboxes and lamp lights included) and its real blocks, up to its height. Changes go into
+	 * {@code undo}.
+	 */
+	public static void removeObject(ServerLevel level, BlockPos origin, JsonObject o, UndoLog undo) {
+		int x0 = o.get("x").getAsInt(), z0 = o.get("z").getAsInt(), w = o.get("w").getAsInt(), d = o.get("d").getAsInt();
+		int h = Math.max(1, o.has("h") ? o.get("h").getAsInt() : 1);
+		for (int x = x0; x < x0 + w; x++)
+			for (int z = z0; z < z0 + d; z++)
+				for (int y = 1; y <= h; y++) {
+					BlockPos p = origin.offset(x, y, z);
+					FurnitureInteractions.removeModelsIn(level, p);
+					if (level.getBlockState(p).isAir()) continue;
+					undo.remember(p);
+					level.setBlock(p, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);
+				}
 	}
 
 	// ------------------------------------------------------------------------------------- blocks

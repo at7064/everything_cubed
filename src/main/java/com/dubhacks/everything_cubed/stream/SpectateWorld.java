@@ -1,6 +1,6 @@
 package com.dubhacks.everything_cubed.stream;
 
-import com.dubhacks.everything_cubed.build.FurnitureInteractions;
+import com.dubhacks.everything_cubed.analyzer.AnalyzerRunner;
 import com.dubhacks.everything_cubed.build.HouseBuilder;
 import com.dubhacks.everything_cubed.build.UndoLog;
 import com.dubhacks.everything_cubed.command.EverythingCubedCommand;
@@ -10,16 +10,12 @@ import com.google.gson.JsonObject;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.npc.villager.Villager;
 import net.minecraft.world.level.GameType;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
+import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -28,17 +24,17 @@ import java.util.Set;
 
 /**
  * The game side of one spectate session, on a room that was scanned and built (the build is the starting state),
- * used on the server thread only. Puts the player into spectator mode (so nothing they do can disturb the mirrored
- * blocks), applies the worker's changes inside the house a few thousand per tick, and shows the people the phone
- * sees as villagers. {@link #finish()} gives the player their game mode and place back; the changes stay and
- * {@code /everything_cubed undo} reverts them.
+ * used on the server thread only. Puts the player into spectator mode (so nothing they do can disturb the house),
+ * moves and adds whole pieces of furniture as the worker reports them from RoomPlan (never single blocks), and shows
+ * the people the phone sees as villagers. {@link #finish()} gives the player their game mode and place back; the
+ * changes stay and {@code /everything_cubed undo} reverts them.
  *
- * <p>The worker's coordinates are the plan's: interior blocks x in [0, W), z in [0, D), y in [1, H], from the
- * build's origin.
+ * <p>The worker's coordinates are the plan's: objects are plan "objects" entries, people stand at plan block
+ * coordinates from the build's origin.
  */
 final class SpectateWorld {
 	static final String TAG = "everything_cubed_spectate";
-	private static final int BLOCKS_PER_TICK = 4096;
+	private static final int OBJECTS_PER_TICK = 8;
 	private static final double MIN_TURN = 0.05;
 
 	private final ServerLevel level;
@@ -48,15 +44,18 @@ final class SpectateWorld {
 	private final Vec3 returnPos;
 	private final float returnYaw, returnPitch;
 	private final UndoLog undo;
+	/** The plan the house was built from (HouseBuilder needs its wall and roof materials). */
+	private final JsonObject plan;
 	private final ArrayDeque<Change> pending = new ArrayDeque<>();
 	private final Map<Integer, Villager> people = new HashMap<>();
-	private final Map<String, BlockState> states = new HashMap<>();
 	private int placed;
 
-	private record Change(BlockPos pos, String block) {
+	/** A piece of furniture to take away ({@code from}, may be null) and to build ({@code to}, may be null). */
+	private record Change(JsonObject from, JsonObject to) {
 	}
 
-	SpectateWorld(ServerPlayer player, EverythingCubedCommand.Built build) {
+	SpectateWorld(ServerPlayer player, EverythingCubedCommand.Built build) throws IOException {
+		this.plan = AnalyzerRunner.readPlan(build.plan());
 		this.player = player;
 		this.build = build;
 		this.level = build.level();
@@ -80,60 +79,26 @@ final class SpectateWorld {
 		return placed;
 	}
 
-	/**
-	 * The blocks inside the house that hold something now, [[x, y, z], ...] in plan coordinates: solid blocks and
-	 * blocks with a furniture model in them (a bin or a monitor has no real block). The worker starts from this.
-	 */
-	JsonArray baseline() {
-		Set<BlockPos> solid = new HashSet<>();
-		BlockPos o = build.origin();
-		for (int x = 0; x < build.w(); x++)
-			for (int y = 1; y <= build.h(); y++)
-				for (int z = 0; z < build.d(); z++) {
-					BlockState s = level.getBlockState(o.offset(x, y, z));
-					if (!s.isAir() && !s.is(Blocks.LIGHT)) solid.add(new BlockPos(x, y, z));
-				}
-		AABB inside = new AABB(Vec3.atLowerCornerOf(o.offset(0, 1, 0)), Vec3.atLowerCornerOf(o.offset(build.w(), build.h() + 1, build.d())));
-		for (Display e : level.getEntitiesOfClass(Display.class, inside)) {
-			BlockPos p = e.blockPosition().subtract(o);
-			if (p.getX() >= 0 && p.getX() < build.w() && p.getY() >= 1 && p.getY() <= build.h() && p.getZ() >= 0 && p.getZ() < build.d())
-				solid.add(p);
-		}
-		JsonArray out = new JsonArray();
-		for (BlockPos p : solid) {
-			JsonArray c = new JsonArray();
-			c.add(p.getX());
-			c.add(p.getY());
-			c.add(p.getZ());
-			out.add(c);
-		}
-		return out;
-	}
-
-	/** Queues one worker update: {@code changes} [[x, y, z, block id], ...] and {@code people} [{id, x, y, z}]. */
+	/** Queues one worker update: {@code moves} [{from, to}], {@code adds} [object] and {@code people} [{id, x, y, z}]. */
 	void update(JsonObject msg) {
-		JsonArray changes = msg.getAsJsonArray("changes");
-		if (changes != null)
-			for (JsonElement e : changes) {
-				JsonArray c = e.getAsJsonArray();
-				pending.add(new Change(build.origin().offset(c.get(0).getAsInt(), c.get(1).getAsInt(), c.get(2).getAsInt()),
-						c.get(3).getAsString()));
-			}
+		JsonArray moves = msg.getAsJsonArray("moves");
+		if (moves != null)
+			for (JsonElement e : moves)
+				pending.add(new Change(e.getAsJsonObject().getAsJsonObject("from"), e.getAsJsonObject().getAsJsonObject("to")));
+		JsonArray adds = msg.getAsJsonArray("adds");
+		if (adds != null)
+			for (JsonElement e : adds) pending.add(new Change(null, e.getAsJsonObject()));
 		JsonArray ppl = msg.getAsJsonArray("people");
 		if (ppl != null) people(ppl);
 	}
 
-	/** Places up to {@link #BLOCKS_PER_TICK} queued changes. Called every server tick. */
+	/** Moves or adds up to {@link #OBJECTS_PER_TICK} queued pieces of furniture. Called every server tick. */
 	void tick() {
-		for (int n = 0; n < BLOCKS_PER_TICK && !pending.isEmpty(); n++) {
+		for (int n = 0; n < OBJECTS_PER_TICK && !pending.isEmpty(); n++) {
 			Change c = pending.poll();
-			boolean air = c.block().equals("minecraft:air");
-			BlockState s = states.computeIfAbsent(c.block(), id -> air ? Blocks.AIR.defaultBlockState() : HouseBuilder.first(id));
-			// A piece of furniture that is gone (or that something new now stands in) goes as a whole.
-			FurnitureInteractions.removeModelsIn(level, c.pos());
-			if (level.getBlockState(c.pos()) == s) continue;
-			undo.remember(c.pos());
-			level.setBlock(c.pos(), s, Block.UPDATE_CLIENTS);
+			// A move takes the whole piece away and builds it again at its new place, as build would have.
+			if (c.from() != null) HouseBuilder.removeObject(level, build.origin(), c.from(), undo);
+			if (c.to() != null) HouseBuilder.placeObject(level, build.origin(), plan, c.to(), undo);
 			placed++;
 		}
 	}

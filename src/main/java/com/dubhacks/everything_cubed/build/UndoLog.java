@@ -25,7 +25,7 @@ public class UndoLog {
 		original.computeIfAbsent(pos.immutable(), level::getBlockState);
 	}
 
-	void rememberEntity(Entity e) {
+	public void rememberEntity(Entity e) {
 		entities.add(e);
 	}
 

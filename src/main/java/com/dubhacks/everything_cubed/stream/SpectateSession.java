@@ -17,7 +17,6 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
@@ -25,12 +24,13 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Mode {@code spectate}: starts from a room the player has scanned and built ({@code folder} in {@code begin}, their
- * last build). The phone, relocalised to that scan, streams LiDAR frames continuously (about 5 a second) and the
- * inside of the house follows the real room live. Frames go to {@code spectate_analyzer.py}, a worker process that runs the
- * LiDAR build's pipeline per frame and answers each with the block changes it is confident about and where people
- * are. Only the newest frame waits while the worker is busy, so the world never falls behind the phone.
- * Ends with {@code end} from the phone, a dropped connection or {@code /everything_cubed spectate stop}.
+ * Mode {@code spectate}: starts from a room the player has scanned with LiDAR and built ({@code folder} in
+ * {@code begin}, their last build). The phone keeps the scan's RoomPlan session running and streams RoomPlan's live
+ * room model ({@code room}) and camera frames (about 5 a second each). They go to {@code spectate_analyzer.py}, a
+ * worker process that moves built furniture (or adds new pieces) only when RoomPlan clearly shows it, and finds
+ * people in the frames. Only the newest message of each kind waits while the worker is busy, so the game never
+ * falls behind the phone. Ends with {@code end} from the phone, a dropped connection or
+ * {@code /everything_cubed spectate stop}.
  */
 public final class SpectateSession implements StreamSession {
 	private static final Map<UUID, SpectateSession> ACTIVE = new ConcurrentHashMap<>();
@@ -40,8 +40,8 @@ public final class SpectateSession implements StreamSession {
 	private volatile Process worker;
 	private volatile DataOutputStream toWorker;
 	private final Object lock = new Object();
-	/** The newest frame not yet sent, while the worker works on the previous one. */
-	private StreamMessage waiting;
+	/** The newest RoomPlan update and camera frame not yet sent, while the worker works on the previous message. */
+	private StreamMessage waitingRoom, waitingFrame;
 	private boolean workerBusy;
 	private volatile boolean closed;
 	/** Set on the server thread once the player is in spectator mode. */
@@ -79,11 +79,16 @@ public final class SpectateSession implements StreamSession {
 			SpectateSession old = ACTIVE.put(player.getUUID(), this);
 			if (old != null) old.close("a new spectate session started", true);
 			if (closed) return;
-			SpectateWorld w = new SpectateWorld(player, built.get());
+			SpectateWorld w;
 			try {
-				Path baseline = built.get().plan().resolveSibling("spectate_baseline.json");
-				Files.writeString(baseline, w.baseline().toString());
-				startWorker(built.get().plan(), baseline);
+				w = new SpectateWorld(player, built.get());
+			} catch (IOException e) {
+				phone.status("error", "Could not read the scan's plan: " + e.getMessage());
+				close("the scan's plan could not be read", true);
+				return;
+			}
+			try {
+				startWorker(built.get().plan());
 			} catch (IOException e) {
 				EverythingCubed.LOGGER.warn("Could not start spectating", e);
 				phone.status("error", "Could not start the spectate analyzer: " + e.getMessage());
@@ -93,14 +98,14 @@ public final class SpectateSession implements StreamSession {
 			}
 			world = w;
 			player.sendSystemMessage(Component.literal("Spectating " + built.get().plan().getParent().getFileName()
-					+ ". Point the phone at the room; /everything_cubed spectate stop to exit.").withStyle(ChatFormatting.AQUA));
+					+ ". Furniture you move in the room moves here; /everything_cubed spectate stop to exit.").withStyle(ChatFormatting.AQUA));
 			phone.send(StreamMessage.of("ready").with("mode", "spectate"));
 		});
 		EverythingCubed.LOGGER.info("Spectate requested by {} for '{}'", phone.device(), folder);
 	}
 
-	private void startWorker(Path plan, Path baseline) throws IOException {
-		Process p = AnalyzerRunner.startSpectate(plan, baseline);
+	private void startWorker(Path plan) throws IOException {
+		Process p = AnalyzerRunner.startSpectate(plan);
 		toWorker = new DataOutputStream(new BufferedOutputStream(p.getOutputStream(), 1 << 16));
 		worker = p;
 		thread("everything_cubed-spectate-out", this::readUpdates);
@@ -117,10 +122,13 @@ public final class SpectateSession implements StreamSession {
 
 	@Override
 	public void onMessage(StreamMessage msg) throws IOException {
-		if (closed || worker == null || !msg.type().equals("frame")) return;
+		boolean room = msg.type().equals("room");
+		if (closed || worker == null || !(room || msg.type().equals("frame"))) return;
 		synchronized (lock) {
 			if (workerBusy) {
-				waiting = msg;   // an older waiting frame is dropped: only the newest matters
+				// An older waiting one of the same kind is dropped: only the newest matters.
+				if (room) waitingRoom = msg;
+				else waitingFrame = msg;
 				return;
 			}
 			workerBusy = true;
@@ -166,12 +174,13 @@ public final class SpectateSession implements StreamSession {
 		}
 	}
 
-	/** The worker answered: hand it the frame that waited, if any. */
+	/** The worker answered: hand it what waited, if anything (RoomPlan's furniture first, then people). */
 	private void next() {
 		StreamMessage msg;
 		synchronized (lock) {
-			msg = waiting;
-			waiting = null;
+			msg = waitingRoom != null ? waitingRoom : waitingFrame;
+			if (msg == waitingRoom) waitingRoom = null;
+			else waitingFrame = null;
 			workerBusy = msg != null;
 		}
 		if (msg != null) send(msg);
@@ -206,7 +215,7 @@ public final class SpectateSession implements StreamSession {
 		synchronized (lock) {
 			if (closed) return;
 			closed = true;
-			waiting = null;
+			waitingRoom = waitingFrame = null;
 		}
 		try {
 			if (toWorker != null) toWorker.close();
@@ -227,7 +236,7 @@ public final class SpectateSession implements StreamSession {
 		w.finish();
 		if (w.undo().size() > 0) EverythingCubedCommand.remember(w.undo());
 		w.player().sendSystemMessage(Component.literal("Spectating ended (" + why + "); " + w.placed()
-				+ " block changes. /everything_cubed undo reverts them.").withStyle(ChatFormatting.AQUA));
+				+ " piece(s) of furniture moved or added. /everything_cubed undo reverts them.").withStyle(ChatFormatting.AQUA));
 	}
 
 	private static void thread(String name, Runnable r) {
