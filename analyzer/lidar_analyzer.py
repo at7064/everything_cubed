@@ -602,8 +602,9 @@ def main(argv=None):
 
     cache = Path(__file__).resolve().parent
     ctx = {}
+    # LiDAR measures the room itself: built at its measured size (photo rooms are enlarged, see --enlarge).
     plan = build_plan(pts, rgb, cats, surface_palette(opts.mc_jar, cache), scale=opts.scale, metric=True, log=log,
-                      ctx=ctx, known_height=opts.known_height)
+                      ctx=ctx, known_height=opts.known_height, enlarge=1.0)
     plan["source"] = {"photos": [v_name for v_name in (f.get("image") for f in cap["frames"]) if v_name],
                       "metric": True, "lidar": True, "roomplan": room is not None}
     out = opts.out or opts.images / "plan.json"
