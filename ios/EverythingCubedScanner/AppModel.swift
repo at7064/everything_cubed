@@ -113,12 +113,13 @@ final class AppModel: ObservableObject, FrameSink {
 
     // MARK: scan
 
-    func startScan(name: String) {
+    /// `lidar`: Apple RoomPlan's guided LiDAR scan; otherwise photos with ARKit tracking (any iPhone).
+    func startScan(name: String, lidar: Bool) {
         print("[app] start scan '\(name)'")
-        withCamera { self.beginCapture(name: name) }
+        withCamera { self.beginCapture(name: name, lidar: lidar) }
     }
 
-    /// Streams the camera live; the mod mirrors the room into the world around the player.
+    /// Streams the camera live; the mod mirrors the room into the world around the player. Needs LiDAR.
     func startSpectate() {
         print("[app] start spectate")
         withCamera { self.beginSpectate() }
@@ -147,8 +148,8 @@ final class AppModel: ObservableObject, FrameSink {
         scanError = "Camera access is off. Turn it on in Settings → Privacy & Security → Camera → Cubed Scanner."
     }
 
-    private func beginCapture(name: String) {
-        let src: CaptureSource = RoomPlanSource()
+    private func beginCapture(name: String, lidar: Bool) {
+        let src: CaptureSource = lidar && RoomPlanSource.isSupported ? RoomPlanSource() : TrackedPhotoSource()
         source = src
         framesSent = 0
         framesWithDepth = 0

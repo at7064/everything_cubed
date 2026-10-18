@@ -552,6 +552,67 @@ final class FurnitureDesigns {
 		m.box(cx - 0.12, y + 0.12, 0.04, cx + 0.12, y + 0.18, m.d - 0.04, planks("oak"));
 	}
 
+	/** Backpack on the floor: a rounded bag in {@code fabric} with a front pocket, straps and a top handle. */
+	static void backpack(FurnitureModel m, BlockState fabric) {
+		m.box(0.3, 0, 0.38, 0.7, 0.55, 0.62, fabric);                       // body
+		m.box(0.33, 0.55, 0.4, 0.67, 0.6, 0.6, fabric);                     // rounded top
+		m.box(0.35, 0.08, 0.62, 0.65, 0.3, 0.68, fabric);                   // front pocket
+		m.box(0.47, 0.6, 0.47, 0.53, 0.66, 0.53, BLACK);                    // handle
+		m.box(0.34, 0.1, 0.34, 0.38, 0.5, 0.38, BLACK);                     // straps
+		m.box(0.62, 0.1, 0.34, 0.66, 0.5, 0.38, BLACK);
+	}
+
+	/** Globe: blue sphere (crossed boxes) with green land on a brass axis and base, standing at height {@code y0}. */
+	static void globe(FurnitureModel m, double y0) {
+		BlockState ocean = first("blue_concrete"), land = first("lime_concrete");
+		m.box(0.36, y0, 0.36, 0.64, y0 + 0.04, 0.64, GOLD);                // base
+		m.box(0.48, y0 + 0.04, 0.48, 0.52, y0 + 0.18, 0.52, GOLD);          // stem
+		double c = y0 + 0.42;
+		m.box(0.3, c - 0.18, 0.34, 0.7, c + 0.18, 0.66, ocean);
+		m.box(0.34, c - 0.22, 0.3, 0.66, c + 0.22, 0.7, ocean);
+		m.box(0.34, c - 0.05, 0.69, 0.5, c + 0.14, 0.71, land);             // continents
+		m.box(0.52, c - 0.16, 0.69, 0.62, c - 0.02, 0.71, land);
+		m.box(0.29, c + 0.02, 0.42, 0.31, c + 0.16, 0.58, land);
+		m.box(0.25, c - 0.02, 0.49, 0.29, c + 0.02, 0.51, GOLD);            // meridian ends
+		m.box(0.71, c - 0.02, 0.49, 0.75, c + 0.02, 0.51, GOLD);
+	}
+
+	/** A bank of lockers in {@code paint}: per block column a tall door with vents, a handle and a number plate. */
+	static void lockers(FurnitureModel m, BlockState paint) {
+		double w = m.w, d = m.d, h = m.h;
+		m.box(0, 0, 0, w, h, d, paint);
+		for (int c = 0; c < (int) w; c++) {
+			m.box(c + 0.05, 0.08, d, c + 0.95, h - 0.06, d + 0.02, paint);  // door
+			for (int v = 0; v < 3; v++) {
+				double vy = h - 0.25 - v * 0.08;
+				m.box(c + 0.3, vy, d + 0.02, c + 0.7, vy + 0.03, d + 0.03, DARK_STEEL);  // vents
+			}
+			m.box(c + 0.78, h / 2 - 0.1, d + 0.02, c + 0.84, h / 2 + 0.1, d + 0.05, STEEL);  // handle
+			m.box(c + 0.4, h - 0.5, d + 0.02, c + 0.6, h - 0.42, d + 0.03, STEEL);          // number plate
+		}
+		m.box(0, 0, -0.01, w, 0.08, d + 0.03, BLACK);                       // kick plate
+	}
+
+	/** Drinking fountain on the wall in row y0: steel basin with a spout and push button, a bottle filler above. */
+	static void drinkingFountain(FurnitureModel m, double y0) {
+		m.box(0.2, y0 + 0.5, 0, 0.8, y0 + 0.82, 0.45, STEEL);               // basin
+		m.box(0.25, y0 + 0.78, 0.05, 0.75, y0 + 0.83, 0.4, DARK_STEEL);     // bowl
+		m.box(0.46, y0 + 0.83, 0.25, 0.54, y0 + 0.88, 0.3, STEEL);          // spout
+		m.box(0.62, y0 + 0.6, 0.45, 0.72, y0 + 0.7, 0.47, BLACK);           // button
+		m.box(0.25, y0 + 1.0, 0, 0.75, y0 + 1.45, 0.18, STEEL);             // bottle filler
+		m.box(0.32, y0 + 1.05, 0.18, 0.68, y0 + 1.15, 0.2, BLACK);          // its recess
+	}
+
+	/** Umbrella stand: a dark cylinder (crossed boxes) with two umbrella handles sticking out. */
+	static void umbrellaStand(FurnitureModel m) {
+		m.box(0.32, 0, 0.28, 0.68, 0.6, 0.72, BLACK);
+		m.box(0.28, 0, 0.32, 0.72, 0.6, 0.68, BLACK);
+		m.box(0.4, 0.6, 0.42, 0.44, 0.95, 0.46, first("red_concrete"));     // umbrella shafts
+		m.box(0.55, 0.6, 0.52, 0.59, 0.9, 0.56, first("blue_concrete"));
+		m.box(0.4, 0.95, 0.42, 0.5, 0.98, 0.46, BLACK);                     // handles
+		m.box(0.55, 0.9, 0.52, 0.65, 0.93, 0.56, BLACK);
+	}
+
 	// ------------------------------------------------------------------------------------- parts
 
 	private static void legs(FurnitureModel m, double top, double t, BlockState block) {

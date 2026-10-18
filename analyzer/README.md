@@ -178,6 +178,12 @@ benches, or its chandeliers).
 `--known-height METRES` corrects the reconstruction's scale from the room's real ceiling height. MapAnything's metric
 scale is learned from ordinary rooms; it put Suzzallo's 19.8 m ceiling at 7.85 m.
 
+**Photo scans from the iOS app (ARKit tracking, any iPhone).** A scan folder with a `capture.json` whose frames have
+no depth was taken with ARKit world tracking: every photo has its camera pose and intrinsics in metres. Each photo
+is turned upright (into the scan's hidden `.upright/` folder) and MapAnything is given those poses and intrinsics,
+marked metric, so it no longer guesses the scale or where the photos were taken. Like LiDAR scans, these rooms
+are built at their measured size (no `--enlarge`). Frames with depth go to `lidar_analyzer.py` as before.
+
 **MapAnything model and license.** The default is `facebook/map-anything-apache` (Apache 2.0). On a tape-measured
 9.45 x 4.57 m room it measured 0.91x / 1.10x the true length / width, while the research variant
 `facebook/map-anything` (which Meta recommends "for the best performance"; weights licensed **CC-BY-NC 4.0,

@@ -307,7 +307,7 @@ public class HouseBuilder {
 				case "whiteboard", "exit_sign", "fire_extinguisher", "clock", "curtain", "mirror",
 						"bulletin_board", "projection_screen", "radiator", "range_hood", "wall_hooks",
 						"light_switch", "outlet", "thermostat", "fire_alarm", "soap_dispenser",
-						"sanitizer_dispenser", "paper_towel_dispenser" -> {
+						"sanitizer_dispenser", "paper_towel_dispenser", "drinking_fountain" -> {
 					// Flat things on the wall: a model in the interior cells along it, its back against the wall.
 					int[] a = insideCell(side, u0), b = insideCell(side, u0 + w - 1);
 					int x0 = Math.min(a[0], b[0]), z0 = Math.min(a[1], b[1]);
@@ -335,6 +335,7 @@ public class HouseBuilder {
 						case "wall_hooks" -> FurnitureDesigns.wallHooks(m, y0);
 						case "light_switch", "outlet", "thermostat", "fire_alarm", "soap_dispenser",
 								"sanitizer_dispenser", "paper_towel_dispenser" -> FurnitureDesigns.wallDevice(m, type, y0);
+						case "drinking_fountain" -> FurnitureDesigns.drinkingFountain(m, y0);
 						default -> FurnitureDesigns.fireExtinguisher(m, y0);
 					}
 					furnish(m, List.of());
@@ -479,6 +480,33 @@ public class HouseBuilder {
 						case "wardrobe" -> FurnitureDesigns.wardrobe(m, planks, log);
 						default -> FurnitureDesigns.washer(m);
 					}
+					furnish(m, core);
+				}
+			}
+			case "backpack", "umbrella_stand" -> {
+				if (inside(x0, z0) && claim(x0, 1, z0)) {
+					FurnitureModel m = new FurnitureModel(x0, z0, 1, 1, 1, facing);
+					if (type.equals("backpack")) FurnitureDesigns.backpack(m, first(color + "_wool", "gray_wool"));
+					else FurnitureDesigns.umbrellaStand(m);
+					furnish(m, List.of());
+				}
+			}
+			case "globe" -> {
+				// On the desk or table it was seen on (y above the floor), or on the floor.
+				int y = Math.max(1, Math.min(H, o.has("y") ? o.get("y").getAsInt() : 1));
+				if (inside(x0, z0) && claim(x0, y, z0)) {
+					FurnitureModel m = new FurnitureModel(x0, z0, 1, 1, Math.min(H - 1, y), facing);
+					FurnitureDesigns.globe(m, y - 1);
+					furnish(m, List.of());
+				}
+			}
+			case "locker" -> {
+				// Real barrels inside, so the lockers store things; the model encloses them.
+				int height = Math.min(H, Math.max(2, h));
+				List<BlockPos> core = fill(x0, z0, w, d, height, with(Blocks.BARREL.defaultBlockState(), BlockStateProperties.FACING, facing));
+				if (core.size() == w * d * height) {
+					FurnitureModel m = new FurnitureModel(x0, z0, w, d, height, facing);
+					FurnitureDesigns.lockers(m, first(color + "_concrete", "light_gray_concrete"));
 					furnish(m, core);
 				}
 			}

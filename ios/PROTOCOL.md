@@ -23,7 +23,7 @@ Implementations: `ios/EverythingCubedScanner/Network/WireMessage.swift` and
 | type | fields | blobs |
 |---|---|---|
 | `hello` | `protocol` (1), `code` (pairing code from `/everything_cubed phone`), `device`, `app` | |
-| `begin` | `mode` (`capture` / `spectate`), `name`, `source` (`roomplan` / `arkit-live`), `app`, `scale` (spectate, optional) | |
+| `begin` | `mode` (`capture` / `spectate`), `name`, `source` (`roomplan`: RoomPlan's LiDAR scan; `tracked`: photos under ARKit world tracking, any iPhone; `arkit-live`: spectate, LiDAR), `app`, `scale` (spectate, optional) | |
 | `frame` | `seq`, `kind` (`keyframe` / `photo`), `time`, `tracking`, `imageSize` [w,h], `depthSize` [w,h], `K` (3×3), `cam2world` (4×4) | `image` (jpeg), `depth` (f16), `confidence` (u8), `person` (u8, spectate) |
 | `room` | | `room` (RoomPlan `CapturedRoom` as JSON) |
 | `end` | `build` (default true), `scale` (blocks per metre, optional) | |
@@ -32,8 +32,9 @@ Implementations: `ios/EverythingCubedScanner/Network/WireMessage.swift` and
 `hello` must come first. Matrices are row-major, in ARKit conventions: world +Y is up, metres; the camera looks
 down -Z with +Y up, and `K` belongs to the image in the sensor's landscape orientation (the analyzer turns
 portrait shots upright). `depth` is little-endian float16 metres, `confidence` is ARKit's 0 (low) to 2 (high),
-both `depthSize` pixels and aligned with the image. `person` is 1 where a person is, also per depth pixel; it is
-left out when nobody is in view.
+both `depthSize` pixels and aligned with the image. Frames from a phone without LiDAR (`tracked`) have no `depthSize`,
+`depth` or `confidence`; their `K` and `cam2world` are still ARKit's, in metres. `person` (spectate only) is 1 where a
+person is, also per depth pixel; it is left out when nobody is in view.
 
 ## Mod to phone
 
@@ -56,11 +57,13 @@ photos/<name>-<yyyyMMdd-HHmmss>/
   capture.json                 begin fields + per-frame fields, with file names instead of blobs
 ```
 
-The analyzer's `arkit` backend (`analyzer/perception.py`) reads `capture.json`.
+The analyzer reads `capture.json`: frames with depth go to `analyzer/lidar_analyzer.py`; frames without depth
+(`tracked`) are reconstructed by MapAnything given each photo's ARKit camera pose and intrinsics
+(`perception.reconstruct_tracked`), so the room's scale comes from ARKit instead of being guessed.
 
 ## Mode `spectate`
 
-The phone streams `frame`s continuously, every 0.2 s, until `end` (or until the mod sends `stopped`). Nothing is
+LiDAR only: frames without depth are skipped. The phone streams `frame`s continuously, every 0.2 s, until `end` (or until the mod sends `stopped`). Nothing is
 saved: each frame goes to `analyzer/spectate_analyzer.py`, which the mod keeps running. While it works on one
 frame, only the newest one that arrives is kept. The player is in spectator mode until the session ends.
 

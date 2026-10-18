@@ -60,6 +60,14 @@ def exif_focal_px(path):
     return float(f35) / FULL_FRAME_DIAGONAL_MM * float(np.hypot(w, h)), (w, h)
 
 
+def crop_intrinsics(K, photo_size, view_size):
+    """A photo's pinhole K after MapAnything's resize: uniform scale, then a centred crop (see view_crop)."""
+    (W0, H0), (Wv, Hv) = photo_size, view_size
+    s = max(Wv / W0, Hv / H0)
+    left, top = (W0 * s - Wv) / 2, (H0 * s - Hv) / 2
+    return np.array([[K[0, 0] * s, 0, K[0, 2] * s - left], [0, K[1, 1] * s, K[1, 2] * s - top], [0, 0, 1.0]])
+
+
 def view_intrinsics(focal, photo_size, view_size):
     """Pinhole K of a photo after MapAnything's resize: uniform scale, then a centred crop (see view_crop)."""
     (W0, H0), (Wv, Hv) = photo_size, view_size
@@ -90,6 +98,10 @@ def reconstruct_mapanything(paths, device, model_name, log, use_exif=True):
         preds = model.infer(views, memory_efficient_inference=True, use_amp=device == "cuda",
                             amp_dtype="bf16", apply_mask=True, mask_edges=True,
                             apply_confidence_mask=False, confidence_percentile=10)
+    return _mapanything_views(preds), True
+
+
+def _mapanything_views(preds):
     out = []
     for p in preds:
         img = _np(p["img_no_norm"][0])
@@ -99,7 +111,70 @@ def reconstruct_mapanything(paths, device, model_name, log, use_exif=True):
                     "conf": _np(p["conf"][0]),
                     "mask": _np(p["mask"][0])[..., 0] > 0.5,
                     "rgb": (img * 255 if img.max() <= 1.5 else img).clip(0, 255).astype(np.uint8)})
-    return out, True
+    return out
+
+
+def capture_has_depth(folder: Path) -> bool:
+    """True for a LiDAR scan (frames with depth), False for photos tracked by ARKit without depth."""
+    import json
+    cap = json.loads((folder / "capture.json").read_text())
+    return any("depth" in f for f in cap.get("frames", []))
+
+
+def prepare_tracked(folder: Path, max_views=60):
+    """Photos from the iOS app taken under ARKit world tracking (any iPhone, no LiDAR needed): each turned upright
+    into <folder>/.upright/, with its K and camera pose (OpenCV axes, metres) to match.
+    Returns [(path, K, cam2world, (w, h))]."""
+    import json
+    from PIL import Image
+    cap = json.loads((folder / "capture.json").read_text())
+    frames = [f for f in cap["frames"] if f.get("image") and f.get("tracking", "normal") == "normal"]
+    if not frames:
+        raise SystemExit("the scan has no photos taken with normal tracking")
+    if len(frames) > max_views:  # evenly thinned; shutter photos are always kept
+        keep = set(np.linspace(0, len(frames) - 1, max_views).round().astype(int))
+        frames = [f for i, f in enumerate(frames) if i in keep or f.get("kind") == "photo"]
+    out_dir = folder / ".upright"
+    out_dir.mkdir(exist_ok=True)
+    out = []
+    for f in frames:
+        img = Image.open(folder / f["image"]).convert("RGB")
+        w, h = img.size
+        iw, ih = f.get("imageSize", (w, h))
+        K = np.array(f["K"], dtype=np.float64).reshape(3, 3)
+        K[0] *= w / iw
+        K[1] *= h / ih
+        c2w = np.array(f["cam2world"], dtype=np.float64).reshape(4, 4) @ ARKIT_TO_CV
+        turns, K, c2w = upright_camera(K, c2w, w, h)
+        if turns % 4:
+            img = img.rotate(90 * (turns % 4), expand=True)   # PIL turns counterclockwise, like np.rot90
+        p = out_dir / Path(f["image"]).name
+        img.save(p, quality=95)
+        out.append((p, K, c2w, img.size))
+    return out
+
+
+def reconstruct_tracked(folder: Path, device, model_name, log):
+    """MapAnything given each photo's real camera pose and intrinsics from ARKit, marked metric: it no longer
+    guesses the scale or where the photos were taken, only the depth. Returns (views, metric, upright paths)."""
+    import torch
+    from mapanything.models import MapAnything
+    from mapanything.utils.image import load_images
+
+    shots = prepare_tracked(folder)
+    log(f"[recon] {len(shots)} photo(s) with ARKit camera positions -> MapAnything ({model_name}), device={device}")
+    model = MapAnything.from_pretrained(model_name).to(device)
+    views = load_images([str(p) for p, *_ in shots])
+    for v, (_, K, c2w, size) in zip(views, shots):
+        Hv, Wv = v["img"].shape[-2:]
+        v["intrinsics"] = torch.from_numpy(crop_intrinsics(K, size, (Wv, Hv))).float()[None]
+        v["camera_poses"] = torch.from_numpy(c2w).float()[None]
+        v["is_metric_scale"] = torch.tensor([True])
+    with torch.no_grad():
+        preds = model.infer(views, memory_efficient_inference=True, use_amp=device == "cuda",
+                            amp_dtype="bf16", apply_mask=True, mask_edges=True,
+                            apply_confidence_mask=False, confidence_percentile=10)
+    return _mapanything_views(preds), True, [p for p, *_ in shots]
 
 
 def reconstruct_vggt(paths, device, model_name, depth_model, log):
@@ -172,21 +247,29 @@ ARKIT_MAX_VIEWS = 60
 ARKIT_TO_CV = np.diag([1.0, -1.0, -1.0, 1.0])
 
 
+def upright_camera(K, cam2world, w, h):
+    """Quarter turns (counterclockwise) that bring the world's up (+Y in ARKit) to the top of an image of size
+    (w, h), and K and cam2world (OpenCV axes) after them. ARKit images are always in the sensor's landscape
+    orientation, whatever way the phone was held. Returns (turns, K, cam2world)."""
+    K, cam2world = np.array(K, float), np.array(cam2world, float)
+    rot = np.eye(4); rot[:3, :3] = [[0, 1, 0], [-1, 0, 0], [0, 0, 1]]   # new camera axes from old
+    for turns in range(4):
+        up = cam2world[:3, :3].T @ np.array([0.0, 1.0, 0.0])   # world up in camera axes
+        if -up[1] >= abs(up[0]):                               # already points to -v (image top)
+            return turns, K, cam2world
+        # A quarter turn counterclockwise: new (u, v) = (v, W-1-u).
+        K = np.array([[K[1, 1], 0, K[1, 2]], [0, K[0, 0], w - 1 - K[0, 2]], [0, 0, 1]])
+        cam2world = cam2world @ rot.T
+        w, h = h, w
+    return 4, K, cam2world
+
+
 def _upright(view):
-    """Rotates a view by quarter turns so the world's up (+Y in ARKit) points to the top of the image.
-    ARKit images are always in the sensor's landscape orientation, whatever way the phone was held."""
-    for _ in range(4):
-        up = view["cam2world"][:3, :3].T @ np.array([0.0, 1.0, 0.0])   # world up in camera axes
-        if -up[1] >= abs(up[0]):                                       # already points to -v (image top)
-            return view
-        # Turn the image a quarter turn counterclockwise: new (u, v) = (v, W-1-u).
-        h, w = view["rgb"].shape[:2]
-        K = view["K"]
-        view["K"] = np.array([[K[1, 1], 0, K[1, 2]], [0, K[0, 0], w - 1 - K[0, 2]], [0, 0, 1]])
-        rot = np.eye(4); rot[:3, :3] = [[0, 1, 0], [-1, 0, 0], [0, 0, 1]]   # new camera axes from old
-        view["cam2world"] = view["cam2world"] @ rot.T
-        for k in ("points", "rgb", "conf", "mask"):
-            view[k] = np.ascontiguousarray(np.rot90(view[k]))
+    """Rotates a view by quarter turns so the world's up points to the top of the image (see upright_camera)."""
+    h, w = view["rgb"].shape[:2]
+    turns, view["K"], view["cam2world"] = upright_camera(view["K"], view["cam2world"], w, h)
+    for k in ("points", "rgb", "conf", "mask"):
+        view[k] = np.ascontiguousarray(np.rot90(view[k], turns))
     return view
 
 
@@ -364,6 +447,7 @@ MAY_TAKE = {"painting": {"wall"}, "sconce": {"wall"}, "curtain": {"wall"}, "mirr
             **{c: {"wall"} for c in ("light_switch", "outlet", "thermostat", "fire_alarm",
                 "soap_dispenser", "sanitizer_dispenser", "paper_towel_dispenser")},
             "whiteboard": {"wall"}, "exit_sign": {"wall"}, "fire_extinguisher": {"wall"}, "rug": {"floor"},
+            "drinking_fountain": {"wall"},
             # Hanging things are seen against the ceiling (the depth gate keeps the real ceiling behind them).
             "projector": {"ceiling"}, "chandelier": {"ceiling"}, "ceiling_fan": {"ceiling"},
             **{c: {"ceiling"} for c in ("led_panel", "downlight", "linear_light", "pendant_lamp", "smoke_detector")}}
@@ -408,6 +492,14 @@ PERSON_WORDS = {"person", "people", "man", "men", "woman", "women", "boy", "girl
 IGNORE_NAMES = {"person", "people", "man", "woman", "boy", "girl", "child", "student", "human", "face", "head",
                 "hand", "arm", "leg", "wall", "floor", "ceiling", "column", "pillar", "arch", "beam", "roof",
                 "window frame", "door frame", "molding", "railing", "stairs", "staircase", "shadow", "reflection"}
+
+
+SYNONYMS.update({
+    "backpack": "backpack", "bag": "backpack", "school bag": "backpack", "handbag": "backpack", "tote bag": "backpack",
+    "globe": "globe", "desk globe": "globe", "locker": "locker", "lockers": "locker", "drinking fountain":
+    "drinking_fountain", "water fountain": "drinking_fountain", "bottle filler": "drinking_fountain",
+    "bottle filling station": "drinking_fountain", "umbrella stand": "umbrella_stand", "umbrella holder": "umbrella_stand",
+})
 
 
 def _singular(name):

@@ -150,7 +150,7 @@ def test_mapping(monkeypatch_post):
     assert P.synonym_template("person", TEMPLATES, ADE_TO_CATEGORY) == "ignore"
     assert P.synonym_template("bookcase", TEMPLATES, ADE_TO_CATEGORY) == "bookshelf"
     assert P.synonym_template("coffee table", TEMPLATES, ADE_TO_CATEGORY) == "coffee_table"
-    assert P.synonym_template("backpack", TEMPLATES, ADE_TO_CATEGORY) == "generic"
+    assert P.synonym_template("skateboard", TEMPLATES, ADE_TO_CATEGORY) == "generic"   # no template for it
     assert P.synonym_template("man sitting", TEMPLATES, ADE_TO_CATEGORY) == "ignore"
     assert P.synonym_template("students at desk", TEMPLATES, ADE_TO_CATEGORY) == "ignore"
     for name, expected in {"podium": "podium", "cork board": "bulletin_board", "computer monitor": "monitor",
@@ -175,8 +175,8 @@ def test_mapping(monkeypatch_post):
     def broken(path, body, key):
         raise RuntimeError("HTTP 500")
     monkeypatch_post(broken)
-    m = P.map_names(["globe", "man"], TEMPLATES, ADE_TO_CATEGORY, "k", print)
-    assert m == {"globe": ("generic", "synonyms"), "man": ("ignore", "synonyms")}
+    m = P.map_names(["skateboard", "man"], TEMPLATES, ADE_TO_CATEGORY, "k", print)
+    assert m == {"skateboard": ("generic", "synonyms"), "man": ("ignore", "synonyms")}
     print("mapping OK")
 
 
@@ -541,6 +541,43 @@ def test_exif_camera():
     print("exif camera OK", round(f), K.round(1).tolist())
 
 
+def test_hallway_templates():
+    """Backpack, globe (on a table and on the floor), lockers, drinking fountain and umbrella stand."""
+    pts, cols, cats = [], [], []
+
+    def add(n, lo, hi, rgb, cat):
+        pts.append(rng.uniform(lo, hi, (n, 3)))
+        cols.append(np.clip(np.array(rgb) + rng.normal(0, 4, (n, 3)), 0, 255))
+        cats.extend([cat] * n)
+    Wm, Dm, Hm = 8.0, 6.0, 3.0
+    add(20000, (0, 0, 0), (Wm, 0, Dm), (90, 90, 90), "floor")
+    add(15000, (0, Hm, 0), (Wm, Hm, Dm), (230, 230, 230), "ceiling")
+    for lo, hi in [((0, 0, 0), (Wm, Hm, 0)), ((0, 0, 0), (0, Hm, Dm)), ((Wm, 0, 0), (Wm, Hm, Dm)), ((0, 0, Dm), (Wm, Hm, Dm))]:
+        add(8000, lo, hi, (225, 222, 215), "wall")
+    add(1500, (3.0, 0.7, 2.5), (4.4, 0.75, 3.3), (150, 110, 70), "table")
+    add(60, (3.4, 0.76, 2.8), (3.7, 1.1, 3.1), (40, 90, 200), "globe")              # on the table
+    add(900, (6.6, 0.0, 4.6), (7.0, 1.1, 5.0), (40, 90, 200), "globe")              # floor-stand globe (dense, like a real scan)
+    add(200, (1.0, 0.0, 4.0), (1.4, 0.5, 4.3), (180, 30, 30), "backpack")           # red bag on the floor
+    add(4000, (0.5, 0.0, 0.35), (2.9, 1.8, 0.4), (40, 70, 170), "locker")           # blue lockers: their front face
+    add(80, (0.0, 0.8, 2.0), (0.05, 1.1, 2.4), (190, 190, 195), "drinking_fountain")  # on the x=0 wall
+    add(80, (7.4, 0.0, 0.5), (7.7, 0.6, 0.8), (20, 20, 20), "umbrella_stand")
+    flip = np.diag([1, -1, -1.0])
+    plan = build_plan(np.concatenate(pts) @ flip.T, np.concatenate(cols), np.array(cats),
+                      Palette(builtin_surface_entries()), scale=1.25, log=lambda m: None)
+    objs = plan["objects"]
+    globes = sorted((o["y"] for o in objs if o["type"] == "globe"))
+    table = next(o for o in objs if o["type"] == "table")
+    assert globes == [1, 1 + table["h"]], (globes, table)
+    bag = next(o for o in objs if o["type"] == "backpack")
+    assert bag["color"] == "red" and bag["w"] == bag["d"] == 1, bag
+    lk = next(o for o in objs if o["type"] == "locker")
+    assert lk["color"] == "blue" and min(lk["w"], lk["d"]) == 1 and max(lk["w"], lk["d"]) >= 2 and lk["h"] == 2, lk
+    assert any(o["type"] == "umbrella_stand" for o in objs)
+    fountain = [o for o in plan["openings"] if o["type"] == "drinking_fountain"]
+    assert len(fountain) == 1 and fountain[0]["y"] == 0, plan["openings"]
+    print("hallway templates OK", bag, lk, fountain[0])
+
+
 if __name__ == "__main__":
     real_post = REAL_POST = P._post
 
@@ -560,6 +597,7 @@ if __name__ == "__main__":
         test_new_templates()
         test_small_fixtures()
         test_exif_camera()
+        test_hallway_templates()
         test_end_to_end(monkeypatch_post)
         test_plan_generic()
     finally:
