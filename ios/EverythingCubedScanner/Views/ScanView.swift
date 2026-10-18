@@ -97,8 +97,8 @@ struct ScanView: View {
         case .finishing:
             ProgressView("Sending the scan…").padding().background(.ultraThinMaterial, in: Capsule())
         default:
-            // After a scan: another room on the same connection, spectate this one once it is built (LiDAR room
-            // scans only), or leave the game.
+            // After a scan: another room on the same connection, or spectate this one once it is built (LiDAR room
+            // scans only). Disconnecting is on the new-scan screen.
             HStack(spacing: 16) {
                 if model.scanIsLidar {
                     Button("Scan another room") { model.scanAgain() }.buttonStyle(.bordered)
@@ -108,7 +108,6 @@ struct ScanView: View {
                 } else {
                     Button("Scan another room") { model.scanAgain() }.buttonStyle(.borderedProminent)
                 }
-                Button("Disconnect", role: .destructive) { model.disconnect() }.buttonStyle(.bordered)
             }
         }
     }
