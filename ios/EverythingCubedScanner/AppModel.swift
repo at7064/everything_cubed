@@ -80,6 +80,11 @@ final class AppModel: ObservableObject, FrameSink {
 
     func disconnect() {
         stopCapture()
+        // The last scan's AR session is kept running for spectate; leaving the game ends it.
+        canSpectate = false
+        scanFolder = nil
+        scanSource?.close()
+        scanSource = nil
         client.close()
         phase = .disconnected
     }
