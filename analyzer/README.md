@@ -1,4 +1,4 @@
-# Everything Cubed analyzer
+x# Everything Cubed analyzer
 
 Turns a handful of photos of one room into `plan.json`, which the Everything Cubed mod builds.
 The mod runs this automatically; you only need to install the Python environment once.

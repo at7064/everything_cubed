@@ -42,9 +42,11 @@ ADE_TO_CATEGORY = {
     "sink": "sink", "bathtub": "bathtub", "toilet": "toilet", "fireplace": "fireplace",
     "box": "storage", "basket": "storage", "barrel": "storage", "ashcan": "trash",
     "washer": "washer", "dishwasher": "washer", "curtain": "curtain", "blind": "curtain",
-    "mirror": "mirror", "clock": "clock",
+    "mirror": "mirror", "clock": "clock", "fan": "fan",
 }
-CATEGORIES = sorted(set(ADE_TO_CATEGORY.values()) | {"other"})
+# Templates only the open-vocabulary detector (perception.perceptron_pass) finds: ADE20K has no such class.
+DETECTOR_ONLY = {"whiteboard", "projector", "exit_sign", "fire_extinguisher"}
+CATEGORIES = sorted(set(ADE_TO_CATEGORY.values()) | DETECTOR_ONLY | {"other"})
 # Detected things without a template are "generic:<detected name>" (see perception.perceptron_pass); they are
 # built as a plain box and keep their name in the plan, so missing templates show up.
 GENERIC = "generic:"
@@ -75,25 +77,33 @@ TEMPLATE_INFO = {
     "sink": "a sink", "bathtub": "a bathtub or shower", "toilet": "a toilet", "fireplace": "a fireplace",
     "storage": "a box, basket or crate", "trash": "a trash can", "washer": "a washing machine or dishwasher",
     "curtain": "a curtain or blind", "mirror": "a mirror", "clock": "a clock",
+    "whiteboard": "a whiteboard, dry-erase board or chalkboard on a wall",
+    "projector": "a video projector, usually hanging from the ceiling",
+    "exit_sign": "an exit sign, usually lit and mounted above a door",
+    "fire_extinguisher": "a fire extinguisher or its wall cabinet",
+    "fan": "a floor, tower or pedestal fan",
 }
 assert set(TEMPLATE_INFO) == TEMPLATES, set(TEMPLATE_INFO) ^ TEMPLATES
-WALL_MOUNTED = {"window", "door", "painting", "sconce", "curtain", "mirror", "clock"}
+WALL_MOUNTED = {"window", "door", "painting", "sconce", "curtain", "mirror", "clock", "whiteboard", "exit_sign",
+                "fire_extinguisher"}
 # Things that never stand on the floor grid.
-NO_FOOTPRINT = WALL_MOUNTED | {"ceiling_light", "chandelier", "rug"}
+NO_FOOTPRINT = WALL_MOUNTED | {"ceiling_light", "chandelier", "projector", "rug"}
 # Placement priority (earlier wins collisions).
 PRIORITY = ["bed", "counter", "fridge", "stove", "sink", "bathtub", "toilet", "wardrobe", "bookshelf",
             "cabinet", "fireplace", "sofa", "desk", "table", "coffee_table", "shelf", "washer", "tv",
-            "chair", "lamp", "storage", "trash", "microwave", "plant"]
+            "chair", "lamp", "fan", "storage", "trash", "microwave", "plant"]
 # Max height in blocks per category (None = up to the ceiling).
 MAX_HEIGHT = {"bed": 1, "table": 1, "desk": 1, "coffee_table": 1, "counter": 1, "chair": 1, "sofa": 1,
               "cabinet": 2, "storage": 1, "trash": 1, "washer": 1, "sink": 1, "bathtub": 1, "toilet": 1,
-              "stove": 1, "microwave": 1, "plant": 1, "lamp": 2, "fireplace": 2, "tv": 2, "shelf": 3}
+              "stove": 1, "microwave": 1, "plant": 1, "lamp": 2, "fireplace": 2, "tv": 2, "shelf": 3, "fan": 2}
 # Smallest believable cluster (points after 3 cm voxelisation) per category.
 MIN_POINTS = {"window": 60, "door": 120, "bed": 200, "rug": 150, "painting": 40, "plant": 25,
-              "lamp": 25, "ceiling_light": 15, "chandelier": 25, "sconce": 10, "microwave": 30, "clock": 10}
+              "lamp": 25, "ceiling_light": 15, "chandelier": 25, "sconce": 10, "microwave": 30, "clock": 10,
+              "whiteboard": 40, "exit_sign": 8, "fire_extinguisher": 12, "projector": 12, "fan": 20}
 
 SIDES = ("north", "south", "west", "east")
 AUTO_SCALE = 1.25  # default blocks per metre
+ENLARGE = 1.25     # automatic scales are this much larger: one-block furniture leaves more room to move
 OPPOSITE = {"north": "south", "south": "north", "west": "east", "east": "west"}
 
 
@@ -253,6 +263,12 @@ def cell_colours(ij: np.ndarray, rgb: np.ndarray, shape):
 
 # ----------------------------------------------------------------------------------- objects
 
+def _is_whiteboard_colour(rgb) -> bool:
+    """Bright and nearly colourless (CIELAB L > 70, chroma < 15): a whiteboard, not a switched-off screen."""
+    L, a, b = srgb_to_lab(np.asarray(rgb, float)[None])[0]
+    return L > 70 and math.hypot(a, b) < 15
+
+
 def axis_dir(dx: float, dz: float) -> str:
     if abs(dx) >= abs(dz):
         return "east" if dx > 0 else "west"
@@ -300,9 +316,10 @@ def cluster_category(p, eps=0.12, min_samples=8):
 # ----------------------------------------------------------------------------------- main entry
 
 def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metric=True, log=print, ctx=None,
-               known_height=None, object_instances=None):
+               known_height=None, object_instances=None, enlarge=ENLARGE):
     """ctx: optional dict that receives the room frame (origin, R, y_shift, f, room) for texture projection.
-    known_height: the room's real floor-to-ceiling height in metres; rescales the whole reconstruction to it."""
+    known_height: the room's real floor-to-ceiling height in metres; rescales the whole reconstruction to it.
+    enlarge: factor on the automatic scale (an explicit `scale` is used exactly as given)."""
     points = np.asarray(points, float)
     colors = np.asarray(colors, float)
     cats = np.asarray(cats)
@@ -335,7 +352,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             f = 3.5 / max(1e-6, np.percentile(loc[:, 0], 98) - np.percentile(loc[:, 0], 2))
         loc *= f
         log(f"[plan] non-metric reconstruction rescaled by {f:.3f}")
-    stretch = 1.0  # --known-height rescale; point spacing grows with it, so clustering radii must too
+    # (Point spacing grows with every rescale here, so clustering radii are multiplied by f.)
     if known_height:
         # Monocular metric scale is a learned guess and can be far off outside ordinary rooms (a 20 m hall
         # came out at 0.4x). One real measurement fixes it everywhere, if the shape itself is right.
@@ -399,6 +416,8 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
         scale = AUTO_SCALE
         if min(wm, dm) * scale < 5 * AUTO_SCALE:
             scale = min(2 * AUTO_SCALE, 5 * AUTO_SCALE / min(wm, dm))
+        # Furniture is whole blocks (a chair is one), so at true proportions rooms feel crowded: build bigger.
+        scale *= enlarge
     room = Room(bounds["xmin"], bounds["xmax"], bounds["zmin"], bounds["zmax"], hm, scale)
     if ctx is not None:
         ctx.update(origin=origin, R=R, y_shift=y_shift, f=f, room=room)
@@ -467,7 +486,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             continue
         m = np.flatnonzero(cats == cat)
         # Chandeliers are open metalwork alone in the air: a wider radius keeps one from splitting into parts.
-        for idx in cluster_category(loc[m], eps=(0.35 if cat == "chandelier" else 0.12) * stretch):
+        for idx in cluster_category(loc[m], eps=(0.35 if cat == "chandelier" else 0.12) * f):
             small = cat.startswith(VANILLA) and not vanilla_parts(cat)[1]  # a lantern or candle is small
             if len(idx) < MIN_POINTS.get(cat, 15 if small else 60):
                 continue
@@ -490,7 +509,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
                       if cat == inst["category"] and j not in used_clusters]
         if candidates:
             dist, j = min(candidates)
-            if dist < 0.8 * stretch:
+            if dist < 0.8 * f:
                 obj_clusters[j] = (inst["category"], cl)
                 used_clusters.add(j)
                 matched += 1
@@ -530,10 +549,23 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             y0 = max(1, y0) if H >= 4 else y0
             y1 = min(y1, H - 2) if H >= 4 else min(y1, H - 1)
             entry.update(type="window", y=min(y0, y1), h=max(1, y1 - y0 + 1), color=DYE_PALETTE.nearest(cl["rgb"]))
+        elif cat == "tv" and _is_whiteboard_colour(cl["rgb"]):
+            # ADE20K has no whiteboard: SegFormer calls one a "screen". A TV that is off is dark; a bright, colourless
+            # "screen" on the wall is a whiteboard or projection screen.
+            entry.update(type="whiteboard", y=y0, h=max(1, y1 - y0 + 1), color="white")
         elif cat in ("painting", "tv"):
             entry.update(type=cat, y=y0, h=max(1, y1 - y0 + 1))
         elif cat == "sconce":
             entry.update(type="sconce", y=min(H - 1, max(1, y1)), w=1, h=1)
+        elif cat == "whiteboard":
+            # Its real extent; a white board or a green/black chalkboard.
+            entry.update(type="whiteboard", y=y0, h=max(1, y1 - y0 + 1), color=DYE_PALETTE.nearest(cl["rgb"]))
+        elif cat == "exit_sign":
+            # Mounted high, above a door (NFPA 101 7.10.1.9 caps it at 6 ft 8 in above the opening).
+            entry.update(type="exit_sign", y=min(H - 1, max(1, y1)), w=1, h=1)
+        elif cat == "fire_extinguisher":
+            # Low on the wall (NFPA 10: top at most 5 ft, bottom at least 4 in above the floor).
+            entry.update(type="fire_extinguisher", y=min(y0, max(0, H - 2)), w=1, h=1)
         else:
             continue  # curtains / mirrors / clocks only inform us, they are not built
         entry["u"] = int(np.clip(entry["u"], 0, L - 1))
@@ -587,8 +619,15 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             obj["estimated_center_m"] = [round(float(x), 3) for x in cl["c"]]
         objects.append(obj)
 
+    screens = [o for o in openings if o["type"] in ("whiteboard", "tv")]
     for cat, cl in obj_clusters:
-        if cat == "chandelier":
+        if cat == "projector":
+            # Hangs from the ceiling on a rod and points at the whiteboard or screen wall, if there is one.
+            cx, cz = int(room.bx(cl["c"][0])), int(room.bz(cl["c"][2]))
+            facing = screens[0]["side"] if screens else OPPOSITE[nearest_side(cl["c"][0], cl["c"][2])[0]]
+            objects.append({"type": "projector", "x": cx, "z": cz, "w": 1, "d": 1, "h": 1, "facing": facing,
+                            "y": int(np.clip(int(room.by(min(cl["hi"][1], hm - 1e-3))) + 1, 1, H))})
+        elif cat == "chandelier":
             # Footprint and hanging height from its real extent; the mod hangs it from the ceiling on a chain.
             x0, x1 = int(room.bx(cl["lo"][0])), int(room.bx(cl["hi"][0]))
             z0, z1 = int(room.bz(cl["lo"][2])), int(room.bz(cl["hi"][2]))
@@ -694,9 +733,11 @@ def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
             w = d = 1
     elif cat in ("table", "desk", "coffee_table", "shelf", "bookshelf", "wardrobe", "cabinet", "counter"):
         obj["material"] = WOOD_PALETTE.nearest(cl["rgb"])
-    elif cat in ("lamp", "plant", "trash", "toilet", "microwave", "fridge", "stove", "sink", "washer"):
-        if cat in ("lamp", "plant", "trash", "toilet", "microwave"):
+    elif cat in ("lamp", "plant", "trash", "toilet", "microwave", "fridge", "stove", "sink", "washer", "fan"):
+        if cat in ("lamp", "plant", "trash", "toilet", "microwave", "fan"):
             w = d = 1
+        if cat == "trash":
+            obj["color"] = DYE_PALETTE.nearest(cl["rgb"])  # black trash, blue recycling, green compost, ...
         if cat == "fridge":
             h = min(H - 1, max(2, h))
         if cat in ("fridge", "stove", "sink", "washer", "toilet") and w * d > 2:
@@ -832,7 +873,9 @@ def apply_wall_features(plan, features, log=print, mirror=False):
         for side, d in decided.items():
             o = opposite[side]
             if d["seen"] < MIRROR_UNSEEN and o in decided and decided[o]["seen"] >= MIRROR_SEEN:
-                decided[side] = dict(decided[o], seen=d["seen"])
+                own_doors = _grid_of(plan["openings"], side, "door", *decided[o]["win"].shape)
+                decided[side] = {"win": decided[o]["win"] & ~own_doors, "shelf": decided[o]["shelf"] & ~own_doors,
+                                 "seen": d["seen"]}
                 mirrored.add((side, o))
                 log(f"[plan] {side} wall ({d['seen']:.0%} seen) mirrors the {o} wall ({decided[o]['seen']:.0%} seen)")
 
@@ -863,6 +906,26 @@ def apply_wall_features(plan, features, log=print, mirror=False):
         # Shelving stands on the floor: each column of shelf cells becomes a stack from the floor up to its top.
         top = np.where(d["shelf"].any(0), d["shelf"].shape[0] - np.argmax(d["shelf"][::-1], 0), 0)
         top[top < 2] = 0  # a lone block of "shelf" is noise, not furniture
+        # Not in a doorway (a door column, and the two cells in front of any door) nor where furniture stands.
+        taken = np.zeros((W, D), bool)
+        for o in plan["objects"]:
+            if o.get("w") and o.get("d") and o["type"] not in ("ceiling_light", "chandelier", "projector", "rug"):
+                taken[o["x"]:o["x"] + o["w"], o["z"]:o["z"] + o["d"]] = True
+        for o in plan["openings"]:
+            if o["type"] == "door":
+                for du in range(o["w"]):
+                    uu = o["u"] + du
+                    for depth in (0, 1):
+                        cx, cz = {"north": (uu, depth), "south": (uu, D - 1 - depth),
+                                  "west": (depth, uu), "east": (W - 1 - depth, uu)}[o["side"]]
+                        if 0 <= cx < W and 0 <= cz < D:
+                            taken[cx, cz] = True
+        cell = {"north": lambda uu: (uu, 0), "south": lambda uu: (uu, D - 1),
+                "west": lambda uu: (0, uu), "east": lambda uu: (W - 1, uu)}[side]
+        for uu in range(len(top)):
+            cx, cz = cell(uu)
+            if not (0 <= cx < W and 0 <= cz < D) or taken[cx, cz]:
+                top[uu] = 0
         front = {"north": "south", "south": "north", "west": "east", "east": "west"}[side]
         u = 0
         while u < len(top):
@@ -883,4 +946,6 @@ def apply_wall_features(plan, features, log=print, mirror=False):
         tex = plan.get("textures", {}).get("walls", {})
         if o in tex:
             tex[side] = dict(tex[o])          # same image and flip: the same picture at the same x (or z)
+        else:
+            tex.pop(side, None)               # blocks and pictures always come from the same wall
         plan["walls"][side] = {"palette": list(plan["walls"][o]["palette"]), "grid": [r[:] for r in plan["walls"][o]["grid"]]}

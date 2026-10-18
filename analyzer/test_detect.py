@@ -427,6 +427,63 @@ def test_vanilla_first(monkeypatch_post):
     print("vanilla first OK", ln, br)
 
 
+def test_new_templates():
+    """Whiteboard, exit sign and fire extinguisher go on their wall at believable heights; the projector hangs from
+    the ceiling facing the whiteboard; the fan stands on the floor. The fallback dictionary knows their names."""
+    for name, t in [("whiteboard", "whiteboard"), ("chalkboard", "whiteboard"), ("projector", "projector"),
+                    ("exit sign", "exit_sign"), ("fire extinguisher", "fire_extinguisher"), ("tower fan", "fan"),
+                    ("fan", "fan")]:
+        assert P.synonym_template(name, TEMPLATES, ADE_TO_CATEGORY) == t, (name, P.synonym_template(name, TEMPLATES, ADE_TO_CATEGORY))
+    pts, cols, cats = [], [], []
+
+    def add(n, lo, hi, rgb, cat):
+        pts.append(rng.uniform(lo, hi, (n, 3)))
+        cols.append(np.clip(np.array(rgb) + rng.normal(0, 4, (n, 3)), 0, 255))
+        cats.extend([cat] * n)
+    Wm, Dm, Hm = 8.0, 6.0, 3.0
+    add(20000, (0, 0, 0), (Wm, 0, Dm), (90, 90, 90), "floor")
+    add(15000, (0, Hm, 0), (Wm, Hm, Dm), (230, 230, 230), "ceiling")
+    for lo, hi in [((0, 0, 0), (Wm, Hm, 0)), ((0, 0, 0), (0, Hm, Dm)), ((Wm, 0, 0), (Wm, Hm, Dm)), ((0, 0, Dm), (Wm, Hm, Dm))]:
+        add(8000, lo, hi, (225, 222, 215), "wall")
+    add(900, (2.0, 0.9, 0.0), (4.4, 2.1, 0.05), (245, 245, 245), "whiteboard")        # on the z=0 wall
+    add(60, (6.5, 2.3, 0.0), (6.8, 2.5, 0.05), (60, 200, 80), "exit_sign")           # high, same wall
+    add(80, (0.0, 0.3, 4.0), (0.05, 0.9, 4.2), (200, 30, 30), "fire_extinguisher")    # low, on the x=0 wall
+    add(150, (3.0, 2.55, 3.0), (3.4, 2.75, 3.4), (240, 240, 240), "projector")        # under the ceiling
+    add(300, (6.0, 0.0, 4.0), (6.3, 0.9, 4.3), (30, 30, 30), "fan")                   # on the floor
+    flip = np.diag([1, -1, -1.0])
+    plan = build_plan(np.concatenate(pts) @ flip.T, np.concatenate(cols), np.array(cats),
+                      Palette(builtin_surface_entries()), scale=1.25, log=lambda m: None)
+    ops = {o["type"]: o for o in plan["openings"]}
+    objs = {o["type"]: o for o in plan["objects"]}
+    H = plan["size"]["y"]
+    wb, ex, fe = ops["whiteboard"], ops["exit_sign"], ops["fire_extinguisher"]
+    assert wb["w"] >= 2 and wb["h"] >= 1 and wb["color"] == "white" and wb["side"] == ex["side"] != fe["side"], (wb, ex, fe)
+    assert ex["y"] > wb["y"] and ex["y"] >= H - 2 and fe["y"] <= 1, (ex, fe, H)
+    pj, fan = objs["projector"], objs["fan"]
+    assert pj["y"] >= H - 1 and pj["facing"] == wb["side"], (pj, wb)
+    assert fan["w"] == fan["d"] == 1 and 1 <= fan["h"] <= 2, fan
+    # Without the detector: SegFormer calls a whiteboard a "screen" (tv). A bright, colourless one is a whiteboard;
+    # a dark one stays a TV.
+    for rgb, want in [((235, 236, 232), "whiteboard"), ((25, 25, 30), "tv")]:
+        pts2, cols2, cats2 = [p.copy() for p in pts], [c.copy() for c in cols], list(cats)
+        keep = np.array([c != "whiteboard" for c in cats2])
+        P2 = np.concatenate(pts2)[keep]; C2 = np.concatenate(cols2)[keep]; K2 = list(np.array(cats2)[keep])
+        scr = rng.uniform((2.0, 0.9, 0.0), (4.4, 2.1, 0.05), (900, 3))
+        P2 = np.concatenate([P2, scr]); C2 = np.concatenate([C2, np.tile(rgb, (900, 1))]); K2 += ["tv"] * 900
+        p2 = build_plan(P2 @ flip.T, C2, np.array(K2), Palette(builtin_surface_entries()), scale=1.25, log=lambda m: None)
+        got = [o["type"] for o in p2["openings"] if o["type"] in ("whiteboard", "tv")]
+        assert got == [want], (rgb, got)
+    # Trash cans keep their colour (black trash, blue recycling).
+    pts3, cols3, cats3 = list(pts), list(cols), list(cats)
+    for (lo, hi), rgb in [(((5.0, 0.0, 5.5), (5.3, 0.7, 5.8)), (25, 25, 28)), (((5.6, 0.0, 5.5), (5.9, 0.7, 5.8)), (40, 70, 170))]:
+        pts3.append(rng.uniform(lo, hi, (250, 3))); cols3.append(np.tile(rgb, (250, 1)).astype(float)); cats3 += ["trash"] * 250
+    p3 = build_plan(np.concatenate(pts3) @ flip.T, np.concatenate(cols3), np.array(cats3), Palette(builtin_surface_entries()),
+                    scale=1.25, log=lambda m: None)
+    bins = sorted(o["color"] for o in p3["objects"] if o["type"] == "trash")
+    assert bins == ["black", "blue"], bins
+    print("new templates OK", {k: (v.get("side"), v.get("y"), v.get("h")) for k, v in ops.items()}, pj, fan)
+
+
 if __name__ == "__main__":
     real_post = REAL_POST = P._post
 
@@ -443,6 +500,7 @@ if __name__ == "__main__":
         test_cache_and_prompt(monkeypatch_post)
         test_known_height_and_chandelier()
         test_vanilla_first(monkeypatch_post)
+        test_new_templates()
         test_end_to_end(monkeypatch_post)
         test_plan_generic()
     finally:

@@ -33,6 +33,9 @@ def main(argv=None):
     ap.add_argument("--out", type=Path, help="output plan (default: <images>/plan.json)")
     ap.add_argument("--mc-jar", help="Minecraft client jar, used to read real block texture colours")
     ap.add_argument("--scale", type=float, help="blocks per metre (default: automatic)")
+    ap.add_argument("--enlarge", type=float, default=1.25,
+                    help="build photo rooms this much larger than measured, e.g. 1.25 = 25%% (default); "
+                         "LiDAR scans and --scale are always built at their measured size")
     ap.add_argument("--known-height", type=float,
                     help="the room's real floor-to-ceiling height in metres; corrects the reconstruction's scale")
     ap.add_argument("--backend", default="auto", choices=["auto", "arkit", "mapanything", "vggt"])
@@ -47,7 +50,7 @@ def main(argv=None):
                          "style: one wall style for the whole room on every wall; "
                          "pattern: plain walls are blocks, patterned walls get their own pattern on every block; "
                          "items: plain walls + things hanging on them; photo: full photos; none: blocks only")
-    ap.add_argument("--texture-px", type=int, help="texture pixels per block (default 64 for items, 128 for photo)")
+    ap.add_argument("--texture-px", type=int, help="texture pixels per block (default 128 for photo, else 64)")
     ap.add_argument("--save-cloud", action="store_true", help="also write the labelled point cloud (.npz)")
     ap.add_argument("--perceptron", action="store_true",
                     help="also detect every object with Perceptron Mk1.5 (sends the photos to api.perceptron.inc; people "
@@ -92,8 +95,8 @@ def main(argv=None):
     ctx = {}
     object_instances = detections.pop("_instances", []) if detections else []
     plan = build_plan(pts, rgb, cats, surface_palette(opts.mc_jar, cache), scale=opts.scale, metric=metric, log=log, ctx=ctx,
-                      known_height=opts.known_height, object_instances=object_instances)
-    plan["source"] = {"photos": [p.name for p in paths], "metric": metric}
+                      known_height=opts.known_height, object_instances=object_instances, enlarge=opts.enlarge)
+    plan["source"] = {"photos": [p.name for p in paths], "metric": metric, "enlarge": None if opts.scale else opts.enlarge}
     out = opts.out or opts.images / "plan.json"
     if detections:
         # Every detected name and what it became, so missing templates are easy to spot.

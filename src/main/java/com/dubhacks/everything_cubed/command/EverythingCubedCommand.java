@@ -101,12 +101,16 @@ public final class EverythingCubedCommand {
 		return 1;
 	}
 
-	/** Blocking. Reads a plan.json directly, reuses a fresh one next to the photos, or runs the analyzer. */
+	/**
+	 * Blocking. A plan.json given directly is built as it is. A folder is analysed again on every build while
+	 * "alwaysReanalyze" is true in the config (the default); with it false, a plan.json newer than every photo
+	 * is reused.
+	 */
 	private static JsonObject loadPlan(CommandSourceStack src, Path input, Double scale) throws IOException, InterruptedException {
 		if (Files.isRegularFile(input)) return AnalyzerRunner.readPlan(input);
 		Path existing = input.resolve("plan.json");
-		if (scale == null && AnalyzerRunner.planIsFresh(input, existing)) {
-			info(src, "Using existing plan.json (delete it to re-analyse the photos).");
+		if (scale == null && !AnalyzerRunner.alwaysReanalyze() && AnalyzerRunner.planIsFresh(input, existing)) {
+			info(src, "Using existing plan.json (set \"alwaysReanalyze\": true in config/everything_cubed.json to re-analyse every time).");
 			return AnalyzerRunner.readPlan(existing);
 		}
 		info(src, "Analysing photos - the first run downloads the vision models and can take a while.");

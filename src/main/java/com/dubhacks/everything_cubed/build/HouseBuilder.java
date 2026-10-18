@@ -92,7 +92,7 @@ public class HouseBuilder {
 
 	private static BlockState block(String id) {
 		Identifier key = Identifier.tryParse(id.contains(":") ? id : "minecraft:" + id);
-		if (key == null) return Blocks.STONE.defaultBlockState();
+		if (key == null) return null; // so first() tries its next id
 		return BuiltInRegistries.BLOCK.getOptional(key).map(Block::defaultBlockState).orElse(null);
 	}
 
@@ -304,6 +304,27 @@ public class HouseBuilder {
 							if (claim(in[0], r + 1, in[1])) set(in[0], r + 1, in[1], first("black_concrete"));
 						}
 				}
+				case "whiteboard", "exit_sign", "fire_extinguisher" -> {
+					// Flat things on the wall: a model in the interior cells along it, its back against the wall.
+					int[] a = insideCell(side, u0), b = insideCell(side, u0 + w - 1);
+					int x0 = Math.min(a[0], b[0]), z0 = Math.min(a[1], b[1]);
+					int top = Math.min(H - 1, y0 + Math.max(1, h));
+					FurnitureModel m = new FurnitureModel(x0, z0, Math.abs(b[0] - a[0]) + 1, Math.abs(b[1] - a[1]) + 1, top, out.getOpposite());
+					switch (type) {
+						case "whiteboard" -> {
+							String col = o.has("color") ? o.get("color").getAsString() : "white";
+							FurnitureDesigns.whiteboard(m, y0, y0 + Math.max(1, h), first(col + "_concrete", "white_concrete"));
+						}
+						case "exit_sign" -> {
+							FurnitureDesigns.exitSign(m, y0);
+							// An exit sign is a light: a dim one, like the real thing.
+							if (claim(a[0], y0 + 1, a[1]))
+								set(a[0], y0 + 1, a[1], Blocks.LIGHT.defaultBlockState().setValue(LightBlock.LEVEL, 6));
+						}
+						default -> FurnitureDesigns.fireExtinguisher(m, y0);
+					}
+					furnish(m, List.of());
+				}
 				case "sconce" -> {
 					int[] in = insideCell(side, u0);
 					if (claim(in[0], y0 + 1, in[1]))
@@ -488,7 +509,17 @@ public class HouseBuilder {
 					seat(x0, z0, 0.7f, 0.44f, furnish(m, List.of()));
 				}
 			}
-			case "trash" -> fill(x0, z0, 1, 1, 1, Blocks.COMPOSTER.defaultBlockState());
+			case "trash" -> {
+				// Vanilla has no trash can (this was a composter): a small bin model in the colour seen in the photo.
+				if (inside(x0, z0) && claim(x0, 1, z0)) {
+					FurnitureModel m = new FurnitureModel(x0, z0, 1, 1, 0.9, facing);
+					FurnitureDesigns.trashCan(m, first(color + "_concrete", "gray_concrete"));
+					String group = furnish(m, List.of());
+					// Right-click it holding something to throw that away; punch it to remove the bin.
+					undo.rememberEntity(FurnitureInteractions.spawnHitbox(level, Vec3.atBottomCenterOf(origin.offset(x0, 1, z0)),
+							0.62f, 0.9f, FurnitureInteractions.TRASH, group));
+				}
+			}
 			case "fireplace" -> {
 				fill(x0, z0, w, d, 1, Blocks.BRICKS.defaultBlockState());
 				int cx = x0 + w / 2, cz = z0 + d / 2;
@@ -513,6 +544,24 @@ public class HouseBuilder {
 				}
 			}
 			case "plant" -> fill(x0, z0, 1, 1, 1, first(PLANTS[plantIndex++ % PLANTS.length], "flower_pot"));
+			case "projector" -> {
+				int y = Math.max(1, Math.min(H, o.has("y") ? o.get("y").getAsInt() : H));
+				if (inside(x0, z0) && claim(x0, y, z0)) {
+					FurnitureModel m = new FurnitureModel(x0, z0, 1, 1, H - 1, facing);
+					FurnitureDesigns.projector(m, y - 1, H);
+					furnish(m, List.of());
+				}
+			}
+			case "fan" -> {
+				int fh = Math.max(1, Math.min(2, h));
+				boolean free = inside(x0, z0);
+				for (int y = 1; free && y <= fh; y++) free = claim(x0, y, z0);
+				if (free) {
+					FurnitureModel m = new FurnitureModel(x0, z0, 1, 1, fh * 0.85, facing);
+					FurnitureDesigns.fan(m);
+					furnish(m, List.of());
+				}
+			}
 			case "chandelier" -> {
 				// Hangs from the ceiling: body rows y..y+h-1, rod up to the ceiling. The model's own height is H - 1
 				// so its light probe sits in the top air layer, not inside the ceiling.
@@ -601,9 +650,6 @@ public class HouseBuilder {
 					}
 		return filled;
 	}
-
-	// ------------------------------------------------------------------------------------- finishing
-
 
 	// ------------------------------------------------------------------------------------- photo walls
 

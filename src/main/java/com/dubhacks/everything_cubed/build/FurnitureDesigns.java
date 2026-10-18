@@ -20,6 +20,8 @@ final class FurnitureDesigns {
 	private static final BlockState COUNTERTOP = first("polished_andesite");
 	private static final BlockState GOLD = first("gold_block");
 	private static final BlockState AMBER = first("shroomlight", "glowstone");
+	private static final BlockState RED = first("red_concrete");
+	private static final BlockState EXIT_GREEN = first("lime_concrete");
 
 	/** Height of a vanilla bed's mattress. */
 	private static final double BED_TOP = 9 / 16.0;
@@ -113,91 +115,6 @@ final class FurnitureDesigns {
 			m.box(cx - 0.32, cy - 0.32, d, cx + 0.32, cy + 0.32, d + 0.03, STEEL);
 			m.box(cx - 0.24, cy - 0.24, d + 0.03, cx + 0.24, cy + 0.24, d + 0.05, DARK_STEEL);
 		}
-	}
-
-	/** Newly Added Furniture */
-	/** Podium: a slanted reading stand for presentations with a base and angled top. */
-	static void podium(FurnitureModel m, BlockState wood) {
-
-		double w = m.w, d = m.d;
-
-		double cx = w / 2.0;
-
-		// Central vertical pillar/base (using dynamic depth 'd')
-
-		m.box(cx - 0.25, 0, d * 0.25, cx + 0.25, 0.9, d * 0.75, wood);
-
-		// Flat base plate on the floor for stability
-
-		m.box(cx - 0.35, 0, d * 0.15, cx + 0.35, 0.08, d * 0.85, DARK_STEEL);
-
-		// Slanted reading surface / desktop on top
-
-		m.box(cx - 0.35, 0.9, d * 0.15, cx + 0.35, 1.05, d * 0.85, wood);
-
-		// Small lip/ledge at the bottom of the slant so notes don't slide off
-
-		m.box(cx - 0.35, 0.92, d * 0.12, cx + 0.35, 1.02, d * 0.18, IRON);
-
-	}
-
-/** Newly Added Furniture */
-	/** Laptop on a desk: base, open screen, and keyboard detailing. */
-
-	static void laptop(FurnitureModel m) {
-
-		double w = m.w;
-
-		// Center the laptop nicely on whatever width the desk/surface has
-
-		double cx = w / 2.0;
-
-		// Laptop base (keyboard tray) lying flat on the surface
-
-		m.box(cx - 0.28, 0.82, 0.3, cx + 0.28, 0.85, 0.65, STEEL);
-		
-		// Open screen angled upward at the back edge
-
-		m.box(cx - 0.28, 0.85, 0.3, cx + 0.28, 1.22, 0.34, BLACK);
-	}
-
-/** Newly Added Furniture */
-	/**A whiteboard on a wall */
-
-	static void whiteboard(FurnitureModel m) {
-
-		double w = m.w, h = m.h;
-
-		// having the whiteboard on a wall with z = 0
-		m.box(0, 0, 0, w, h, 0.04, STEEL);
-
-		// White writing surface inside the frame
-
-		m.box(0.04, 0.04, 0.02, w - 0.04, h - 0.04, 0.05, WHITE);
-
-		// Marker tray running along the bottom edge
-
-		m.box(0.1, 0.04, 0.05, w - 0.1, 0.1, 0.18, DARK_STEEL);
-
-	}
-
-/** Newly Added Furniture */
-	/** Modern indoor plant pot with foliage. */
-
-	static void pottedPlant(FurnitureModel m) {
-
-		// Ceramic pot base
-
-		m.box(0.3, 0, 0.3, 0.7, 0.4, 0.7, WHITE);
-
-		// Soil
-
-		m.box(0.32, 0.35, 0.32, 0.68, 0.4, 0.68, BLACK);
-
-		// Plant leaves / greenery
-
-		m.box(0.2, 0.4, 0.2, 0.8, 1.1, 0.8, planks("oak"));
-
 	}
 
 	/** Kitchen counter around barrels: cupboard doors with handles under a stone worktop. */
@@ -311,6 +228,61 @@ final class FurnitureDesigns {
 		m.box(in - 0.02, mid - 0.03, in - 0.02, w - in + 0.02, mid + 0.03, d - in + 0.02, GOLD); // middle band
 		m.box(in + 0.05, y0 + 0.08, in + 0.05, w - in - 0.05, y0 + 0.15, d - in - 0.05, GOLD); // bowl
 		m.box(cx - 0.08, y0, cz - 0.08, cx + 0.08, y0 + 0.08, cz + 0.08, BLACK);     // finial
+	}
+
+	/** Whiteboard (or chalkboard) on the wall behind it, from height y0 to y1: frame, writing surface, marker tray. */
+	static void whiteboard(FurnitureModel m, double y0, double y1, BlockState surface) {
+		double w = m.w;
+		m.box(0, y0, 0, w, y1, 0.04, STEEL);                                  // aluminium frame
+		m.box(0.05, y0 + 0.05, 0.04, w - 0.05, y1 - 0.05, 0.06, surface);     // writing surface
+		m.box(0.05, y0 + 0.02, 0.04, w - 0.05, y0 + 0.06, 0.14, STEEL);       // marker tray
+	}
+
+	/** Exit sign high on the wall in row y0 (blocks above the floor): white housing, glowing green face. */
+	static void exitSign(FurnitureModel m, double y0) {
+		m.box(0.15, y0 + 0.55, 0, 0.85, y0 + 0.92, 0.08, WHITE);
+		m.glow(0.2, y0 + 0.6, 0.08, 0.8, y0 + 0.87, 0.1, EXIT_GREEN);
+	}
+
+	/** Fire extinguisher on a wall bracket in row y0: red cylinder, valve, handle and hose. */
+	static void fireExtinguisher(FurnitureModel m, double y0) {
+		m.box(0.38, y0 + 0.3, 0, 0.62, y0 + 0.36, 0.08, DARK_STEEL);         // bracket
+		m.box(0.4, y0 + 0.12, 0.06, 0.6, y0 + 0.74, 0.26, RED);               // cylinder
+		m.box(0.45, y0 + 0.74, 0.11, 0.55, y0 + 0.81, 0.21, DARK_STEEL);      // valve
+		m.box(0.43, y0 + 0.81, 0.1, 0.63, y0 + 0.85, 0.22, BLACK);            // handle
+		m.box(0.6, y0 + 0.3, 0.14, 0.64, y0 + 0.8, 0.18, BLACK);              // hose
+	}
+
+	/** Ceiling projector in row y0 hanging from the ceiling at {@code top}, lens on its front. */
+	static void projector(FurnitureModel m, double y0, double top) {
+		double b0 = y0 + 0.55, b1 = y0 + 0.78;
+		if (top - b1 > 0.05) m.box(0.47, b1, 0.47, 0.53, top, 0.53, BLACK); // mount rod
+		m.box(0.2, b0, 0.15, 0.8, b1, 0.85, WHITE);                          // body
+		m.box(0.55, b0 + 0.05, 0.85, 0.72, b1 - 0.05, 0.9, BLACK);           // lens
+		m.box(0.25, b1 - 0.02, 0.2, 0.4, b1, 0.35, DARK_STEEL);              // vents
+	}
+
+	/**
+	 * Trash can standing on the floor, in {@code body} colour: a rounded body (two crossed boxes), a rim at the top
+	 * and the dark opening inside it.
+	 */
+	static void trashCan(FurnitureModel m, BlockState body) {
+		double top = Math.min(0.9, m.h);
+		m.box(0.27, 0, 0.22, 0.73, top - 0.06, 0.78, body);
+		m.box(0.22, 0, 0.27, 0.78, top - 0.06, 0.73, body);
+		m.box(0.24, top - 0.06, 0.19, 0.76, top, 0.81, body);    // rim
+		m.box(0.19, top - 0.06, 0.24, 0.81, top, 0.76, body);
+		m.box(0.27, top - 0.02, 0.27, 0.73, top + 0.001, 0.73, BLACK); // opening
+		m.box(0.25, 0, 0.25, 0.75, 0.03, 0.75, BLACK);           // base
+	}
+
+	/** Tower fan standing on the floor: round base, tall body, front grille. */
+	static void fan(FurnitureModel m) {
+		double h = m.h;
+		m.box(0.2, 0, 0.2, 0.8, 0.06, 0.8, BLACK);
+		m.box(0.33, 0.06, 0.33, 0.67, h - 0.05, 0.67, BLACK);
+		m.box(0.38, 0.15, 0.67, 0.62, h - 0.15, 0.69, DARK_STEEL);
+		m.box(0.35, h - 0.05, 0.35, 0.65, h, 0.65, STEEL);
 	}
 
 	// ------------------------------------------------------------------------------------- parts

@@ -5,6 +5,8 @@ import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Brightness;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
@@ -13,6 +15,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.Interaction;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LightBlock;
@@ -28,6 +31,7 @@ import java.util.UUID;
  * <ul>
  *   <li>right-click a seat (chair, sofa, toilet) to sit on it, sneak to get up;</li>
  *   <li>right-click a lamp to switch it on or off;</li>
+ *   <li>right-click a trash can with something in your main hand to throw that stack away;</li>
  *   <li>punch a seat or lamp, or break the real block inside a model, to remove that piece of furniture.</li>
  * </ul>
  * Tags are saved with the entities, so this keeps working after a restart.
@@ -35,6 +39,7 @@ import java.util.UUID;
 public final class FurnitureInteractions {
 	static final String SEAT = "everything_cubed_seat";
 	static final String LAMP = "everything_cubed_lamp";
+	static final String TRASH = "everything_cubed_trash";
 	static final String GLOW = "everything_cubed_glow";
 	private static final String GROUP = "everything_cubed_group:";
 	/** On one display of a model, per real block inside it: breaking that block removes the model. */
@@ -88,6 +93,15 @@ public final class FurnitureInteractions {
 		}
 		if (box.entityTags().contains(LAMP)) {
 			toggleLamp(server, box);
+			return InteractionResult.SUCCESS;
+		}
+		if (box.entityTags().contains(TRASH)) {
+			// Main hand only: an empty main hand must not throw away a shield or totem held in the off hand.
+			if (hand != InteractionHand.MAIN_HAND) return InteractionResult.PASS;
+			ItemStack held = player.getItemInHand(hand);
+			if (held.isEmpty()) return InteractionResult.SUCCESS;
+			player.setItemInHand(hand, ItemStack.EMPTY);
+			server.playSound(null, box.blockPosition(), SoundEvents.COMPOSTER_FILL, SoundSource.BLOCKS, 1f, 1f);
 			return InteractionResult.SUCCESS;
 		}
 		return InteractionResult.PASS;

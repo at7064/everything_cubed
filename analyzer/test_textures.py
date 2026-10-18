@@ -307,3 +307,38 @@ assert st_a["walls"] == 2 and abs(prof_a[2 * px].mean() - 229) < 10, (st_a, prof
 prof_b, _, st_b = walltex.room_style([(w1, m1 & (xx < 2 * px)), (w2, m2 & (xx > 8 * px)), (dark, np.ones(yy.shape, bool))], px)
 assert st_b["walls"] == 2 and abs(prof_b[2 * px].mean() - 229) < 10, (st_b, prof_b[2 * px])
 print("room style OK")
+
+# Review regressions. Shelving never stands in a doorway or on furniture; a mirrored wall keeps its own doors clear.
+p3 = fplan()
+p3["openings"].append({"type": "door", "side": "north", "u": 3, "w": 1, "y": 0, "h": 2})
+p3["objects"] = [{"type": "bed", "x": 0, "z": 0, "w": 2, "d": 2, "h": 1}]
+shelf_hi = none.copy(); shelf_hi[2:4, 0:5] = 1          # shelving seen above the door and over the bed
+apply_wall_features(p3, {"north": {"seen": seen_all, "window": none, "bookshelf": shelf_hi},
+                         "south": {"seen": none, "window": none, "bookshelf": none}}, log=lambda m: None)
+cols_built = sorted(u for o in p3["objects"] if o.get("block") == "minecraft:bookshelf" for u in range(o["x"], o["x"] + o["w"]))
+assert cols_built == [2, 4], cols_built                 # not over the bed (0, 1), not in the doorway (3)
+p4 = fplan()
+p4["openings"] = [{"type": "door", "side": "south", "u": 6, "w": 1, "y": 0, "h": 2}]
+apply_wall_features(p4, {"north": {"seen": seen_all, "window": glass, "bookshelf": none},
+                         "south": {"seen": none, "window": none, "bookshelf": none}}, log=lambda m: None, mirror=True)
+for o in p4["openings"]:
+    if o["side"] == "south" and o["type"] == "window":
+        assert not (o["u"] <= 6 < o["u"] + o["w"] and o["y"] < 2), ("window over the door", o)
+
+# The default wall mode end to end. This small room's walls are a gentle gradient, judged plain: no maps on bare
+# walls. With the plain test switched off, every wall gets the same room-style picture.
+plain_tex = render_walls(views, labels, category_lut(ID2LABEL, ADE_TO_CATEGORY), ctx, Path(tempfile.mkdtemp()), px=16,
+                         detail="style", log=lambda m: None)
+assert not any(w["dither"] for w in plain_tex["walls"].values()), "a plain room style puts no style picture on walls"
+saved = walltex.STYLE_PLAIN_DE
+walltex.STYLE_PLAIN_DE = -1.0
+st_out = Path(tempfile.mkdtemp())
+tex_s = render_walls(views, labels, category_lut(ID2LABEL, ADE_TO_CATEGORY), ctx, st_out, px=16, detail="style", log=lambda m: None)
+walltex.STYLE_PLAIN_DE = saved
+imgs = {s: np.asarray(Image.open(st_out / w["image"])) for s, w in tex_s["walls"].items()}
+assert imgs, "a textured room style"
+rows_seen = {im.shape[0] for im in imgs.values()}
+assert len(rows_seen) == 1 and all(w["dither"] for w in tex_s["walls"].values())
+first = next(iter(imgs.values()))
+assert all(np.array_equal(im[:, :16], first[:, :16]) for im in imgs.values()), "the same style on every wall"
+print("review regressions + style end to end OK")
