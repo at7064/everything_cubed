@@ -15,7 +15,8 @@ Only whole pieces of furniture change, and only from RoomPlan's objects; no sing
   row. Spectate runs RoomPlan afresh, so its first boxes are partial: a box inside the scanned one is the same piece. Its new footprint, height and
   facing come from roomplan.place_object, exactly as build places furniture; its material and colour stay;
 - a new piece is added when RoomPlan identifies a new object with medium or high confidence, stable for
-  MOVE_UPDATES updates;
+  MOVE_UPDATES updates, and only as an extra one: while a scanned piece of its kind has not been seen live, a live
+  object of that kind is taken to be that piece (RoomPlan once reported the room's one bed 1.8 m off), not a new one;
 - anything RoomPlan is unsure of, or stops reporting, stays as built.
 People are found in the camera frames (the `person` mask the phone sends with LiDAR depth) and reported as tracked
 positions, which the mod shows as villagers. A person lying on a bed (low and flat over a built bed, LYING_FRAMES
@@ -217,6 +218,7 @@ class Furniture:
             f"linked to RoomPlan objects")
         self.live = {}             # live RoomPlan id -> {"scan", "index": plan object index or None, "anchor": Pose}
         self.pending = {}          # live id -> (target key, updates in a row)
+        self.held = set()          # live ids not added because a scanned piece of their kind is unseen (logged once)
 
     def _occupancy(self, skip=None):
         occ = -np.ones((self.room.W, self.room.D), int)
@@ -255,6 +257,11 @@ class Furniture:
             log(f"[spectate] live {cat} {rid[:8]} ({pose.describe(self.fr)}) matches no scanned {kind(cat)} within "
                 f"{MATCH_M} m: a new piece if RoomPlan keeps it")
 
+    def _unseen_scanned(self, k):
+        """How many scanned pieces of kind k no live object has been matched to."""
+        claimed = {v["scan"] for v in self.live.values() if v["scan"] is not None}
+        return sum(1 for j, (kk, _, _) in enumerate(self.scanned) if kk == k and j not in claimed)
+
     def _stable(self, rid, key):
         prev = self.pending.get(rid)
         n = prev[1] + 1 if prev and prev[0] == key else 1
@@ -277,7 +284,16 @@ class Furniture:
                 continue
             idx = link["index"]
             if link["anchor"] is None:
-                # Not one of the built pieces: a new piece, once RoomPlan has kept it in the same place a while.
+                # Not one of the built pieces: a new piece, once RoomPlan has kept it in the same place a while, and
+                # only when every scanned piece of its kind is accounted for live.
+                unseen = self._unseen_scanned(kind(cat))
+                if unseen:
+                    if rid not in self.held:
+                        self.held.add(rid)
+                        log(f"[spectate] live {cat} {rid[:8]} not added: {unseen} scanned {kind(cat)}(s) not seen live "
+                            f"yet, so it is taken to be one of them")
+                    self.pending.pop(rid, None)
+                    continue
                 new = self._place(cat, pose)
                 if new is not None and self._stable(rid, ("add", new["x"], new["z"], new["w"], new["d"], new["facing"])):
                     log(f"[spectate] add {cat} at block ({new['x']}, {new['z']}) {new['w']}x{new['d']} facing "

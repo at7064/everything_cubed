@@ -179,7 +179,8 @@ objects; no single blocks are ever placed:
   `roomplan.place_object`, as in build; material and colour stay. The mod takes the whole model away and builds it
   again at the new place;
 - a new piece is added only when RoomPlan identifies a new object with medium or high confidence, stable for 5
-  updates;
+  updates, and only as an extra one: while a scanned piece of its kind hasn't been seen live, a live object of that
+  kind far from it is taken to be that piece, not a second one (RoomPlan once reported a room's one bed 1.8 m off);
 - low-confidence objects, jitter within a footprint, and objects RoomPlan stops reporting change nothing;
 - people are found in the frames (the phone's person mask over LiDAR depth) and reported as tracked positions,
   which the mod shows as villagers.

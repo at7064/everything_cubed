@@ -154,7 +154,7 @@ def send(data):
     moves.extend(out["moves"]); adds.extend(out["adds"]); people = out["people"]; ms.append(out["ms"])
 
 
-def live(chair=(1.5, 1.5), table=True, sofa=None, jitter=0.0, bed=None):
+def live(chair=(1.5, 1.5), table=True, sofa=None, jitter=0.0, bed=None, bed_id="live-bed"):
     rng = np.random.default_rng(len(ms))
     j = lambda c: (c[0] + rng.uniform(-jitter, jitter), c[1] + rng.uniform(-jitter, jitter))
     objs = [rp("live-chair", "chair", j(chair), CHAIR)]
@@ -163,7 +163,7 @@ def live(chair=(1.5, 1.5), table=True, sofa=None, jitter=0.0, bed=None):
     if sofa:
         objs.append(rp("live-sofa", "sofa", (1.5, 4.0), SOFA, conf=sofa))
     if bed:
-        objs.append(rp("live-bed", "bed", bed[0], bed[1], yaw=90))
+        objs.append(rp(bed_id, "bed", bed[0], bed[1], yaw=90))
     send(room_message(objs))
 
 
@@ -173,6 +173,13 @@ for _ in range(10):
     live(jitter=0.05)
 assert not moves and not adds, (moves, adds)
 print("room as scanned, and with 5 cm jitter: nothing changes")
+
+# RoomPlan reports the room's one bed, full size, 1.9 m from where it was scanned (a real session put it at the far
+# wall). The scanned bed hasn't been seen live, so this is taken to be it: no second bed is added.
+for _ in range(8):
+    live(bed=((3.5, 3.9), BED), bed_id="ghost-bed")
+assert not moves and not adds, (moves, adds)
+print("one bed reported far from where it was scanned: no second bed")
 
 # Spectate runs RoomPlan afresh: its first bed box covers only the half it has seen, so its centre is 45 cm off the
 # scanned one. Inside the scanned box, it is the same bed: nothing moves.
