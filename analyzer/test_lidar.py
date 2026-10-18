@@ -111,6 +111,10 @@ def run(with_room, detail):
                 assert np.array(w["tiles"], bool).all(), side
                 img = np.asarray(Image.open(folder / w["image"]))
                 assert len(np.unique(img.reshape(-1, 3), axis=0)) == 1, side
+                # Painted exactly the wall block's colour: where no frame fits (behind a bed) the block matches.
+                from palette import WALL_COLOURS
+                block = plan["walls"][side]["palette"][0]
+                assert tuple(img.reshape(-1, 3)[0]) == WALL_COLOURS[block], (side, img.reshape(-1, 3)[0], block)
         return plan
 
 

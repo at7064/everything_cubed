@@ -173,6 +173,7 @@ MIN_POINTS.update({"backpack": 20, "globe": 15, "locker": 60, "drinking_fountain
 
 SIDES = ("north", "south", "west", "east")
 AUTO_SCALE = 1.25  # default blocks per metre
+BED_LENGTH_M = 1.9  # a bed is at least this long (metres) when its width is turned into beds
 ENLARGE = 1.25     # automatic scales are this much larger: one-block furniture leaves more room to move
                    # (tuned with the Apache MapAnything, the default; the research variant measures rooms ~20% larger)
 OPPOSITE = {"north": "south", "south": "north", "west": "east", "east": "west"}
@@ -1093,7 +1094,11 @@ def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
     if cat == "bed":
         long_x = (hi[0] - lo[0]) >= (hi[2] - lo[2])
         width_m = (hi[2] - lo[2]) if long_x else (hi[0] - lo[0])
-        n_beds = int(np.clip(round(width_m * s), 1, 4))
+        length_m = max((hi[0] - lo[0]) if long_x else (hi[2] - lo[2]), BED_LENGTH_M)
+        # Minecraft beds are always 2 blocks long, so the bed keeps its real proportions side by side: a single
+        # (about 1 x 2 m) is one bed, a double, queen or king two. Counting from the width alone made a 1.1 m
+        # single three beds wide at 2.5 blocks/m, wider than long. A bed seen only in part is taken as full length.
+        n_beds = int(np.clip(round(2 * width_m / length_m), 1, 4))
         dists = room.wall_dist(c[0], c[2])
         if long_x:
             head = "west" if dists["west"] < dists["east"] else "east"

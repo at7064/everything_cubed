@@ -474,17 +474,6 @@ def _edges(lab_l, looked, src):
     return edge
 
 
-def wall_paint(img, seen, room_rgb):
-    """This wall's own paint colour: the median of its seen pixels close to the room's paint (so what hangs on
-    it does not shift it). Falls back to the room's paint when the wall was hardly seen."""
-    pix = img[seen & (img.min(-1) < GLARE)]
-    if len(pix) >= 50:
-        near = _de(srgb_to_lab(pix), srgb_to_lab(np.asarray(room_rgb, float))) < ITEM_DE
-        if near.sum() >= 50:
-            return np.median(pix[near], axis=0)
-    return np.asarray(room_rgb, float)
-
-
 def _local_paint(img, looked, paint_rgb, px):
     """What the paint looks like around each pixel in the photo (seams between photos and leftover shading move it
     a little): a blur over the pixels close to the wall's paint. Returns (the lightly smoothed photo's CIELAB -
@@ -632,17 +621,20 @@ def render_walls(views, label_maps, cat_names_of_pixel, ctx, out_dir: Path, px=6
     log("[tex] wall paint: " + ", ".join(b.split(":")[1] for b in unique_blocks))
 
     if detail == "uniform":
-        # Every wall block is a map: the room's one measured paint colour, things on the wall drawn on top.
-        # The blocks behind (seen only where no frame fits) are the closest wall block to that colour.
+        # Every wall block is a map, things on the wall drawn on top. The paint is exactly the colour of the wall
+        # block closest to the room's measured colour (as _snap does for the other modes): where no frame fits,
+        # behind a bed or a sofa against the wall, the bare block shows, and it must look the same as the maps.
         paint = room_paint(proj3, paints_lab, default_paint, fallback_rgb)
         balanced = balance_photos(proj3, paint)
         block = WALL_PALETTE.nearest(paint)
-        log(f"[tex] uniform wall colour rgb{tuple(int(round(c)) for c in paint)} (blocks behind: {block.split(':')[1]})")
+        block_rgb = np.array(WALL_COLOURS[block], float)
+        log(f"[tex] uniform wall colour rgb{tuple(int(round(c)) for c in paint)} -> {block.split(':')[1]} "
+            f"rgb{tuple(int(c) for c in block_rgb)}")
         walls, wall_blocks = {}, {}
         (out_dir / "textures").mkdir(exist_ok=True)
         for side in sides:
             seen = proj[side][1]
-            own = wall_paint(balanced[side], seen, paint)   # each wall its own flat colour
+            own = block_rgb   # every wall the block's colour, so frames and bare blocks match
             out, items = compose_uniform(balanced[side], seen, own, px, src=proj3[side][3], detected=detected[side])
             rows, cols = room.H, room.wall_len(side)
             name = f"textures/tex_{side}.png"

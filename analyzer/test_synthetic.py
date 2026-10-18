@@ -139,7 +139,9 @@ loft = next(o for o in beds if o.get("style") == "loft")
 desks = [o for o in rp["objects"] if o["type"] == "desk"]
 assert len(desks) == 1, rp["objects"]
 dk = desks[0]
-under = loft["x"] <= dk["x"] < loft["x"] + loft["w"] and loft["z"] <= dk["z"] < loft["z"] + loft["d"]
+# (The single loft is one bed wide; the desk, 2 blocks deep, stands at least partly under it.)
+under = (dk["x"] < loft["x"] + loft["w"] and loft["x"] < dk["x"] + dk["w"] and
+         dk["z"] < loft["z"] + loft["d"] and loft["z"] < dk["z"] + dk["d"])
 assert under, ("the desk stands under the loft bed", loft, dk)
 from roomplan import ladder_cells
 for b in beds:

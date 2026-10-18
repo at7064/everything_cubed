@@ -59,3 +59,14 @@ assert 1.385 * 0.9 <= s2 <= 1.385 * 1.35 and s2 != 1.385, s2
 assert round(0.89 * s2) == 2 and round(1.27 * s2) == 2 and round(0.82 * s2) == 1 and round(0.83 * s2) == 1, s2
 assert seating_scale(s2, clusters, log=print) == s2, "an even scale is kept"
 print(f"scale 1.385 -> {s2:.2f}: OK")
+
+# Beds keep their proportions: Minecraft beds are 2 long, so a 1.1 x 2.0 m single is one bed wide and a 1.6 m queen
+# two, at this room's scale too (counting from the width alone made the single 3 beds wide at 2.5 blocks/m).
+from roomplan import place_object
+big = Room(0, 4.0, 0, 4.0, 2.6, 2.5)
+for width, beds in ((1.12, 1), (1.6, 2), (1.95, 2)):
+    bed_cl = {"lo": np.array([1.0, 0, 1.0]), "hi": np.array([1.0 + width, 0.6, 3.0]), "c": np.array([1.0 + width / 2, 0.3, 2.0]),
+              "rgb": np.array([200.0, 200, 200]), "n": 1000}
+    b = place_object("bed", bed_cl, big, np.full((big.W, big.D), -1), [], lambda x, z: ("west", 1.0))
+    assert sorted((b["w"], b["d"])) == sorted((beds, 2)), (width, b)
+print("beds: single 1 wide, queen and king 2 wide: OK")
