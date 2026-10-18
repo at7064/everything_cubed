@@ -188,6 +188,7 @@ def photo_scene(ply, frames, max_faces_per_frame=6000, shell=None):
     batches = []
     bounds_lo = np.full(3, np.inf)
     bounds_hi = np.full(3, -np.inf)
+    vertical_slopes = []
     record = np.dtype([("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("u", "<f4"), ("v", "<f4")])
     for index, ((start, stop), path) in enumerate(zip(ranges, frames)):
         block = faces[start:stop]
@@ -237,6 +238,10 @@ def photo_scene(ply, frames, max_faces_per_frame=6000, shell=None):
             continue
         main = align_wall_patches(main, frame_shell)
         packed = main.view(record).reshape(-1)
+        top = packed[packed["v"] < 0.2]["y"]
+        bottom = packed[packed["v"] > 0.8]["y"]
+        if len(top) and len(bottom):
+            vertical_slopes.append(float(np.median(bottom) - np.median(top)))
         for axis, key in enumerate(("x", "y", "z")):
             bounds_lo[axis] = min(bounds_lo[axis], float(packed[key].min()))
             bounds_hi[axis] = max(bounds_hi[axis], float(packed[key].max()))
@@ -252,6 +257,7 @@ def photo_scene(ply, frames, max_faces_per_frame=6000, shell=None):
                         "vertices_b64": base64.b64encode(packed.tobytes()).decode("ascii")})
         print(f"[photo] frame {index + 1}/{len(frames)}: {len(packed) // 3} photo-patch triangles, grid {size[0]}x{size[1]}", flush=True)
     return {"bounds": [bounds_lo.tolist(), bounds_hi.tolist()], "batches": batches,
+            "flip_xy": bool(vertical_slopes and np.median(vertical_slopes) > 0),
             "total_faces": sum(b["faces"] for b in batches)}
 
 
@@ -263,17 +269,19 @@ canvas{display:block;width:100vw;height:100vh;cursor:grab}canvas:active{cursor:g
 h1{font-size:17px;margin:0 0 7px}.muted{color:#acc0c7;font-size:12px;line-height:1.5}
 label{display:block;margin-top:12px}input[type=range]{width:100%}button,a{margin-top:9px;border:1px solid #5a7480;background:#243945;color:#eff;border-radius:7px;padding:7px 10px;cursor:pointer;text-decoration:none;display:inline-block}
 </style></head><body><canvas id="view"></canvas><div class="panel"><h1>Photo-textured 3D</h1>
-<div id="stats" class="muted"></div><div class="muted">Original video pixels cut into patches and placed at their measured 3D positions. Drag to orbit · scroll to zoom.</div>
+<div id="stats" class="muted"></div><div class="muted">Drag to look · WASD to move · Q/E down/up · scroll to zoom.</div>
 <label id="baseLabel" style="display:none"><input id="base" type="checkbox" checked> Show original mesh</label>
 <label><input id="combine" type="checkbox" checked> <span id="combineLabel">Combine all frames</span></label>
 <label>Frame <span id="frameName"></span><input id="frame" type="range" min="0" max="0" value="0"></label>
-<button id="reset">Reset view</button> <a href="view.html">Colored solid / room model</a></div><script>
+<button id="enter">Enter room</button> <button id="reset">Reset view</button> <a href="view.html">Colored solid / room model</a></div><script>
 const scene=__SCENE__,canvas=document.getElementById('view'),gl=canvas.getContext('webgl',{antialias:true}),fallbackCtx=gl?null:canvas.getContext('2d');
+// Older reconstructions can use downward-positive Y; reflect X and Y together in that case.
 const frameSlider=document.getElementById('frame'),combine=document.getElementById('combine'),frameName=document.getElementById('frameName'),baseToggle=document.getElementById('base');
 if(scene.base_mesh){document.getElementById('baseLabel').style.display='block';combine.checked=false}
 frameSlider.max=scene.batches.length-1;document.getElementById('stats').textContent=`${scene.batches.length} original frames · ${scene.total_faces.toLocaleString()} textured triangles`;
 const [lo,hi]=scene.bounds;let center=lo.map((v,i)=>(v+hi[i])/2),span=Math.max(...lo.map((v,i)=>hi[i]-v));
-let yaw=-.65,pitch=.55,zoom=span*1.1,drag=false,last=[0,0],program=null,batches=[],baseProgram=null,baseBuffer=null,baseCount=0;
+const flip=scene.flip_xy ? -1 : 1;
+let yaw=scene.flip_xy ? .65 : -.65,pitch=scene.flip_xy ? -.35 : .55,zoom=span*(scene.base_mesh ? .75 : 1.1),drag=false,last=[0,0],program=null,batches=[],baseProgram=null,baseBuffer=null,baseCount=0;
 function shader(type,source){let s=gl.createShader(type);gl.shaderSource(s,source);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s}
 function setup(){if(!gl){document.getElementById('stats').textContent=`${scene.batches.length} original frames · CPU photo preview`;
  document.getElementById('baseLabel').style.display='none';
@@ -281,15 +289,15 @@ function setup(){if(!gl){document.getElementById('stats').textContent=`${scene.b
  for(let item of scene.batches){let raw=atob(item.coarse_b64),bytes=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);
   let image=new Image(),entry={array:new Float32Array(bytes.buffer),count:bytes.length/20,image};image.onload=()=>draw();image.src=item.image;batches.push(entry)}
  resize();return}
- const vs=shader(gl.VERTEX_SHADER,`attribute vec3 aPos;attribute vec2 aUv;varying vec2 vUv;uniform vec3 uCenter;uniform float uYaw,uPitch,uZoom,uAspect;
- void main(){vec3 p=aPos-uCenter;float c=cos(uYaw),s=sin(uYaw);float a=p.x*c-p.z*s,b=p.x*s+p.z*c;float q=b*cos(uPitch)-p.y*sin(uPitch),v=b*sin(uPitch)+p.y*cos(uPitch);float depth=max(.1,uZoom-q);gl_Position=vec4(a/uAspect,v,depth*1.0002-.2,depth);vUv=aUv;}`);
+ const vs=shader(gl.VERTEX_SHADER,`attribute vec3 aPos;attribute vec2 aUv;varying vec2 vUv;uniform vec3 uCenter;uniform float uYaw,uPitch,uZoom,uAspect,uFlip;
+ void main(){vec3 p=aPos-uCenter;p.xy*=uFlip;float c=cos(uYaw),s=sin(uYaw);float a=p.x*c-p.z*s,b=p.x*s+p.z*c;float q=b*cos(uPitch)-p.y*sin(uPitch),v=b*sin(uPitch)+p.y*cos(uPitch);float depth=uZoom-q;gl_Position=vec4(a/uAspect,v,depth*1.0002-.2,depth);vUv=aUv;}`);
  const fs=shader(gl.FRAGMENT_SHADER,`precision mediump float;varying vec2 vUv;uniform sampler2D uImage;void main(){gl_FragColor=texture2D(uImage,vUv);}`);
  program=gl.createProgram();gl.attachShader(program,vs);gl.attachShader(program,fs);gl.linkProgram(program);
  if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(program));gl.useProgram(program);
  gl.uniform1i(gl.getUniformLocation(program,'uImage'),0);gl.enable(gl.DEPTH_TEST);gl.disable(gl.CULL_FACE);
  if(scene.base_mesh){
-  const baseVs=shader(gl.VERTEX_SHADER,`attribute vec3 aPos;attribute vec3 aColor;varying vec3 vColor;uniform vec3 uCenter;uniform float uYaw,uPitch,uZoom,uAspect;
-   void main(){vec3 p=aPos-uCenter;float c=cos(uYaw),s=sin(uYaw);float a=p.x*c-p.z*s,b=p.x*s+p.z*c;float q=b*cos(uPitch)-p.y*sin(uPitch),v=b*sin(uPitch)+p.y*cos(uPitch);float depth=max(.1,uZoom-q);gl_Position=vec4(a/uAspect,v,depth*1.0002-.2,depth);vColor=aColor;}`);
+  const baseVs=shader(gl.VERTEX_SHADER,`attribute vec3 aPos;attribute vec3 aColor;varying vec3 vColor;uniform vec3 uCenter;uniform float uYaw,uPitch,uZoom,uAspect,uFlip;
+   void main(){vec3 p=aPos-uCenter;p.xy*=uFlip;float c=cos(uYaw),s=sin(uYaw);float a=p.x*c-p.z*s,b=p.x*s+p.z*c;float q=b*cos(uPitch)-p.y*sin(uPitch),v=b*sin(uPitch)+p.y*cos(uPitch);float depth=uZoom-q;gl_Position=vec4(a/uAspect,v,depth*1.0002-.2,depth);vColor=aColor;}`);
   const baseFs=shader(gl.FRAGMENT_SHADER,`precision mediump float;varying vec3 vColor;void main(){gl_FragColor=vec4(vColor,1.0);}`);
   baseProgram=gl.createProgram();gl.attachShader(baseProgram,baseVs);gl.attachShader(baseProgram,baseFs);gl.linkProgram(baseProgram);
   if(!gl.getProgramParameter(baseProgram,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(baseProgram));
@@ -301,11 +309,11 @@ function setup(){if(!gl){document.getElementById('stats').textContent=`${scene.b
   let image=new Image(),entry={buffer,count:bytes.length/20,image,texture:null};image.onload=()=>{draw()};image.src=item.image;batches.push(entry)}
  resize()}
 function upload(entry){if(entry.texture||!entry.image.complete||!entry.image.naturalWidth)return;
- entry.texture=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,entry.texture);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+ entry.texture=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,entry.texture);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);
  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGB,gl.RGB,gl.UNSIGNED_BYTE,entry.image);
  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE)}
-function project(p){let x=p[0]-center[0],y=p[1]-center[1],z=p[2]-center[2],c=Math.cos(yaw),s=Math.sin(yaw),a=x*c-z*s,b=x*s+z*c;
+function project(p){let x=(p[0]-center[0])*flip,y=(p[1]-center[1])*flip,z=p[2]-center[2],c=Math.cos(yaw),s=Math.sin(yaw),a=x*c-z*s,b=x*s+z*c;
  let q=b*Math.cos(pitch)-y*Math.sin(pitch),v=b*Math.sin(pitch)+y*Math.cos(pitch),depth=zoom-q;
  let f=Math.min(innerWidth,innerHeight)*.9/Math.max(.1,depth);return [innerWidth/2+a*f,innerHeight/2-v*f,depth]}
 function drawFallback(){let ctx=fallbackCtx;ctx.setTransform(devicePixelRatio||1,0,0,devicePixelRatio||1,0,0);
@@ -328,6 +336,7 @@ function drawFallback(){let ctx=fallbackCtx;ctx.setTransform(devicePixelRatio||1
  frameName.textContent=scene.batches[+frameSlider.value].name;frameSlider.disabled=combine.checked}
 function setCamera(prg){gl.uniform3fv(gl.getUniformLocation(prg,'uCenter'),center);gl.uniform1f(gl.getUniformLocation(prg,'uYaw'),yaw);
  gl.uniform1f(gl.getUniformLocation(prg,'uPitch'),pitch);gl.uniform1f(gl.getUniformLocation(prg,'uZoom'),zoom);
+ gl.uniform1f(gl.getUniformLocation(prg,'uFlip'),flip);
  gl.uniform1f(gl.getUniformLocation(prg,'uAspect'),innerWidth/innerHeight)}
 function draw(){if(!gl){drawFallback();return}if(!program)return;gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(.067,.094,.125,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
  if(baseProgram&&baseToggle.checked){gl.useProgram(baseProgram);setCamera(baseProgram);gl.bindBuffer(gl.ARRAY_BUFFER,baseBuffer);
@@ -344,7 +353,18 @@ function resize(){let d=window.devicePixelRatio||1;canvas.width=innerWidth*d;can
 canvas.addEventListener('pointerdown',e=>{drag=true;last=[e.clientX,e.clientY];canvas.setPointerCapture(e.pointerId)});
 canvas.addEventListener('pointerup',()=>drag=false);canvas.addEventListener('pointermove',e=>{if(drag){yaw+=(e.clientX-last[0])*.008;pitch+=(e.clientY-last[1])*.008;last=[e.clientX,e.clientY];draw()}});
 canvas.addEventListener('wheel',e=>{e.preventDefault();zoom=Math.max(.5,Math.min(1000,zoom*Math.exp(e.deltaY*.001)));draw()},{passive:false});
-frameSlider.addEventListener('input',draw);combine.addEventListener('change',draw);baseToggle.addEventListener('change',draw);document.getElementById('reset').onclick=()=>{yaw=-.65;pitch=.55;zoom=span*1.1;draw()};setup();
+frameSlider.addEventListener('input',draw);combine.addEventListener('change',draw);baseToggle.addEventListener('change',draw);
+document.getElementById('enter').onclick=()=>{center=lo.map((v,i)=>(v+hi[i])/2);yaw=scene.flip_xy ? .65 : -.65;pitch=0;zoom=Math.min(1,span*.2);draw()};
+document.getElementById('reset').onclick=()=>{center=lo.map((v,i)=>(v+hi[i])/2);yaw=scene.flip_xy ? .65 : -.65;pitch=scene.flip_xy ? -.35 : .55;zoom=span*(scene.base_mesh ? .75 : 1.1);draw()};
+const held=new Set();window.addEventListener('keydown',e=>{if(/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName||''))return;
+ const key=e.key.toLowerCase();if('wasdqe'.includes(key)&&key.length===1){held.add(key);e.preventDefault()}});
+window.addEventListener('keyup',e=>held.delete(e.key.toLowerCase()));window.addEventListener('blur',()=>held.clear());
+let lastTick=performance.now();function walk(now){let dt=Math.min(.05,(now-lastTick)/1000);lastTick=now;
+ if(held.size){let forward=(held.has('s')?1:0)-(held.has('w')?1:0),right=(held.has('d')?1:0)-(held.has('a')?1:0),vertical=(held.has('e')?1:0)-(held.has('q')?1:0);
+  let length=Math.hypot(forward,right,vertical)||1,speed=Math.max(.8,span*.25)*dt/length;
+  center[0]+=(forward*Math.sin(yaw)+right*Math.cos(yaw))*speed*flip;
+  center[2]+=(forward*Math.cos(yaw)-right*Math.sin(yaw))*speed;center[1]-=vertical*speed;draw()}
+ requestAnimationFrame(walk)}requestAnimationFrame(walk);setup();
 </script></body></html>'''
 
 

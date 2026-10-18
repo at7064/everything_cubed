@@ -117,13 +117,16 @@ def main(argv=None):
     nverts, nfaces = write_solid(out / "reconstruction.ply", out / "solid.ply", splat_radius=opts.splat_radius)
     print(f"[solid] wrote {out / 'solid.ply'}: {nverts} vertices, {nfaces} triangles", flush=True)
     photo_view = False
+    mesh_flip_xy = False
     if not (images / "capture.json").exists():
         from perception import list_images
         from photo_texture import write_photo_viewer
-        write_photo_viewer(out / "reconstruction.ply", list_images(images), out / "photo_view.html",
-                           max_faces_per_frame=opts.photo_faces, shell=plan.get("interior_shell"))
+        photo_scene = write_photo_viewer(out / "reconstruction.ply", list_images(images), out / "photo_view.html",
+                                         max_faces_per_frame=opts.photo_faces, shell=plan.get("interior_shell"))
+        mesh_flip_xy = photo_scene["flip_xy"]
         photo_view = True
-    scene = write_viewer(plan, out / "view.html", out / "solid.ply", photo_view=photo_view)
+    scene = write_viewer(plan, out / "view.html", out / "solid.ply", photo_view=photo_view,
+                         mesh_flip_xy=mesh_flip_xy)
     write_obj(scene, out / "model.obj")
     print(f"[3d] {out / 'reconstruction.ply'}\n[3d] {out / 'solid.ply'}\n[3d] {out / 'view.html'}\n"
           + (f"[3d] {out / 'photo_view.html'}\n" if photo_view else "") +
