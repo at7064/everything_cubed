@@ -121,9 +121,35 @@ def _normals(P, valid, depth, C, step=2):
     return n
 
 
+def frame_geometry(f, depth, conf, img, max_depth=FAR_DEPTH, width=ARKIT_WIDTH):
+    """One frame's depth-resolution geometry ("geo") used for labelling and the photo at `width` ("view", the
+    format perception's backends return) used for wall textures. `f` holds the frame's capture.json fields,
+    `depth` its depth map (metres, depthSize), `conf` its ARKit confidence (or None), `img` its PIL photo."""
+    from PIL import Image
+
+    dh, dw = depth.shape
+    depth = depth.astype(np.float64)
+    if conf is None:
+        conf = np.full((dh, dw), 2, np.uint8)
+    valid = np.isfinite(depth) & (depth > 0.1) & (((depth < ARKIT_MAX_DEPTH) & (conf >= 1)) |
+                                                  ((depth < max_depth) & (conf >= 2)))
+    iw, ih = f.get("imageSize", (dw * 7.5, dh * 7.5))
+    K = np.array(f["K"], dtype=np.float64).reshape(3, 3)
+    c2w = np.array(f["cam2world"], dtype=np.float64).reshape(4, 4) @ ARKIT_TO_CV
+    Kd = K.copy(); Kd[:2] *= dw / iw
+    P = _unproject(np.where(valid, depth, 0), Kd, c2w)
+    C = c2w[:3, 3]
+    img = img.convert("RGB")
+    W, H = width, round(ih * width / iw)
+    rgb = img.resize((W, H), Image.BILINEAR)
+    return {"name": f.get("image"), "depth": depth, "conf": conf, "valid": valid, "P": P, "C": C, "c2w": c2w,
+            "K": K, "imageSize": (iw, ih), "normal": _normals(P, valid, depth, C),
+            "area": (depth / Kd[0, 0]) * (depth / Kd[1, 1]),   # m^2 a pixel covers, facing the camera
+            "rgb_d": np.asarray(rgb.resize((dw, dh), Image.BOX)), "rgb": np.asarray(rgb)}
+
+
 def load_scan(folder: Path, max_depth=FAR_DEPTH, width=ARKIT_WIDTH):
-    """Frames of a capture.json: per frame the depth-resolution geometry ("geo") used for labelling and the
-    photo at `width` ("view", the format perception's backends return) used for wall textures."""
+    """Frames of a capture.json, each as frame_geometry() returns it, and RoomPlan's room model (or None)."""
     from PIL import Image
 
     cap = json.loads((folder / "capture.json").read_text())
@@ -138,24 +164,9 @@ def load_scan(folder: Path, max_depth=FAR_DEPTH, width=ARKIT_WIDTH):
         dw, dh = f["depthSize"]
         fmt = f["depth"].get("format", "f16")
         depth = np.fromfile(folder / f["depth"]["file"], dtype="<f2" if fmt == "f16" else "<f4").reshape(dh, dw)
-        depth = depth.astype(np.float64)
         conf = (np.fromfile(folder / f["confidence"]["file"], dtype=np.uint8).reshape(dh, dw)
-                if "confidence" in f else np.full((dh, dw), 2, np.uint8))
-        valid = np.isfinite(depth) & (depth > 0.1) & (((depth < ARKIT_MAX_DEPTH) & (conf >= 1)) |
-                                                      ((depth < max_depth) & (conf >= 2)))
-        iw, ih = f.get("imageSize", (dw * 7.5, dh * 7.5))
-        K = np.array(f["K"], dtype=np.float64).reshape(3, 3)
-        c2w = np.array(f["cam2world"], dtype=np.float64).reshape(4, 4) @ ARKIT_TO_CV
-        Kd = K.copy(); Kd[:2] *= dw / iw
-        P = _unproject(np.where(valid, depth, 0), Kd, c2w)
-        C = c2w[:3, 3]
-        img = Image.open(folder / f["image"]).convert("RGB")
-        W, H = width, round(ih * width / iw)
-        rgb = img.resize((W, H), Image.BILINEAR)
-        out.append({"name": f["image"], "depth": depth, "valid": valid, "P": P, "C": C, "c2w": c2w,
-                    "K": K, "imageSize": (iw, ih), "normal": _normals(P, valid, depth, C),
-                    "area": (depth / Kd[0, 0]) * (depth / Kd[1, 1]),   # m^2 a pixel covers, facing the camera
-                    "rgb_d": np.asarray(rgb.resize((dw, dh), Image.BOX)), "rgb": np.asarray(rgb)})
+                if "confidence" in f else None)
+        out.append(frame_geometry(f, depth, conf, Image.open(folder / f["image"]), max_depth, width))
     room = None
     if (folder / cap.get("room", "room.json")).is_file():
         room = json.loads((folder / cap.get("room", "room.json")).read_text())
