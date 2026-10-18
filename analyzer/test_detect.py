@@ -120,6 +120,19 @@ def test_paint():
     print("paint OK")
 
 
+def test_multiview_fusion():
+    # A close image contributes many pixels, but should have only one 3D label vote.
+    views, maps = [], []
+    for count, label in ((100, 5), (1, 3), (1, 3)):
+        views.append({"points": np.zeros((1, count, 3), np.float32),
+                      "rgb": np.zeros((1, count, 3), np.uint8),
+                      "mask": np.ones((1, count), bool), "conf": np.ones((1, count))})
+        maps.append(np.full((1, count), label, np.int32))
+    _, _, cats = P.fuse(views, maps, ID2LABEL, {"chair": "chair", "table": "table"})
+    assert cats.tolist() == ["table"], cats
+    print("multi-view fusion OK")
+
+
 def test_mapping(monkeypatch_post):
     assert P.synonym_template("Office Chairs", TEMPLATES, ADE_TO_CATEGORY) == "chair"
     assert P.synonym_template("person", TEMPLATES, ADE_TO_CATEGORY) == "ignore"
@@ -411,6 +424,7 @@ if __name__ == "__main__":
         test_alignment()
         test_blur()
         test_paint()
+        test_multiview_fusion()
         test_mapping(monkeypatch_post)
         test_retries()
         test_cache_and_prompt(monkeypatch_post)

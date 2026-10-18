@@ -138,7 +138,7 @@ FEATURE_FRONT = 1.2   # metres: built-in shelving can stand this far in front of
 
 def project_features(side, room, to_world, R, views, label_maps, cat_names_of_pixel, f, px=4,
                      kinds=("window", "bookshelf")):
-    """What each wall cell is, from the most head-on photo that sees it: shares (rows x cols, wall-grid order:
+    """What each wall cell is, combining visible photos weighted by view angle and distance: shares (rows x cols, wall-grid order:
     row 0 = lowest interior row) of `kinds`, plus the share of the cell seen at all. Unlike the textures,
     surfaces up to FEATURE_FRONT in front of the wall count (shelves), and anything behind it too (a view
     through a window)."""
@@ -146,7 +146,8 @@ def project_features(side, room, to_world, R, views, label_maps, cat_names_of_pi
     P = to_world(loc)
     n_world = n_room @ R
     best = np.full(len(P), -np.inf)
-    label = np.full(len(P), "", dtype=object)
+    votes = {k: np.zeros(len(P), np.float32) for k in kinds}
+    total = np.zeros(len(P), np.float32)
     front = FEATURE_FRONT / f
     for v, lm in zip(views, label_maps):
         if "K" not in v:
@@ -176,16 +177,21 @@ def project_features(side, room, to_world, R, views, label_maps, cat_names_of_pi
         visible = v["mask"][vi, ui] & np.isfinite(d_obs) & (near | through)
         cos = np.abs(((P[idx] - C) / d_wall[:, None]) @ n_world)
         score = np.where(visible & (cos > 0.3), cos / d_wall, -np.inf)
+        weight = np.where(np.isfinite(score), np.maximum(score, 0), 0)
+        total[idx] += weight
+        for kind in kinds:
+            hit = (names == kind) | np.char.startswith(names, f"vanilla:{kind}:")
+            votes[kind][idx] += weight * hit
         better = score > best[idx]
         sel = idx[better]
         best[sel] = score[better]
-        label[sel] = names[better]
     rows, cols = room.H, room.wall_len(side)
     pool = lambda m: m.reshape(shape).reshape(rows, px, cols, px).mean(axis=(1, 3))
     out = {"seen": pool(np.isfinite(best))}
-    lab = label.astype(str)
-    for k in kinds:  # the template's name, or the vanilla block of the same name ("vanilla:bookshelf:cube:...")
-        out[k] = pool((lab == k) | np.char.startswith(lab, f"vanilla:{k}:"))
+    for k in kinds:
+        # A single noisy view must not override other clear views of the same wall point.
+        share = np.divide(votes[k], total, out=np.zeros_like(total), where=total > 0)
+        out[k] = pool(share)
     for k in out:
         g = out[k][::-1]                       # image row 0 is the top; the wall grid's row 0 is the bottom
         out[k] = g[:, ::-1] if FLIP[side] else g

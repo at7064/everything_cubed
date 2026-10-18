@@ -257,13 +257,15 @@ def fuse(views, label_maps, id2label, ade_to_category, voxel=0.03, conf_drop=20)
     cat_names = sorted(set(ade_to_category.values()) | {"other"})
     lut = np.array([cat_names.index(ade_to_category.get(id2label.get(i, ""), "other"))
                     for i in range(max(id2label) + 1)])
-    P, C, L = [], [], []
-    for v, lm in zip(views, label_maps):
+    P, C, L, V = [], [], [], []
+    for view_index, (v, lm) in enumerate(zip(views, label_maps)):
         valid = v["mask"] & np.isfinite(v["points"]).all(-1)
         if valid.any():
             valid &= v["conf"] >= np.percentile(v["conf"][valid], conf_drop)
         P.append(v["points"][valid]); C.append(v["rgb"][valid]); L.append(lut[np.clip(lm[valid], 0, len(lut) - 1)])
-    P, C, L = np.concatenate(P).astype(np.float64), np.concatenate(C).astype(np.float64), np.concatenate(L)
+        V.append(np.full(valid.sum(), view_index, np.int32))
+    P, C, L, V = (np.concatenate(P).astype(np.float64), np.concatenate(C).astype(np.float64),
+                  np.concatenate(L), np.concatenate(V))
 
     key = np.floor(P / voxel).astype(np.int64)
     _, inv = np.unique(key, axis=0, return_inverse=True)
@@ -272,11 +274,20 @@ def fuse(views, label_maps, id2label, ade_to_category, voxel=0.03, conf_drop=20)
     cnt = np.bincount(inv, minlength=n)
     pts = np.stack([np.bincount(inv, P[:, i], n) for i in range(3)], 1) / cnt[:, None]
     rgb = np.stack([np.bincount(inv, C[:, i], n) for i in range(3)], 1) / cnt[:, None]
-    # majority label per voxel
-    combo = inv * len(cat_names) + L
+    # First choose a label within each view, then give each view one vote per 3D voxel.
+    # This keeps a large or close image from overwhelming several agreeing viewpoints.
+    nc = len(cat_names)
+    combo = (inv * len(views) + V) * nc + L
     uc, ucnt = np.unique(combo, return_counts=True)
-    vox, lab = uc // len(cat_names), uc % len(cat_names)
-    order = np.lexsort((-ucnt, vox))
+    view_vox, lab = uc // nc, uc % nc
+    order = np.lexsort((-ucnt, view_vox))
+    first = np.r_[True, view_vox[order][1:] != view_vox[order][:-1]]
+    chosen = order[first]
+    votes = (view_vox[chosen] // len(views)) * nc + lab[chosen]
+    vc, vote_index, vcount = np.unique(votes, return_inverse=True, return_counts=True)
+    pixel_support = np.bincount(vote_index, weights=ucnt[chosen], minlength=len(vc))
+    vox, lab = vc // nc, vc % nc
+    order = np.lexsort((-pixel_support, -vcount, vox))
     first = np.r_[True, vox[order][1:] != vox[order][:-1]]
     labels = np.empty(n, int)
     labels[vox[order][first]] = lab[order][first]

@@ -207,6 +207,12 @@ print("view angle + exclusion OK")
 from roomplan import apply_wall_features  # noqa: E402
 feat = walltex.project_features("north", room, to_world, R, views, labels, category_lut(ID2LABEL, ADE_TO_CATEGORY), f)
 assert feat["seen"].mean() > 0.9 and feat["window"].max() == 0 and feat["bookshelf"].max() == 0, feat["seen"].mean()
+# One view mislabeling the whole wall as glass cannot overrule two agreeing views.
+window_labels = [np.full_like(lm, 3) for lm in labels]
+window_lut = category_lut({**ID2LABEL, 3: "window"}, ADE_TO_CATEGORY)
+agreed = walltex.project_features("north", room, to_world, R, views * 3,
+                                  list(labels) + list(labels) + window_labels, window_lut, f)
+assert agreed["window"].max() < 0.34, agreed["window"].max()
 
 # Decisions, on a hand-made 6 x 10 wall plan.
 rows, cols = 6, 10

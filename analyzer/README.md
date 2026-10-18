@@ -49,7 +49,7 @@ Then `roomplan.py`:
    flat paint where unseen) and `none` (blocks only). Extra flags go in `extraArgs` in
    `config/everything_cubed.json`.
 7. Windows and built-in shelves come from what the photos show on each wall (`walltex.project_features`): glass
-   only where the most head-on photo shows glass, so the stone between windows stays, and bookcases seen on a
+   only where the visible photos agree on glass (weighted by angle and distance), so the stone between windows stays, and bookcases seen on a
    wall become vanilla bookshelf blocks in the wall itself (not a picture of shelves; a furniture bookcase at
    the same spot is dropped as a duplicate). Windows guessed from 3D clusters alone, on walls the photos did
    not see, never take more than 60% of a wall. `--mirror-walls` (opt-in) lets a wall the photos hardly saw
@@ -79,6 +79,8 @@ benches, or its chandeliers).
   `detections.json`.
 - Boxes are painted over SegFormer's labels, except wall, floor and ceiling (paintings, clocks, mirrors, sconces and
   curtains may take wall pixels, rugs floor pixels). Each box only relabels pixels near the object's own depth.
+- Detections from all views meet in the reconstructed 3D space. Each view contributes one label vote per 3 cm
+  voxel before furniture is clustered, so a close photo with more pixels does not outweigh several other views.
 - Photos are sent concurrently with `reasoning_effort` `none` (about 3x faster than `high`;
   `--perceptron-reasoning` changes it). Answers are cached per exact upload in `<photos>/.perceptron_cache/`, so
   re-runs send nothing. Delete that folder to detect again.

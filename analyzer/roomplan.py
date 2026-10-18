@@ -736,7 +736,7 @@ def choose_door(room: Room, openings, occupancy, objects):
 
 # ----------------------------------------------------------------------------------- wall features
 
-WINDOW_SHARE = 0.5      # a wall cell is glass when this share of it shows window in the most head-on photo
+WINDOW_SHARE = 0.5      # a wall cell is glass when this weighted share of visible views shows window
 SHELF_SHARE = 0.5       # ... and built-in shelving when this share shows bookcase
 FEATURE_MIN_SEEN = 0.2  # a wall needs this share of its cells seen for the photos to decide its windows
 MAX_WINDOW = 0.6        # windows guessed from 3D clusters alone never take more of a wall than this
