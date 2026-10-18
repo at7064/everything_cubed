@@ -124,6 +124,19 @@ public final class AnalyzerRunner {
 		return readPlan(plan);
 	}
 
+	/**
+	 * {@code "alwaysReanalyze"} in the config (default true): analyse a folder's photos on every build, so changed
+	 * settings take effect. False reuses a plan.json that is newer than every photo, which saves the analysis.
+	 */
+	public static boolean alwaysReanalyze() {
+		try {
+			JsonObject cfg = config();
+			return !cfg.has("alwaysReanalyze") || cfg.get("alwaysReanalyze").getAsBoolean();
+		} catch (IOException | RuntimeException e) {
+			return true;
+		}
+	}
+
 	/** TCP port for the iOS scanner app, {@code "phonePort"} in the config. */
 	public static int phonePort() {
 		try {
@@ -176,6 +189,10 @@ public final class AnalyzerRunner {
 		}
 		if (!cfg.has("extraArgs")) {
 			cfg.add("extraArgs", new JsonArray());
+			changed = true;
+		}
+		if (!cfg.has("alwaysReanalyze")) { // written out so the switch is easy to find
+			cfg.addProperty("alwaysReanalyze", true);
 			changed = true;
 		}
 		if (changed) {

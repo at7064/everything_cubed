@@ -176,9 +176,14 @@ from ordinary rooms and can be far off. If you know the floor-to-ceiling height,
 ```json
 {
   "python": "/path/to/venv/bin/python",
-  "extraArgs": ["--known-height", "19.8", "--perceptron"]
+  "extraArgs": ["--known-height", "19.8", "--perceptron"],
+  "alwaysReanalyze": true
 }
 ```
+
+`"alwaysReanalyze": true` (the default) re-analyses a folder's photos on every `/everything_cubed build`, so changed
+settings always take effect. Set it to `false` to reuse a `plan.json` that is newer than every photo. Building a
+`plan.json` path directly (`/everything_cubed build <folder>/plan.json`) never re-analyses.
 
 `--perceptron` needs `PERCEPTRON_API_KEY` set in the environment Minecraft is started from, and sends the photos
 (people blurred) to Perceptron; see above.
