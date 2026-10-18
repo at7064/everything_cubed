@@ -37,7 +37,8 @@ from palette import WALL_COLOURS, WALL_PALETTE, srgb_to_lab
 NOT_WALL = {"bed", "table", "desk", "coffee_table", "counter", "cabinet", "wardrobe", "bookshelf", "chair",
             "sofa", "lamp", "plant", "fridge", "stove", "sink", "bathtub", "toilet", "storage", "trash",
             "washer", "microwave", "rug", "floor", "ceiling", "ceiling_light", "chandelier", "window", "door",
-            "whiteboard", "exit_sign", "fire_extinguisher", "projector", "fan"}
+            "whiteboard", "exit_sign", "fire_extinguisher", "projector", "fan",
+            "backpack", "globe", "locker", "drinking_fountain", "umbrella_stand"}
 # Viewer-left to viewer-right along each wall as seen from inside the room (see roomplan.py axes).
 FLIP = {"north": False, "south": True, "west": True, "east": False}
 

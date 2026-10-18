@@ -52,6 +52,9 @@ DETECTOR_ONLY = {"whiteboard", "projector", "exit_sign", "fire_extinguisher", "p
                  "led_panel", "downlight", "linear_light", "pendant_lamp", "desk_lamp", "laptop",
                  "book_stack", "mug", "small_plant", "printer", "light_switch", "outlet", "thermostat",
                  "fire_alarm", "smoke_detector", "soap_dispenser", "sanitizer_dispenser", "paper_towel_dispenser"}
+# Backpacks, globes, lockers, drinking fountains, umbrella stands.
+ADE_TO_CATEGORY.update({"bag": "backpack", "fountain": "drinking_fountain"})
+DETECTOR_ONLY |= {"globe", "locker", "umbrella_stand"}
 CATEGORIES = sorted(set(ADE_TO_CATEGORY.values()) | DETECTOR_ONLY | {"other"})
 # Detected things without a template are "generic:<detected name>" (see perception.perceptron_pass); they are
 # built as a plain box and keep their name in the plan, so missing templates show up.
@@ -106,6 +109,11 @@ TEMPLATE_INFO = {
     "sanitizer_dispenser": "a wall hand sanitizer dispenser",
     "paper_towel_dispenser": "a wall paper towel dispenser",
 }
+TEMPLATE_INFO.update({
+    "backpack": "a backpack, school bag or handbag", "globe": "a globe of the Earth, on a desk or a floor stand",
+    "locker": "a locker or a bank of lockers", "drinking_fountain": "a drinking fountain or water bottle filler",
+    "umbrella_stand": "an umbrella stand",
+})
 assert set(TEMPLATE_INFO) == TEMPLATES, set(TEMPLATE_INFO) ^ TEMPLATES
 WALL_MOUNTED = {"window", "door", "painting", "sconce", "curtain", "mirror", "clock", "whiteboard", "exit_sign",
                 "fire_extinguisher", "bulletin_board", "projection_screen", "radiator", "range_hood", "wall_hooks",
@@ -136,6 +144,12 @@ MIN_POINTS = {"window": 60, "door": 120, "bed": 200, "rug": 150, "painting": 40,
                                "desk_lamp", "laptop", "book_stack", "mug", "small_plant", "printer",
                                "light_switch", "outlet", "thermostat", "fire_alarm", "soap_dispenser",
                                "sanitizer_dispenser", "paper_towel_dispenser")}}
+
+WALL_MOUNTED |= {"drinking_fountain"}
+NO_FOOTPRINT |= {"drinking_fountain", "globe"}   # a globe sits on its desk (or is placed on the floor below)
+PRIORITY += ["locker", "umbrella_stand", "backpack"]
+MAX_HEIGHT.update({"locker": 2, "umbrella_stand": 1, "backpack": 1})
+MIN_POINTS.update({"backpack": 20, "globe": 15, "locker": 60, "drinking_fountain": 15, "umbrella_stand": 12})
 
 SIDES = ("north", "south", "west", "east")
 AUTO_SCALE = 1.25  # default blocks per metre
@@ -631,6 +645,9 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
         elif cat == "fire_extinguisher":
             # Low on the wall (NFPA 10: top at most 5 ft, bottom at least 4 in above the floor).
             entry.update(type="fire_extinguisher", y=min(y0, max(0, H - 2)), w=1, h=1)
+        elif cat == "drinking_fountain":
+            # On the wall, its basin at counter height: the bottom block row.
+            entry.update(type="drinking_fountain", y=0, w=1, h=1)
         else:
             continue
         entry["u"] = int(np.clip(entry["u"], 0, L - 1))
@@ -697,6 +714,22 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
                             "h": 1, "y": 2, "facing": support.get("facing", "south"),
                             "color": DYE_PALETTE.nearest(cl["rgb"])})
 
+    # A globe stands on the desk or table it was seen on, or on the floor (a floor-stand globe).
+    for cat, cl in obj_clusters:
+        if cat != "globe":
+            continue
+        x, z = int(room.bx(cl["c"][0])), int(room.bz(cl["c"][2]))
+        support = next((o for o in objects if o["type"] in ("desk", "table", "counter", "student_desk", "cabinet",
+                                                             "dresser", "nightstand", "shelf")
+                        and o["x"] <= x < o["x"] + o["w"] and o["z"] <= z < o["z"] + o["d"]), None)
+        if support:
+            objects.append({"type": "globe", "x": x, "z": z, "w": 1, "d": 1, "h": 1, "y": 1 + support["h"],
+                            "facing": support.get("facing", "south")})
+        elif cl["lo"][1] <= 0.4:
+            obj = place_object("globe", cl, room, occupancy, tables, nearest_side)
+            if obj:
+                obj["y"] = 1
+                objects.append(obj)
     screens = [o for o in openings if o["type"] in ("whiteboard", "tv")]
     for cat, cl in obj_clusters:
         if cat == "projector":
@@ -823,15 +856,21 @@ def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
         if cat == "piano":
             w, d = max(2, w), 1
     elif cat in ("lamp", "plant", "trash", "toilet", "microwave", "fridge", "stove", "sink", "washer", "fan",
-                 "shower", "coat_rack"):
-        if cat in ("lamp", "plant", "trash", "toilet", "microwave", "fan", "coat_rack"):
+                 "shower", "coat_rack", "backpack", "umbrella_stand", "globe"):
+        if cat in ("lamp", "plant", "trash", "toilet", "microwave", "fan", "coat_rack", "backpack", "umbrella_stand",
+                   "globe"):
             w = d = 1
+        if cat == "backpack":
+            obj["color"] = DYE_PALETTE.nearest(cl["rgb"])
         if cat == "trash":
             obj["color"] = DYE_PALETTE.nearest(cl["rgb"])  # black trash, blue recycling, green compost, ...
         if cat == "fridge":
             h = min(H - 1, max(2, h))
         if cat in ("fridge", "stove", "sink", "washer", "toilet", "shower") and w * d > 2:
             w, d = (min(w, 2), 1) if front in ("north", "south") else (1, min(d, 2))
+    elif cat == "locker":
+        obj["color"] = DYE_PALETTE.nearest(cl["rgb"])  # lockers come painted: grey, blue, red, ...
+        w, d = (max(1, w), 1) if front in ("north", "south") else (1, max(1, d))  # one block deep, along its wall
     elif cat == "tv":
         w, d = (max(1, w), 1) if front in ("north", "south") else (1, max(1, d))
     elif cat.startswith(VANILLA):
@@ -1039,3 +1078,20 @@ def apply_wall_features(plan, features, log=print, mirror=False):
         else:
             tex.pop(side, None)               # blocks and pictures always come from the same wall
         plan["walls"][side] = {"palette": list(plan["walls"][o]["palette"]), "grid": [r[:] for r in plan["walls"][o]["grid"]]}
+    clear_around_doors(plan)
+
+
+def clear_around_doors(plan, margin=1):
+    """No picture frames on the wall around a door: its columns plus `margin` either side, up to one row above it.
+    A door the photos' labels missed, or one placed a little off where the photos show it, would otherwise be
+    drawn on the maps next to the real door (or its exit sign above it)."""
+    walls = plan.get("textures", {}).get("walls", {})
+    for o in plan["openings"]:
+        tex = walls.get(o["side"]) if o["type"] == "door" else None
+        if not tex:
+            continue
+        t = np.array(tex["tiles"])
+        r1 = min(t.shape[0], o["y"] + o["h"] + 1)
+        u0, u1 = max(0, o["u"] - margin), min(t.shape[1], o["u"] + o["w"] + margin)
+        t[:r1, u0:u1] = 0
+        tex["tiles"] = t.tolist()

@@ -364,6 +364,7 @@ MAY_TAKE = {"painting": {"wall"}, "sconce": {"wall"}, "curtain": {"wall"}, "mirr
             **{c: {"wall"} for c in ("light_switch", "outlet", "thermostat", "fire_alarm",
                 "soap_dispenser", "sanitizer_dispenser", "paper_towel_dispenser")},
             "whiteboard": {"wall"}, "exit_sign": {"wall"}, "fire_extinguisher": {"wall"}, "rug": {"floor"},
+            "drinking_fountain": {"wall"},
             # Hanging things are seen against the ceiling (the depth gate keeps the real ceiling behind them).
             "projector": {"ceiling"}, "chandelier": {"ceiling"}, "ceiling_fan": {"ceiling"},
             **{c: {"ceiling"} for c in ("led_panel", "downlight", "linear_light", "pendant_lamp", "smoke_detector")}}
@@ -408,6 +409,14 @@ PERSON_WORDS = {"person", "people", "man", "men", "woman", "women", "boy", "girl
 IGNORE_NAMES = {"person", "people", "man", "woman", "boy", "girl", "child", "student", "human", "face", "head",
                 "hand", "arm", "leg", "wall", "floor", "ceiling", "column", "pillar", "arch", "beam", "roof",
                 "window frame", "door frame", "molding", "railing", "stairs", "staircase", "shadow", "reflection"}
+
+
+SYNONYMS.update({
+    "backpack": "backpack", "bag": "backpack", "school bag": "backpack", "handbag": "backpack", "tote bag": "backpack",
+    "globe": "globe", "desk globe": "globe", "locker": "locker", "lockers": "locker", "drinking fountain":
+    "drinking_fountain", "water fountain": "drinking_fountain", "bottle filler": "drinking_fountain",
+    "bottle filling station": "drinking_fountain", "umbrella stand": "umbrella_stand", "umbrella holder": "umbrella_stand",
+})
 
 
 def _singular(name):

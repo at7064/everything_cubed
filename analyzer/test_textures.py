@@ -342,3 +342,12 @@ assert len(rows_seen) == 1 and all(w["dither"] for w in tex_s["walls"].values())
 first = next(iter(imgs.values()))
 assert all(np.array_equal(im[:, :16], first[:, :16]) for im in imgs.values()), "the same style on every wall"
 print("review regressions + style end to end OK")
+
+# No picture frames around doors: the door's columns +-1, up to one row above it (here a 2-high door at u=4).
+p5 = fplan()
+p5["openings"] = [{"type": "door", "side": "north", "u": 4, "w": 1, "y": 0, "h": 2}]
+apply_wall_features(p5, {"north": {"seen": seen_all, "window": none, "bookshelf": none},
+                         "south": {"seen": none, "window": none, "bookshelf": none}}, log=lambda m: None)
+t5 = np.array(p5["textures"]["walls"]["north"]["tiles"])
+assert t5[:3, 3:6].sum() == 0 and t5[3:, 3:6].all() and t5[:, :3].all() and t5[:, 6:].all(), t5
+print("no frames around doors OK")
