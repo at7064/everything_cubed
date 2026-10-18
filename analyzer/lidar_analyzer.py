@@ -665,6 +665,14 @@ def main(argv=None):
                       ctx=ctx, known_height=opts.known_height, enlarge=1.0)
     plan["source"] = {"photos": [v_name for v_name in (f.get("image") for f in cap["frames"]) if v_name],
                       "metric": True, "lidar": True, "roomplan": room is not None}
+    # How ARKit world coordinates map onto the plan's blocks, for spectate (spectate_analyzer.PlanFrame): a point P
+    # is at room metres loc = ((P - origin) @ R.T - [0, y_shift, 0]) * f, block x = (loc.x - xmin) / (xmax - xmin) * W,
+    # z likewise, interior row y / hm * H (row 0 = first air layer). The phone relocalises to this scan's world.
+    r = ctx["room"]
+    plan["arkit"] = {"origin": [float(v) for v in ctx["origin"]], "R": [[float(v) for v in row] for row in ctx["R"]],
+                     "y_shift": float(ctx["y_shift"]), "f": float(ctx["f"]),
+                     "xmin": float(r.xmin), "xmax": float(r.xmax), "zmin": float(r.zmin), "zmax": float(r.zmax),
+                     "hm": float(r.hm), "W": int(r.W), "D": int(r.D), "H": int(r.H)}
     out = opts.out or opts.images / "plan.json"
     if opts.wall_detail != "none":
         try:

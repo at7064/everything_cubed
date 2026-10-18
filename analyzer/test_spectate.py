@@ -1,11 +1,16 @@
-"""Sanity test for spectate_analyzer.py: a synthetic live stream through its stdin / stdout, as the mod runs it.
+"""Sanity test for spectate_analyzer.py: a synthetic live stream through its stdin / stdout, as the mod runs it, over
+a room already scanned and built.
 
-Room: 6.0 m (x) by 5.0 m (z), 2.6 m high, in ARKit's world frame turned 20 degrees about gravity, with a 1 m crate
-on the floor. The phone stands in the middle and keeps turning, 5 frames a second.
-1. The initial scan (15 frames) builds the floor, walls and the crate.
-2. The crate is carried away: once the phone has clearly seen the empty floor for a second, its blocks go.
-3. A box that shows up in one frame only, and one that only low-confidence depth sees, change nothing.
-4. A person (masked by the phone) walks in: reported as a person, never built.
+Room: 6.0 m (x) by 5.0 m (z), 2.6 m high, in ARKit's world frame turned 20 degrees about gravity, built at 1.25
+blocks/m (8 x 6 x 3 blocks). The build has a 1 m crate and a low 0.4 m box (half its block) in it. The phone stands
+in the middle and keeps turning (30 degrees a frame, slower to see a new box), 5 frames a second, in the
+scan's coordinates (it has relocalised).
+1. Seeing the room as built changes nothing; the low box stays though most of its block is empty.
+2. A box seen in one frame only, and the crate gone but seen only at low confidence, change nothing.
+3. The crate carried away: its blocks go once the empty floor is clearly seen; nothing else goes.
+4. A new box put down appears; the floor, walls and ceiling never become blocks.
+5. A person (masked by the phone) walks in: reported as a person, never built.
+6. Frames while the phone is still relocalising are no evidence.
 Run: python test_spectate.py
 """
 import io
@@ -13,6 +18,7 @@ import json
 import struct
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -21,13 +27,16 @@ from PIL import Image
 from perception import ARKIT_TO_CV
 
 W, D, H = 6.0, 5.0, 2.6
+S = 1.25
 IW, IH, DW, DH = 1920, 1440, 256, 192
 FX = 1450.0
 TURN = np.radians(20)
-CRATE = (np.array([3.8, 0.0, 3.2]), np.array([4.8, 1.0, 4.2]))
-GHOST = (np.array([1.0, 0.0, 1.0]), np.array([2.0, 1.2, 2.0]))
+CRATE = (np.array([3.8, 0.0, 3.4]), np.array([4.8, 1.0, 4.2]))
+LOW = (np.array([1.55, 0.0, 1.75]), np.array([2.2, 0.4, 2.45]))      # inside block (2, 1, 2), 0.4 of 0.87 m high
+GHOST = (np.array([1.0, 0.0, 0.8]), np.array([1.8, 1.2, 1.5]))
+NEW = (np.array([0.9, 0.0, 3.5]), np.array([1.6, 0.7, 4.1]))
 PERSON = (np.array([3.2, 0.0, 1.0]), np.array([3.6, 1.75, 1.3]))
-CAM = np.array([2.5, 1.4, 2.5])
+CAM = np.array([3.0, 1.4, 2.5])
 
 
 def rot_y(a):
@@ -36,6 +45,15 @@ def rot_y(a):
 
 def rot_x(a):
     return np.array([[1, 0, 0], [0, np.cos(a), -np.sin(a)], [0, np.sin(a), np.cos(a)]])
+
+
+def blocks_of(box):
+    """The plan blocks a box fills, as the build would have placed it."""
+    (x0, y0, z0), (x1, y1, z1) = box
+    xs = range(int(x0 / W * 8), int(np.ceil(x1 / W * 8)))
+    zs = range(int(z0 / D * 6), int(np.ceil(z1 / D * 6)))
+    ys = range(1, int(np.ceil(y1 / H * 3)) + 1)
+    return {(x, y, z) for x in xs for y in ys for z in zs}
 
 
 def slab(o, dirs, lo, hi):
@@ -65,9 +83,11 @@ def render(c2w_cv, K, boxes, person):
     return depth, mask
 
 
-def frame_message(i, boxes, conf=2, person=False):
-    world = np.eye(4); world[:3, :3] = rot_y(TURN)
-    R = rot_y(i * np.pi / 6) @ rot_x(np.radians(-30 if i % 2 else -15))
+WORLD = np.eye(4); WORLD[:3, :3] = rot_y(TURN)
+
+
+def frame_message(i, boxes, conf=2, person=False, tracking="normal", turn=np.pi / 6):
+    R = rot_y(i * turn) @ rot_x(np.radians(-35 if i % 2 else -15))
     c2w = np.eye(4); c2w[:3, :3] = R; c2w[:3, 3] = CAM
     K = np.array([[FX, 0, IW / 2], [0, FX, IH / 2], [0, 0, 1]])
     Kd = K.copy(); Kd[:2] *= DW / IW
@@ -78,8 +98,8 @@ def frame_message(i, boxes, conf=2, person=False):
              ("depth", "f16", np.minimum(depth, 60).astype("<f2").tobytes()),
              ("confidence", "u8", np.full((DH, DW), conf, np.uint8).tobytes()),
              ("person", "u8", mask.astype(np.uint8).tobytes())]
-    header = {"type": "frame", "seq": i, "time": i * 0.2, "tracking": "normal", "imageSize": [IW, IH],
-              "depthSize": [DW, DH], "K": K.ravel().tolist(), "cam2world": (world @ c2w).ravel().tolist(),
+    header = {"type": "frame", "seq": i, "time": i * 0.2, "tracking": tracking, "imageSize": [IW, IH],
+              "depthSize": [DW, DH], "K": K.ravel().tolist(), "cam2world": (WORLD @ c2w).ravel().tolist(),
               "blobs": [{"name": n, "format": f, "length": len(b)} for n, f, b in blobs]}
     h = json.dumps(header).encode()
     payload = b"".join(b for _, _, b in blobs)
@@ -87,16 +107,22 @@ def frame_message(i, boxes, conf=2, person=False):
 
 
 class Worker:
-    def __init__(self):
+    def __init__(self, built):
+        tmp = Path(tempfile.mkdtemp())
+        ex, ez = rot_y(TURN) @ [1.0, 0, 0], rot_y(TURN) @ [0, 0, 1.0]
+        plan = {"arkit": {"origin": [0.0, 0.0, 0.0], "R": [ex.tolist(), [0.0, 1.0, 0.0], ez.tolist()], "y_shift": 0.0,
+                          "f": 1.0, "xmin": 0.0, "xmax": W, "zmin": 0.0, "zmax": D, "hm": H,
+                          "W": round(W * S), "D": round(D * S), "H": round(H * S)}}
+        (tmp / "plan.json").write_text(json.dumps(plan))
+        (tmp / "baseline.json").write_text(json.dumps(sorted(built)))
         script = Path(__file__).resolve().parent / "spectate_analyzer.py"
-        self.p = subprocess.Popen([sys.executable, str(script)], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-        self.world = {}
-        self.people = []
-        self.i = 0
-        self.ms = []
+        self.p = subprocess.Popen([sys.executable, str(script), "--plan", str(tmp / "plan.json"),
+                                   "--baseline", str(tmp / "baseline.json")], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        self.solid = set(built)
+        self.people, self.i, self.ms = [], 0, []
 
-    def send(self, boxes, conf=2, person=False):
-        self.p.stdin.write(frame_message(self.i, boxes, conf, person)); self.p.stdin.flush()
+    def send(self, boxes, **kw):
+        self.p.stdin.write(frame_message(self.i, boxes, **kw)); self.p.stdin.flush()
         self.i += 1
         while True:
             out = json.loads(self.p.stdout.readline())
@@ -105,65 +131,54 @@ class Worker:
         assert "error" not in out, out
         self.ms.append(out["ms"])
         for x, y, z, b in out["changes"]:
-            self.world[(x, y, z)] = b
+            (self.solid.discard if b == "minecraft:air" else self.solid.add)((x, y, z))
         self.people = out["people"]
         return out
 
-    def solid(self):
-        return {k for k, b in self.world.items() if b != "minecraft:air"}
 
+crate, low = blocks_of(CRATE), blocks_of(LOW)
+assert low == {(2, 1, 2)}, low
+built = crate | low
+w = Worker(built)
 
-# The same room scanned without the crate, for reference.
-ref = Worker()
 for _ in range(15):
-    ref.send([])
-empty_room = ref.solid()
-ref.p.stdin.close()
+    w.send([CRATE, LOW])
+assert w.solid == built, f"the room as built changed: {w.solid ^ built}"
+print(f"as built: {len(built)} block(s) inside, unchanged; the low box stays")
 
-w = Worker()
-baseline = None
+w.send([CRATE, LOW, GHOST])
+for _ in range(3):
+    w.send([CRATE, LOW])
 for _ in range(15):
-    out = w.send([CRATE])
-    if out.get("baseline"):
-        baseline = out
-assert baseline, "no baseline after 15 frames"
-floor = {c for c in w.solid() if c[1] == 0}
-crate = {c for c in w.solid() - empty_room if c[1] >= 1}
-assert len(floor) > 20, len(floor)
-assert crate, "the crate was not built"
-print(f"baseline: {len(w.solid())} blocks, {len(floor)} floor, crate {len(crate)} block(s)")
-
-# 3a. A box in one frame only: nothing changes.
-before = dict(w.world)
-w.send([CRATE, GHOST])
-for _ in range(2):
-    w.send([CRATE])
-assert w.world == before, "a one-frame box changed the world"
-# 3b. The crate gone, but only low-confidence depth sees it: nothing changes.
-for _ in range(12):
-    w.send([], conf=1)
-assert w.world == before, "low-confidence depth changed the world"
+    w.send([LOW], conf=1)
+assert w.solid == built, f"a one-frame box or low-confidence depth changed the world: {w.solid ^ built}"
 print("one-frame box and low-confidence views: no change")
 
-# 2. The crate gone for real.
-before_solid = w.solid()
-for _ in range(48):   # the crate is in view 2-3 frames per turn; 5 clear views are needed
-    w.send([])
-assert not crate & w.solid(), f"crate blocks stayed after it was taken away: {crate & w.solid()}"
-lost = (before_solid - crate) - w.solid()
-assert not lost, f"blocks other than the crate went missing: {lost}"
+for _ in range(15):
+    w.send([LOW], tracking="limited")
+assert w.solid == built, "frames while relocalising changed the world"
+print("relocalising frames: no change")
+
+for _ in range(48):   # the crate is in view 2-3 frames per turn; 5 clear views in a row are needed
+    w.send([LOW])
+assert w.solid == low, f"after the crate went: {w.solid}"
 print(f"crate removed: {len(crate)} block(s) cleared, nothing else")
 
-# 4. A person walks in.
-before = w.solid()
+for _ in range(48):   # turning slowly, as someone looking around does: a new thing is in view for ~9 frames
+    w.send([LOW, NEW], turn=np.pi / 24)
+added = w.solid - low
+assert added and all(1 <= y <= 2 for _, y, _ in added) and added <= blocks_of(NEW) | {(x + dx, y, z + dz) for x, y, z in blocks_of(NEW) for dx in (-1, 0, 1) for dz in (-1, 0, 1)}, added
+print(f"new box: {len(added)} block(s) added where it stands, no floor, wall or ceiling blocks")
+
+before = set(w.solid)
 for _ in range(12):
-    w.send([], person=True)
+    w.send([LOW, NEW], person=True)
 assert w.people, "no person reported"
-assert w.solid() <= before | set(), f"the person was built: {w.solid() - before}"
+assert w.solid == before, f"the person was built: {w.solid ^ before}"
 p = w.people[0]
-print(f"person at ({p['x']:.1f}, {p['z']:.1f}) blocks, {len(w.people)} reported")
+print(f"person at block ({p['x']:.1f}, {p['z']:.1f}), {len(w.people)} reported")
 w.p.stdin.close()
 w.p.wait(timeout=10)
-print(f"median {np.median(w.ms[16:]):.0f} ms per live frame")
-assert np.median(w.ms[16:]) < 200, "too slow for 5 updates a second"
+print(f"median {np.median(w.ms):.0f} ms per frame")
+assert np.median(w.ms) < 200, "too slow for 5 updates a second"
 print("OK")

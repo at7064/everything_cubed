@@ -127,7 +127,8 @@ public final class FurnitureInteractions {
 	}
 
 	/** Removes the model (if any) that had the real block at {@code pos} inside it. */
-	private static void removeModelAround(ServerLevel level, BlockPos pos) {
+	/** Removes the furniture model whose real block is at {@code pos}, if there is one (spectate: it is gone). */
+	public static void removeModelAround(ServerLevel level, BlockPos pos) {
 		String core = coreTag(pos);
 		for (Entity e : level.getEntitiesOfClass(Display.class, new AABB(pos).inflate(REACH), e -> e.entityTags().contains(core))) {
 			String group = groupOf(e);
