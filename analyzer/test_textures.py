@@ -253,6 +253,24 @@ assert p2["textures"]["walls"]["south"]["image"] == "n.png" and p2["walls"]["sou
 assert [(o["x"], o["z"]) for o in p2["objects"] if o.get("block") == "minecraft:bookshelf"] == [(2, 0), (2, 7)], "mirrored shelving"
 print("wall features OK")
 
+# A window whose top ends a third of the way into a block: its top row reads 0.50, 0.50, 0.44 (a real LiDAR scan).
+# Cell by cell that left a notch (2 columns 4 high next to 1 column 3 high); decided as a whole it is one rectangle.
+notch = none.copy()
+notch[1:4, 1:4] = [[1, 1, .91], [1, 1, .85], [1, 1, .98]]
+notch[4, 1:4] = [.5, .5, .44]
+notch[1:5, 0] = [.32, .37, .38, .16]
+p7 = fplan()
+apply_wall_features(p7, {"north": {"seen": seen_all, "window": notch, "bookshelf": none}}, log=print)
+assert [(o["u"], o["w"], o["y"], o["h"]) for o in p7["openings"] if o["side"] == "north" and o["type"] == "window"] \
+    == [(1, 3, 1, 3)], p7["openings"]
+# Measured (RoomPlan) rectangles win over the photos on their wall, rounded to whole cells.
+p8 = fplan()
+apply_wall_features(p8, {"north": {"seen": seen_all, "window": glass, "bookshelf": none}}, log=print,
+                    windows=[{"side": "north", "u0": 4.8, "u1": 8.1, "y0": 0.77, "y1": 4.35}])
+assert [(o["u"], o["w"], o["y"], o["h"]) for o in p8["openings"] if o["side"] == "north" and o["type"] == "window"] \
+    == [(5, 3, 1, 3)], p8["openings"]
+print("rectangular windows OK")
+
 # Lighting: a striped wall photographed under a strong sun band and a cast shadow. Evening out must remove
 # most of the slow brightness change but keep the stripes' contrast, and drop glare as unseen.
 px = 16

@@ -329,6 +329,32 @@ def roomplan_walls(frames, room, ex, ez, log):
     return {k: v[0] for k, v in best.items()}
 
 
+def roomplan_window_cells(room, frame):
+    """RoomPlan's windows as rectangles of wall cells for roomplan.apply_wall_features ({"side", "u0", "u1", "y0",
+    "y1"}), through the plan's ARKit mapping `frame` (plan["arkit"]). Each goes on the wall its centre is nearest."""
+    if not room or not room.get("windows"):
+        return []
+    origin, R = np.array(frame["origin"]), np.array(frame["R"])
+    W, D, H = frame["W"], frame["D"], frame["H"]
+
+    def cell(P):     # (block x, block z, row) of an ARKit world point
+        loc = ((P - origin) @ R.T - [0, frame["y_shift"], 0]) * frame["f"]
+        return ((loc[0] - frame["xmin"]) / (frame["xmax"] - frame["xmin"]) * W,
+                (loc[2] - frame["zmin"]) / (frame["zmax"] - frame["zmin"]) * D, loc[1] / frame["hm"] * H)
+
+    out = []
+    for w in room["windows"]:
+        T, (dw, dh) = _mat(w["transform"]), w["dimensions"][:2]
+        corners = np.array([cell(T[:3, 3] + sx * T[:3, 0] * dw / 2 + sy * T[:3, 1] * dh / 2)
+                            for sx in (-1, 1) for sy in (-1, 1)])
+        x, z, _ = corners.mean(0)
+        side = min((("west", x), ("east", W - x), ("north", z), ("south", D - z)), key=lambda t: abs(t[1]))[0]
+        u = corners[:, 0] if side in ("north", "south") else corners[:, 1]
+        out.append({"side": side, "u0": float(u.min()), "u1": float(u.max()),
+                    "y0": float(corners[:, 2].min()), "y1": float(corners[:, 2].max())})
+    return out
+
+
 def roomplan_wall_ends(room):
     """Both end points (on the floor line) of every RoomPlan wall, in ARKit world coordinates."""
     ends = []
@@ -704,7 +730,8 @@ def main(argv=None):
             plan["walls"] = tex.pop("wall_blocks")
             plan["wall_main"] = tex.pop("wall_main")
             plan["textures"] = tex
-            apply_wall_features(plan, tex.pop("features"), log, mirror=opts.mirror_walls, tex_dir=out.parent)
+            apply_wall_features(plan, tex.pop("features"), log, mirror=opts.mirror_walls, tex_dir=out.parent,
+                                windows=roomplan_window_cells(room, plan["arkit"]))
         except Exception as ex_:  # never lose the whole analysis over the wall pictures
             import traceback
             traceback.print_exc()

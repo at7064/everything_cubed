@@ -1376,7 +1376,48 @@ def _rects(grid):
     return out
 
 
-def apply_wall_features(plan, features, log=print, mirror=False, tex_dir=None):
+def _runs(ok):
+    """(start, end) of the longest run of True in a 1-D bool array, or None."""
+    best, start = None, None
+    for i, v in enumerate(np.r_[ok, False]):
+        if v and start is None:
+            start = i
+        elif not v and start is not None:
+            if best is None or i - start > best[1] - best[0]:
+                best = (start, i)
+            start = None
+    return best
+
+
+def rectangular_windows(win, score, share=WINDOW_SHARE):
+    """Each patch of glass in `win` becomes one rectangle. Within its bounding box a row is glass when its cells'
+    average `score` (the share of views showing window) reaches `share`, and a column likewise; the longest run of
+    such rows and of such columns is the window. Deciding cell by cell left notches where an edge row was half glass
+    (a window ending a third of the way into a block reads 0.50, 0.50, 0.44 along its top)."""
+    out = np.zeros_like(win)
+    lab, _ = ndimage.label(win)
+    for sl in ndimage.find_objects(lab):
+        sub = score[sl]
+        rows, cols = _runs(sub.mean(1) >= share), _runs(sub.mean(0) >= share)
+        if rows and cols:
+            out[sl][rows[0]:rows[1], cols[0]:cols[1]] = True
+    return out
+
+
+def measured_windows(windows, side, rows, cols):
+    """Glass from measured window rectangles (RoomPlan's), [{"side", "u0", "u1", "y0", "y1"}] in wall cells
+    (u along the wall as in its grid, y rows from row 0), rounded to whole cells and at least one cell each way."""
+    g = np.zeros((rows, cols), bool)
+    for w in windows:
+        if w["side"] != side:
+            continue
+        u0, y0 = int(round(w["u0"])), int(round(w["y0"]))
+        u1, y1 = max(u0 + 1, int(round(w["u1"]))), max(y0 + 1, int(round(w["y1"])))
+        g[max(0, y0):min(rows, y1), max(0, u0):min(cols, u1)] = True
+    return g
+
+
+def apply_wall_features(plan, features, log=print, mirror=False, tex_dir=None, windows=None):
     """Windows and built-in bookshelves from what the photos show on each wall (walltex.project_features).
 
     Windows: where a wall was seen well, glass goes exactly where the photos show glass, so the stone between
@@ -1385,17 +1426,24 @@ def apply_wall_features(plan, features, log=print, mirror=False, tex_dir=None):
     wall become vanilla bookshelf furniture standing on the floor right in front of it (never part of the wall
     itself), and bookcases already placed at those spots are dropped as duplicates. mirror=True: a wall the photos hardly saw copies the
     opposite wall when that one was seen well (halls, libraries, churches). tex_dir: the folder the wall pictures'
-    paths are relative to (the plan's folder), so the wall around doors can be repainted plain."""
+    paths are relative to (the plan's folder), so the wall around doors can be repainted plain.
+    windows: measured window rectangles (see measured_windows); on a wall with any, they replace the photos' glass.
+    Glass always comes out as rectangles (see rectangular_windows), except where a door cuts into one."""
     decided = {}
     for side, f in features.items():
         rows, cols = f["seen"].shape
         seen = f["seen"] >= 0.5
         doors = _grid_of(plan["openings"], side, "door", rows, cols)
         guessed = _grid_of(plan["openings"], side, "window", rows, cols)
-        if seen.mean() >= FEATURE_MIN_SEEN:
+        measured = measured_windows(windows or [], side, rows, cols)
+        if measured.any():
+            win = measured
+            log(f"[plan] {side} wall: windows from RoomPlan's measured rectangles")
+        elif seen.mean() >= FEATURE_MIN_SEEN:
             win = ((f["window"] >= WINDOW_SHARE) & seen) | (guessed & ~seen)
             if win.mean() > MAX_WINDOW:
                 win &= seen
+            win = rectangular_windows(win, np.where(seen, f["window"], guessed.astype(float)))
         else:
             win = guessed.copy()
             if win.mean() > MAX_WINDOW:

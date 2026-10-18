@@ -122,7 +122,8 @@ Then `roomplan.py`:
    flat paint where unseen) and `none` (blocks only). Extra flags go in `extraArgs` in
    `config/everything_cubed.json`.
 7. Windows and built-in shelves come from what the photos show on each wall (`walltex.project_features`): glass
-   only where the most head-on photo shows glass, so the stone between windows stays, and shelving seen on a
+   only where the most head-on photo shows glass, so the stone between windows stays (each window is one
+   rectangle: its rows and columns are decided as a whole, so a half-glass edge row leaves no notch), and shelving seen on a
    wall becomes vanilla bookshelf furniture standing on the floor in front of it (furniture is never part of a
    wall; a bookcase already placed at the same spot is dropped as a duplicate). Windows guessed from 3D clusters alone, on walls the photos did
    not see, never take more than 60% of a wall. `--mirror-walls` (opt-in) lets a wall the photos hardly saw
@@ -154,7 +155,8 @@ for a 34-photo scan on a laptop, and only numpy, SciPy, scikit-learn and Pillow.
    (lamps, plants, paintings, TVs, rugs) get named too. Geometry keeps the final say on floor, walls and ceiling.
 4. `roomplan.build_plan` and `walltex.render_walls` then build the plan and wall pictures as for photos, with two
    differences: a side whose wall was never scanned reaches at least to where RoomPlan's walls end (not just to the
-   furniture), and the scale is not nudged to centre seats on tables, so furniture keeps its measured length.
+   furniture), the scale is not nudged to centre seats on tables, so furniture keeps its measured length, and on a
+   wall where RoomPlan found a window its measured rectangle (rounded to blocks) replaces the photos' glass.
 
 Photo-only flags (`--perceptron`, `--backend`, model names) are ignored with a log line.
 `python test_lidar.py` checks it on a synthetic scan.
