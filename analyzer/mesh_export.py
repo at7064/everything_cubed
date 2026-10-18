@@ -11,7 +11,7 @@ VERTEX = np.dtype([("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
 FACE = np.dtype([("count", "u1"), ("a", "<i4"), ("b", "<i4"), ("c", "<i4")])
 
 
-def mesh_arrays(views, max_side=180):
+def mesh_arrays(views, max_side=0):
     """Triangulate neighbouring depth pixels; reject triangles crossing depth discontinuities."""
     vertex_parts, face_parts = [], []
     offset = 0
@@ -21,7 +21,7 @@ def mesh_arrays(views, max_side=180):
         if points.ndim != 3 or points.shape[-1] != 3 or rgb.shape != points.shape:
             raise ValueError("each view needs aligned H x W x 3 points and RGB")
         h0, w0 = points.shape[:2]
-        stride = max(1, int(np.ceil(max(h0, w0) / max_side)))
+        stride = max(1, int(np.ceil(max(h0, w0) / max_side))) if max_side else 1
         p = np.ascontiguousarray(points[::stride, ::stride], dtype=np.float32)
         c = np.ascontiguousarray(rgb[::stride, ::stride], dtype=np.uint8)
         h, w = p.shape[:2]
@@ -75,7 +75,7 @@ def mesh_arrays(views, max_side=180):
     return vertices[used], faces
 
 
-def write_ply(views, path: Path, max_side=180):
+def write_ply(views, path: Path, max_side=0):
     vertices, faces = mesh_arrays(views, max_side=max_side)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

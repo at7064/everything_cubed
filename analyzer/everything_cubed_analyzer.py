@@ -42,6 +42,8 @@ def main(argv=None):
     ap.add_argument("--device", help="torch device (default: cuda > mps > cpu)")
     ap.add_argument("--batch-views", type=int, default=6,
                     help="MapAnything views per overlapping batch (default 6; lower uses less GPU memory)")
+    ap.add_argument("--model-resolution", type=int, default=518,
+                    help="MapAnything longest image side in pixels (default 518; 728 needs more GPU memory)")
     # Apache variant: on a taped 9.45 x 4.57 m room it measured 0.91x / 1.10x, the research variant
     # (facebook/map-anything, CC-BY-NC 4.0) 1.22x / 1.25x; the research variant was closer only on a 20 m high hall.
     ap.add_argument("--mapanything-model", default="facebook/map-anything-apache")
@@ -59,6 +61,8 @@ def main(argv=None):
     ap.add_argument("--texture-px", type=int, help="texture pixels per block (default 128 for photo, else 64)")
     ap.add_argument("--save-cloud", action="store_true", help="also write the labelled point cloud (.npz)")
     ap.add_argument("--mesh-out", type=Path, help="write reconstructed coloured surface mesh as PLY")
+    ap.add_argument("--mesh-max-side", type=int, default=0,
+                    help="downsample each mesh view to this side length; 0 keeps every reconstructed pixel")
     ap.add_argument("--perceptron", action="store_true",
                     help="also detect every object with Perceptron Mk1.5 (sends the photos to api.perceptron.inc; people "
                          "found locally (SegFormer + a COCO person detector) are blurred first, best effort; key in "
@@ -94,9 +98,9 @@ def main(argv=None):
         views, metric = reconstruct(paths, opts.backend, device, opts, log)
     if opts.mesh_out:
         from mesh_export import write_ply
-        vertices, faces = write_ply(views, opts.mesh_out)
+        vertices, faces = write_ply(views, opts.mesh_out, max_side=opts.mesh_max_side)
         log(f"[mesh] wrote {opts.mesh_out}: {vertices} vertices, {faces} triangles")
-    label_maps, id2label = segment(views, device, opts.seg_model, log)
+    label_maps, id2label = segment(views, device, opts.seg_model, log, paths=paths)
     ade_to_category, detections = ADE_TO_CATEGORY, None
     if opts.perceptron:
         from perception import perceptron_pass

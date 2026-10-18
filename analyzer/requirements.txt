@@ -1,6 +1,7 @@
 # Python 3.12 recommended (PyTorch / MapAnything wheels).
 numpy
 scipy
+scikit-image
 scikit-learn
 pillow
 torch

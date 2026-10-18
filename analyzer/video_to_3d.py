@@ -54,6 +54,10 @@ def main(argv=None):
     ap.add_argument("--frames", type=int, default=16, help="frames sampled across a video (default 16)")
     ap.add_argument("--max-width", type=int, default=1600, help="maximum extracted frame width")
     ap.add_argument("--batch-views", type=int, default=6, help="MapAnything views per GPU batch (default 6)")
+    ap.add_argument("--model-resolution", type=int, default=518, help="reconstruction image size (default 518; try 728 for detail)")
+    ap.add_argument("--mesh-max-side", type=int, default=0, help="mesh downsampling limit; 0 retains all pixels")
+    ap.add_argument("--splat-radius", type=float, default=0.12,
+                    help="radius in metres used to join nearby reconstructed surfaces (default 0.12)")
     ap.add_argument("--backend", choices=("auto", "arkit", "mapanything", "vggt"), default="auto")
     ap.add_argument("--device", help="torch device, e.g. cuda")
     ap.add_argument("--mc-jar", type=Path, help="Minecraft jar for block colour matching")
@@ -70,6 +74,10 @@ def main(argv=None):
         ap.error("--max-width must be at least 320")
     if opts.batch_views < 3:
         ap.error("--batch-views must be at least 3")
+    if opts.model_resolution < 224 or opts.model_resolution > 1024:
+        ap.error("--model-resolution must be between 224 and 1024")
+    if not 0.02 <= opts.splat_radius <= 0.5:
+        ap.error("--splat-radius must be between 0.02 and 0.5 metres")
     out = (opts.out or source.with_name(source.stem + "_3d")).expanduser().resolve()
     if source.is_file() and source.suffix.lower() not in VIDEO_EXT:
         ap.error("input file must be a video; use a folder for photos or LiDAR captures")
@@ -84,7 +92,8 @@ def main(argv=None):
     from everything_cubed_analyzer import main as analyze
     plan_path = out / "plan.json"
     args = ["--images", str(images), "--out", str(plan_path), "--mesh-out", str(out / "reconstruction.ply"),
-            "--batch-views", str(opts.batch_views), "--backend", opts.backend,
+            "--batch-views", str(opts.batch_views), "--model-resolution", str(opts.model_resolution),
+            "--mesh-max-side", str(opts.mesh_max_side), "--backend", opts.backend,
             "--wall-detail", opts.wall_detail]
     if opts.device: args += ["--device", opts.device]
     if opts.mc_jar: args += ["--mc-jar", str(opts.mc_jar)]
@@ -97,9 +106,12 @@ def main(argv=None):
     if source.is_file():
         plan.setdefault("source", {})["video"] = str(source)
         plan_path.write_text(json.dumps(plan, indent=1))
-    scene = write_viewer(plan, out / "view.html", out / "reconstruction.ply")
+    from solid_export import write_solid
+    nverts, nfaces = write_solid(out / "reconstruction.ply", out / "solid.ply", splat_radius=opts.splat_radius)
+    print(f"[solid] wrote {out / 'solid.ply'}: {nverts} vertices, {nfaces} triangles", flush=True)
+    scene = write_viewer(plan, out / "view.html", out / "solid.ply")
     write_obj(scene, out / "model.obj")
-    print(f"[3d] {out / 'reconstruction.ply'}\n[3d] {out / 'view.html'}\n"
+    print(f"[3d] {out / 'reconstruction.ply'}\n[3d] {out / 'solid.ply'}\n[3d] {out / 'view.html'}\n"
           f"[3d] {out / 'model.obj'}\n[3d] {plan_path}", flush=True)
 
 

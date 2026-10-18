@@ -6,7 +6,8 @@ from pathlib import Path
 import numpy as np
 
 from mesh_export import mesh_arrays, write_ply
-from plan_viewer import write_obj, write_viewer
+from plan_viewer import scene_from_plan, write_obj, write_viewer
+from solid_export import write_solid
 
 
 def test_export():
@@ -17,6 +18,7 @@ def test_export():
     vertices, faces = mesh_arrays([view], max_side=20)
     assert len(vertices) == 20 and len(faces) == 24
     view["mask"][1, 1] = False
+    view["rgb"][0, 0] = [255, 0, 0]
     vertices, faces = mesh_arrays([view], max_side=20)
     assert len(vertices) < 20 and len(faces) < 24
     plan = {"size": {"x": 3, "y": 3, "z": 2}, "floor": {"grid": [[0]*3 for _ in range(2)],
@@ -30,12 +32,25 @@ def test_export():
         write_ply([view], ply, max_side=20)
         scene = write_viewer(plan, html, ply)
         write_obj(scene, obj)
-        assert len(scene["mesh"]["triangles"]) == len(faces)
+        assert scene["mesh"]["preview_faces"] == len(faces)
+        import base64
+        packed = np.frombuffer(base64.b64decode(scene["mesh"]["vertices_b64"]),
+                               dtype=np.dtype([("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
+                                               ("r", "u1"), ("g", "u1"), ("b", "u1"), ("pad", "u1")]))
+        assert len(packed) == len(faces) * 3
+        assert np.any((packed["r"] == 255) & (packed["g"] == 0))
         assert any(b[8] == "Fire Alarm" for b in scene["boxes"])
         assert all(p.is_file() for p in (ply, html, obj, obj.with_suffix(".mtl")))
         assert "Reconstructed surfaces" in html.read_text()
         assert obj.read_text().startswith("# Everything Cubed room")
         json.dumps(scene)
+        solid = root / "solid.ply"
+        count, triangles = write_solid(ply, solid, voxel=0.03, splat_radius=0.09)
+        assert count > 0 and triangles > 0 and solid.is_file()
+        plan["footprint"] = [[1, 1, 1], [1, 0, 0]]
+        shaped = scene_from_plan(plan)
+        assert sum(box[7] == "floor" for box in shaped["boxes"]) == 4
+        assert any(box[7] == "wall" and box[0] == 1 for box in shaped["boxes"])
 
 
 if __name__ == "__main__":

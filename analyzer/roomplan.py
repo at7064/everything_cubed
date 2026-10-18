@@ -479,6 +479,22 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
     fl = floor_m & (x >= room.xmin) & (x <= room.xmax) & (z >= room.zmin) & (z <= room.zmax)
     floor_grid, floor_blocks = surface_grid(np.stack([room.bz(z[fl]), room.bx(x[fl])], 1), colors[fl], (D, W),
                                             surface_palette, default_rgb=(162, 130, 78))
+    # Preserve alcoves and angled edges where the photographed floor supplies enough coverage.
+    footprint = np.ones((D, W), dtype=bool)
+    if fl.sum() >= 100 and min(W, D) >= 4:
+        counts = np.zeros((D, W), dtype=np.int32)
+        np.add.at(counts, (np.clip(room.bz(z[fl]), 0, D - 1),
+                           np.clip(room.bx(x[fl]), 0, W - 1)), 1)
+        seen = counts >= max(3, int(np.percentile(counts[counts > 0], 20)) if np.any(counts) else 3)
+        if seen.mean() >= 0.3:
+            seen = ndimage.binary_closing(seen, structure=np.ones((3, 3)), border_value=1)
+            seen = ndimage.binary_fill_holes(seen)
+            labels, ncomp = ndimage.label(seen)
+            if ncomp:
+                seen = labels == (1 + np.argmax(np.bincount(labels.ravel())[1:]))
+            if seen.mean() >= 0.3 and seen.mean() < 0.97:
+                footprint = seen
+                log(f"[plan] traced non-rectangular floor: {int(seen.sum())}/{W * D} cells")
 
     # ---------------- walls (clustered jointly so the same paint maps to the same block everywhere)
     near = 0.35
@@ -766,7 +782,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
 
     # ---------------- make sure the "house" has a usable front door
     if not any(o["type"] == "door" for o in openings):
-        door = choose_door(room, openings, occupancy, objects)
+        door = choose_door(room, openings, occupancy, objects, footprint)
         if door:
             door["material"] = "oak"
             openings.append(door)
@@ -780,6 +796,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
         "metres": {"x": round(wm, 2), "z": round(dm, 2), "y": round(hm, 2)},
         "size": {"x": W, "z": D, "y": H},
         "floor": {"palette": floor_blocks, "grid": floor_grid.tolist()},
+        "footprint": footprint.astype(int).tolist(),
         "walls": walls,
         "wall_main": wall_blocks[dominant],
         "ceiling": ceiling_block,
@@ -908,7 +925,7 @@ def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
     return None
 
 
-def choose_door(room: Room, openings, occupancy, objects):
+def choose_door(room: Room, openings, occupancy, objects, footprint=None):
     """Pick an unblocked spot for a front door: free floor inside, no window, not in a corner."""
     W, D = room.W, room.D
     taken = {(o["side"], u) for o in openings for u in range(o["u"], o["u"] + o["w"]) if o["y"] <= 1}
@@ -921,6 +938,8 @@ def choose_door(room: Room, openings, occupancy, objects):
                 continue
             inside = {"north": (u, 0), "south": (u, D - 1), "west": (0, u), "east": (W - 1, u)}[side]
             step = {"north": (u, 1), "south": (u, D - 2), "west": (1, u), "east": (W - 2, u)}[side]
+            if footprint is not None and not footprint[inside[1], inside[0]]:
+                continue
             if occupancy[inside] != -1:
                 continue
             score = L * 0.5 - abs(u - (L - 1) / 2)  # long walls, near the centre

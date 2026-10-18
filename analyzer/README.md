@@ -14,14 +14,15 @@ uv run --no-project --with-requirements analyzer/requirements.txt python analyze
 uv run --no-project --with-requirements analyzer/requirements.txt python analyzer/video_to_3d.py scan_folder --out scan_3d
 ```
 
-The output contains `reconstruction.ply`, a coloured triangle mesh of the measured surfaces; `model.obj` and
+The output contains `reconstruction.ply`, a full-resolution coloured triangle mesh of the measured surfaces;
+`solid.ply`, a smoothed coloured surface that joins nearby points; `model.obj` and
 `model.mtl`, a simplified block room for Blender or other 3D editors; `plan.json`, the Minecraft build plan; and
 `view.html`, a standalone HTML viewer with orbit, zoom, and a switch between the room model and reconstructed
-surfaces. Open `view.html` directly in a browser. FFmpeg is used only to sample frames when the input is a video.
+surfaces. The HTML opens on the connected surface and draws vertex colours with WebGL. Open `view.html` directly in a browser. FFmpeg is used only to sample frames when the input is a video.
 Use `--frames 24` for more views, or `--perceptron` to detect additional small objects. A LiDAR `capture.json`
 uses its measured depths and camera poses; ordinary video is reconstructed from the sampled frames.
 Long videos run MapAnything in overlapping batches of six views, align the shared frames, and combine all views
-into one mesh. `--frames 64` uses the full supported frame count; `--batch-views 4` lowers GPU memory use.
+into one mesh. `--frames 64` uses the full supported frame count. For a detailed scan on a GPU with limited free memory, use `--model-resolution 728 --batch-views 3`. `--splat-radius 0.12` controls how far the smoothed surface reaches across gaps. Object labels are inferred from the original video frames and located by their reconstructed 3D pixels. A floor footprint mask lets Minecraft build alcoves and other non-rectangular outlines where the floor is sufficiently visible.
 
 ## Pipeline (all established open-source projects)
 

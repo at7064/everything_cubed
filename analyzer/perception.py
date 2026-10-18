@@ -116,7 +116,7 @@ def align_reconstruction(batch, reference, overlap=2):
     return float(np.median(error))
 
 
-def reconstruct_mapanything(paths, device, model_name, log, use_exif=True, batch_size=6):
+def reconstruct_mapanything(paths, device, model_name, log, use_exif=True, batch_size=6, resolution=518):
     import torch
     from mapanything.models import MapAnything
     from mapanything.utils.image import load_images
@@ -129,12 +129,13 @@ def reconstruct_mapanything(paths, device, model_name, log, use_exif=True, batch
     if use_exif and not all(focals):
         log("[recon] some photos have no lens data; MapAnything estimates the camera geometry itself")
     all_views = []
-    overlap = 2
+    overlap = 1 if batch_size == 3 else 2
     for start in range(0, len(paths), batch_size - overlap):
         if start and start + overlap >= len(paths):
             break
         subset = paths[start:start + batch_size]
-        inputs = load_images([str(p) for p in subset])
+        inputs = (load_images([str(p) for p in subset]) if resolution == 518 else
+                  load_images([str(p) for p in subset], resize_mode="longest_side", size=resolution))
         if focals and all(focals):
             for v, (f, size) in zip(inputs, focals[start:start + len(inputs)]):
                 Hv, Wv = v["img"].shape[-2:]
@@ -396,7 +397,8 @@ def reconstruct(paths, backend, device, opts, log):
             if b == "mapanything":
                 return reconstruct_mapanything(paths, device, opts.mapanything_model, log,
                                                use_exif=not getattr(opts, "no_exif_camera", False),
-                                               batch_size=getattr(opts, "batch_views", 6))
+                                               batch_size=getattr(opts, "batch_views", 6),
+                                               resolution=getattr(opts, "model_resolution", 518))
             if b == "vggt":
                 return reconstruct_vggt(paths, device, opts.vggt_model, opts.depth_model, log)
         except ImportError as ex:
@@ -407,8 +409,8 @@ def reconstruct(paths, backend, device, opts, log):
 
 # ----------------------------------------------------------------------------------- segmentation
 
-def segment(views, device, model_name, log):
-    """ADE20K semantic labels per pixel. Returns (label maps, id2label)."""
+def segment(views, device, model_name, log, paths=None):
+    """Recognize objects in original photos; project labels onto reconstructed pixels."""
     import torch
     from PIL import Image
     from transformers import AutoImageProcessor, AutoModelForSemanticSegmentation
@@ -417,8 +419,8 @@ def segment(views, device, model_name, log):
     proc = AutoImageProcessor.from_pretrained(model_name)
     model = AutoModelForSemanticSegmentation.from_pretrained(model_name).to(device).eval()
     maps = []
-    for v in views:
-        img = Image.fromarray(v["rgb"])
+    for i, v in enumerate(views):
+        img = Image.open(paths[i]).convert("RGB") if paths and len(paths) == len(views) else Image.fromarray(v["rgb"])
         inp = proc(images=img, return_tensors="pt").to(device)
         with torch.no_grad():
             out = model(**inp)

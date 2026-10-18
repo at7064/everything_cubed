@@ -53,6 +53,8 @@ public class HouseBuilder {
 	private final BlockPos origin;
 	private final JsonObject plan;
 	private final int W, D, H;
+	private final boolean[][] footprint;
+	private final boolean irregularFootprint;
 	private final UndoLog undo;
 	/** Every block we set, so a final pass can recompute connections (panes, fences, stairs, doors). */
 	private final Map<BlockPos, BlockState> placed = new LinkedHashMap<>();
@@ -70,6 +72,14 @@ public class HouseBuilder {
 		this.W = size.get("x").getAsInt();
 		this.D = size.get("z").getAsInt();
 		this.H = size.get("y").getAsInt();
+		this.footprint = new boolean[D][W];
+		JsonArray shape = plan.has("footprint") ? plan.getAsJsonArray("footprint") : null;
+		boolean irregular = false;
+		for (int z = 0; z < D; z++) for (int x = 0; x < W; x++) {
+			footprint[z][x] = shape == null || shape.get(z).getAsJsonArray().get(x).getAsInt() != 0;
+			if (!footprint[z][x]) irregular = true;
+		}
+		this.irregularFootprint = irregular;
 		this.undo = new UndoLog(level);
 		this.wallMain = plan.get("wall_main").getAsString();
 		JsonObject roof = plan.getAsJsonObject("roof");
@@ -80,7 +90,7 @@ public class HouseBuilder {
 	public UndoLog build() {
 		clearSite();
 		buildShell();
-		buildRoof();
+		if (!irregularFootprint) buildRoof();
 		buildOpenings();
 		buildObjects(); // lights are only the ones detected in the photos: a dark room stays dark
 		finishShapes();
@@ -159,10 +169,18 @@ public class HouseBuilder {
 		JsonArray fGrid = floor.getAsJsonArray("grid");
 		for (int z = 0; z < D; z++) {
 			JsonArray row = fGrid.get(z).getAsJsonArray();
-			for (int x = 0; x < W; x++) set(x, 0, z, fPal.get(row.get(x).getAsInt()));
+			for (int x = 0; x < W; x++) if (insideFootprint(x, z)) set(x, 0, z, fPal.get(row.get(x).getAsInt()));
 		}
-		for (int x = -1; x <= W; x++) { set(x, 0, -1, main); set(x, 0, D, main); }
-		for (int z = 0; z < D; z++) { set(-1, 0, z, main); set(W, 0, z, main); }
+		if (irregularFootprint) {
+			for (int z = 0; z < D; z++) for (int x = 0; x < W; x++) if (insideFootprint(x, z))
+				for (int[] dir : new int[][]{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+					int nx = x + dir[0], nz = z + dir[1];
+					if (!insideFootprint(nx, nz)) for (int y = 0; y <= H; y++) set(nx, y, nz, main);
+				}
+		} else {
+			for (int x = -1; x <= W; x++) { set(x, 0, -1, main); set(x, 0, D, main); }
+			for (int z = 0; z < D; z++) { set(-1, 0, z, main); set(W, 0, z, main); }
+		}
 
 		// Walls (rows 0..H-1 -> y 1..H), each matched to how it looked in the photos.
 		JsonObject walls = plan.getAsJsonObject("walls");
@@ -174,19 +192,26 @@ public class HouseBuilder {
 				JsonArray r = grid.get(row).getAsJsonArray();
 				for (int u = 0; u < r.size(); u++) {
 					int[] p = wallCell(side, u);
-					set(p[0], row + 1, p[1], pal.get(r.get(u).getAsInt()));
+					int[] in = insideCell(side, u);
+					if (insideFootprint(in[0], in[1])) set(p[0], row + 1, p[1], pal.get(r.get(u).getAsInt()));
 				}
 			}
 		}
 		// Corner pillars (only visible from outside).
-		for (int y = 0; y <= H + 1; y++) {
+		for (int y = 0; !irregularFootprint && y <= H + 1; y++) {
 			set(-1, y, -1, pillar); set(W, y, -1, pillar); set(-1, y, D, pillar); set(W, y, D, pillar);
 		}
 		// Ceiling layer.
 		BlockState ceiling = first(plan.get("ceiling").getAsString());
 		for (int x = -1; x <= W; x++)
 			for (int z = -1; z <= D; z++)
-				set(x, H + 1, z, (x < 0 || z < 0 || x >= W || z >= D) ? main : ceiling);
+				if (insideFootprint(x, z)) set(x, H + 1, z, ceiling);
+				else if (!irregularFootprint || (insideFootprint(x - 1, z) || insideFootprint(x + 1, z)
+						|| insideFootprint(x, z - 1) || insideFootprint(x, z + 1))) set(x, H + 1, z, main);
+	}
+
+	private boolean insideFootprint(int x, int z) {
+		return x >= 0 && z >= 0 && x < W && z < D && footprint[z][x];
 	}
 
 	private List<BlockState> palette(JsonArray ids) {
