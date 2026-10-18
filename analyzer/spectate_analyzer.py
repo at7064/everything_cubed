@@ -10,8 +10,9 @@ coordinates, and the plan's "arkit" frame (written by lidar_analyzer) maps them 
 
 Only whole pieces of furniture change, and only from RoomPlan's objects; no single blocks are ever placed:
 - every built piece of furniture is linked to the RoomPlan object of the scan it came from (room.json);
-- a piece moves when RoomPlan places that object clearly elsewhere (more than MOVE_M or MOVE_DEG from where it was),
-  onto a different footprint, the same one for MOVE_UPDATES room updates in a row. Its new footprint, height and
+- a piece moves when RoomPlan places that object clearly elsewhere (less than MOVE_INSIDE of its live floor
+  footprint still inside where it was), onto a different footprint, the same one for MOVE_UPDATES room updates in a
+  row. Spectate runs RoomPlan afresh, so its first boxes are partial: a box inside the scanned one is the same piece. Its new footprint, height and
   facing come from roomplan.place_object, exactly as build places furniture; its material and colour stay;
 - a new piece is added when RoomPlan identifies a new object with medium or high confidence, stable for
   MOVE_UPDATES updates;
@@ -47,8 +48,7 @@ import numpy as np  # noqa: E402
 from lidar_analyzer import ROOMPLAN_OBJECTS, _mat, frame_geometry  # noqa: E402
 from roomplan import Room, place_object  # noqa: E402
 
-MOVE_M = 0.25             # metres RoomPlan must place an object away from where it was for it to have moved
-MOVE_DEG = 25.0           # ... or degrees it must have turned
+MOVE_INSIDE = 0.5         # an object has moved when less than this share of its live footprint is where it was
 MOVE_UPDATES = 5          # room updates in a row that must agree on the new footprint (about a second)
 MATCH_M = 1.5             # metres: a live RoomPlan object this close to a scanned one of its kind is that one
 CONFIDENT = ("medium", "high")
@@ -154,21 +154,31 @@ def kind(cat):
 
 
 class Pose:
-    """A RoomPlan box in room metres: centre, yaw (degrees, of its local x axis) and the cluster place_object takes."""
+    """A RoomPlan box in room metres: centre, floor footprint and the cluster place_object takes."""
 
     def __init__(self, frame: PlanFrame, o):
         T, d = _mat(o["transform"]), np.asarray(o["dimensions"], float)
         corners = np.array([[sx, sy, sz] for sx in (-.5, .5) for sy in (-.5, .5) for sz in (-.5, .5)]) * d
         loc = frame.room_metres(corners @ T[:3, :3].T + T[:3, 3])
         self.c = frame.room_metres(T[:3, 3])
-        ax = frame.R @ T[:3, 0]
-        self.yaw = float(np.degrees(np.arctan2(ax[2], ax[0])))
         self.cluster = {"lo": loc.min(0), "hi": loc.max(0), "c": self.c, "rgb": np.array([128.0, 128.0, 128.0]),
                         "n": 1000}
+        # Floor footprint: the box's two horizontal axes (unit, room frame) and its half sizes along them.
+        self.axes = np.stack([frame.R @ T[:3, 0], frame.R @ T[:3, 2]])[:, [0, 2]]
+        self.half = d[[0, 2]] / 2 * frame.f
+
+    def inside_share(self, other: "Pose", n=9):
+        """Share of this box's floor footprint that lies inside `other`'s (sampled on an n x n grid)."""
+        g = (np.arange(n) + 0.5) / n * 2 - 1
+        local = np.stack(np.meshgrid(g, g), -1).reshape(-1, 2) * self.half
+        pts = self.c[[0, 2]] + local @ self.axes
+        rel = (pts - other.c[[0, 2]]) @ other.axes.T
+        return float(np.all(np.abs(rel) <= other.half + 1e-6, axis=1).mean())
 
     def moved_from(self, other: "Pose"):
-        turn = abs((self.yaw - other.yaw + 180) % 360 - 180)
-        return np.hypot(*(self.c - other.c)[[0, 2]]) > MOVE_M or turn > MOVE_DEG
+        """Mostly outside where it was. A partial box RoomPlan has only begun to see, inside the scanned one, has not
+        moved, nor has the same box turned in place or described with its axes the other way round."""
+        return self.inside_share(other) < MOVE_INSIDE
 
 
 class Furniture:

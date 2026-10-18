@@ -173,8 +173,9 @@ The build is the starting state, taken as certain. Only whole pieces of furnitur
 objects; no single blocks are ever placed:
 
 - every built piece is linked to the RoomPlan object of the scan it came from (`room.json`), by kind and position;
-- a piece moves when RoomPlan places its object more than 25 cm or 25 degrees from where it was, onto a different
-  footprint, the same one for 5 updates in a row. The new footprint, height and facing come from
+- a piece moves when RoomPlan places its object mostly outside where it was (less than half of its live floor
+  footprint inside the scanned box), onto a different footprint, the same one for 5 updates in a row. Spectate runs
+  RoomPlan afresh, so its first boxes are partial guesses: one inside the scanned box is the same piece, not a move. The new footprint, height and facing come from
   `roomplan.place_object`, as in build; material and colour stay. The mod takes the whole model away and builds it
   again at the new place;
 - a new piece is added only when RoomPlan identifies a new object with medium or high confidence, stable for 5

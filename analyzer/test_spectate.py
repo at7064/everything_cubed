@@ -154,7 +154,7 @@ def send(data):
     moves.extend(out["moves"]); adds.extend(out["adds"]); people = out["people"]; ms.append(out["ms"])
 
 
-def live(chair=(1.5, 1.5), table=True, sofa=None, jitter=0.0):
+def live(chair=(1.5, 1.5), table=True, sofa=None, jitter=0.0, bed=None):
     rng = np.random.default_rng(len(ms))
     j = lambda c: (c[0] + rng.uniform(-jitter, jitter), c[1] + rng.uniform(-jitter, jitter))
     objs = [rp("live-chair", "chair", j(chair), CHAIR)]
@@ -162,6 +162,8 @@ def live(chair=(1.5, 1.5), table=True, sofa=None, jitter=0.0):
         objs.append(rp("live-table", "table", j((4.0, 3.0)), TABLE))
     if sofa:
         objs.append(rp("live-sofa", "sofa", (1.5, 4.0), SOFA, conf=sofa))
+    if bed:
+        objs.append(rp("live-bed", "bed", bed[0], bed[1], yaw=90))
     send(room_message(objs))
 
 
@@ -171,6 +173,13 @@ for _ in range(10):
     live(jitter=0.05)
 assert not moves and not adds, (moves, adds)
 print("room as scanned, and with 5 cm jitter: nothing changes")
+
+# Spectate runs RoomPlan afresh: its first bed box covers only the half it has seen, so its centre is 45 cm off the
+# scanned one. Inside the scanned box, it is the same bed: nothing moves.
+for _ in range(8):
+    live(bed=((5.85, 3.9), (1.1, 0.6, 1.0)))
+assert not moves and not adds, (moves, adds)
+print("partial bed box inside the scanned one: nothing changes")
 
 for _ in range(3):
     live(chair=(1.5, 2.7))
