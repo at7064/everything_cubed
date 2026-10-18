@@ -264,16 +264,19 @@ h1{font-size:17px;margin:0 0 7px}.muted{color:#acc0c7;font-size:12px;line-height
 label{display:block;margin-top:12px}input[type=range]{width:100%}button,a{margin-top:9px;border:1px solid #5a7480;background:#243945;color:#eff;border-radius:7px;padding:7px 10px;cursor:pointer;text-decoration:none;display:inline-block}
 </style></head><body><canvas id="view"></canvas><div class="panel"><h1>Photo-textured 3D</h1>
 <div id="stats" class="muted"></div><div class="muted">Original video pixels cut into patches and placed at their measured 3D positions. Drag to orbit · scroll to zoom.</div>
+<label id="baseLabel" style="display:none"><input id="base" type="checkbox" checked> Show original mesh</label>
 <label><input id="combine" type="checkbox" checked> <span id="combineLabel">Combine all frames</span></label>
 <label>Frame <span id="frameName"></span><input id="frame" type="range" min="0" max="0" value="0"></label>
 <button id="reset">Reset view</button> <a href="view.html">Colored solid / room model</a></div><script>
 const scene=__SCENE__,canvas=document.getElementById('view'),gl=canvas.getContext('webgl',{antialias:true}),fallbackCtx=gl?null:canvas.getContext('2d');
-const frameSlider=document.getElementById('frame'),combine=document.getElementById('combine'),frameName=document.getElementById('frameName');
+const frameSlider=document.getElementById('frame'),combine=document.getElementById('combine'),frameName=document.getElementById('frameName'),baseToggle=document.getElementById('base');
+if(scene.base_mesh){document.getElementById('baseLabel').style.display='block';combine.checked=false}
 frameSlider.max=scene.batches.length-1;document.getElementById('stats').textContent=`${scene.batches.length} original frames · ${scene.total_faces.toLocaleString()} textured triangles`;
 const [lo,hi]=scene.bounds;let center=lo.map((v,i)=>(v+hi[i])/2),span=Math.max(...lo.map((v,i)=>hi[i]-v));
-let yaw=-.65,pitch=.55,zoom=span*1.1,drag=false,last=[0,0],program=null,batches=[];
+let yaw=-.65,pitch=.55,zoom=span*1.1,drag=false,last=[0,0],program=null,batches=[],baseProgram=null,baseBuffer=null,baseCount=0;
 function shader(type,source){let s=gl.createShader(type);gl.shaderSource(s,source);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s}
 function setup(){if(!gl){document.getElementById('stats').textContent=`${scene.batches.length} original frames · CPU photo preview`;
+ document.getElementById('baseLabel').style.display='none';
  document.getElementById('combineLabel').textContent='Combine 8 keyframes (CPU preview)';
  for(let item of scene.batches){let raw=atob(item.coarse_b64),bytes=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);
   let image=new Image(),entry={array:new Float32Array(bytes.buffer),count:bytes.length/20,image};image.onload=()=>draw();image.src=item.image;batches.push(entry)}
@@ -284,6 +287,15 @@ function setup(){if(!gl){document.getElementById('stats').textContent=`${scene.b
  program=gl.createProgram();gl.attachShader(program,vs);gl.attachShader(program,fs);gl.linkProgram(program);
  if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(program));gl.useProgram(program);
  gl.uniform1i(gl.getUniformLocation(program,'uImage'),0);gl.enable(gl.DEPTH_TEST);gl.disable(gl.CULL_FACE);
+ if(scene.base_mesh){
+  const baseVs=shader(gl.VERTEX_SHADER,`attribute vec3 aPos;attribute vec3 aColor;varying vec3 vColor;uniform vec3 uCenter;uniform float uYaw,uPitch,uZoom,uAspect;
+   void main(){vec3 p=aPos-uCenter;float c=cos(uYaw),s=sin(uYaw);float a=p.x*c-p.z*s,b=p.x*s+p.z*c;float q=b*cos(uPitch)-p.y*sin(uPitch),v=b*sin(uPitch)+p.y*cos(uPitch);float depth=max(.1,uZoom-q);gl_Position=vec4(a/uAspect,v,depth*1.0002-.2,depth);vColor=aColor;}`);
+  const baseFs=shader(gl.FRAGMENT_SHADER,`precision mediump float;varying vec3 vColor;void main(){gl_FragColor=vec4(vColor,1.0);}`);
+  baseProgram=gl.createProgram();gl.attachShader(baseProgram,baseVs);gl.attachShader(baseProgram,baseFs);gl.linkProgram(baseProgram);
+  if(!gl.getProgramParameter(baseProgram,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(baseProgram));
+  let raw=atob(scene.base_mesh.vertices_b64),bytes=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);
+  baseBuffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,baseBuffer);gl.bufferData(gl.ARRAY_BUFFER,bytes,gl.STATIC_DRAW);baseCount=bytes.length/16;
+ }
  for(let item of scene.batches){let raw=atob(item.vertices_b64),bytes=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);
   let buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,bytes,gl.STATIC_DRAW);
   let image=new Image(),entry={buffer,count:bytes.length/20,image,texture:null};image.onload=()=>{draw()};image.src=item.image;batches.push(entry)}
@@ -314,10 +326,15 @@ function drawFallback(){let ctx=fallbackCtx;ctx.setTransform(devicePixelRatio||1
   ctx.save();ctx.beginPath();ctx.moveTo(p[0][0],p[0][1]);ctx.lineTo(p[1][0],p[1][1]);ctx.lineTo(p[2][0],p[2][1]);ctx.closePath();ctx.clip();
   ctx.transform(a,b,c,d,e,f);ctx.drawImage(face.image,0,0);ctx.restore()}
  frameName.textContent=scene.batches[+frameSlider.value].name;frameSlider.disabled=combine.checked}
+function setCamera(prg){gl.uniform3fv(gl.getUniformLocation(prg,'uCenter'),center);gl.uniform1f(gl.getUniformLocation(prg,'uYaw'),yaw);
+ gl.uniform1f(gl.getUniformLocation(prg,'uPitch'),pitch);gl.uniform1f(gl.getUniformLocation(prg,'uZoom'),zoom);
+ gl.uniform1f(gl.getUniformLocation(prg,'uAspect'),innerWidth/innerHeight)}
 function draw(){if(!gl){drawFallback();return}if(!program)return;gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(.067,.094,.125,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
- gl.uniform3fv(gl.getUniformLocation(program,'uCenter'),center);gl.uniform1f(gl.getUniformLocation(program,'uYaw'),yaw);
- gl.uniform1f(gl.getUniformLocation(program,'uPitch'),pitch);gl.uniform1f(gl.getUniformLocation(program,'uZoom'),zoom);
- gl.uniform1f(gl.getUniformLocation(program,'uAspect'),innerWidth/innerHeight);
+ if(baseProgram&&baseToggle.checked){gl.useProgram(baseProgram);setCamera(baseProgram);gl.bindBuffer(gl.ARRAY_BUFFER,baseBuffer);
+  let pos=gl.getAttribLocation(baseProgram,'aPos'),col=gl.getAttribLocation(baseProgram,'aColor');gl.enableVertexAttribArray(pos);gl.vertexAttribPointer(pos,3,gl.FLOAT,false,16,0);
+  gl.enableVertexAttribArray(col);gl.vertexAttribPointer(col,3,gl.UNSIGNED_BYTE,true,16,12);
+  gl.enable(gl.POLYGON_OFFSET_FILL);gl.polygonOffset(1,1);gl.drawArrays(gl.TRIANGLES,0,baseCount);gl.disable(gl.POLYGON_OFFSET_FILL)}
+ gl.useProgram(program);setCamera(program);
  let list=combine.checked?batches:[batches[+frameSlider.value]];for(let entry of list){if(!entry)continue;upload(entry);if(!entry.texture)continue;
   gl.bindBuffer(gl.ARRAY_BUFFER,entry.buffer);let pos=gl.getAttribLocation(program,'aPos'),uv=gl.getAttribLocation(program,'aUv');
   gl.enableVertexAttribArray(pos);gl.vertexAttribPointer(pos,3,gl.FLOAT,false,20,0);gl.enableVertexAttribArray(uv);gl.vertexAttribPointer(uv,2,gl.FLOAT,false,20,12);
@@ -327,12 +344,15 @@ function resize(){let d=window.devicePixelRatio||1;canvas.width=innerWidth*d;can
 canvas.addEventListener('pointerdown',e=>{drag=true;last=[e.clientX,e.clientY];canvas.setPointerCapture(e.pointerId)});
 canvas.addEventListener('pointerup',()=>drag=false);canvas.addEventListener('pointermove',e=>{if(drag){yaw+=(e.clientX-last[0])*.008;pitch+=(e.clientY-last[1])*.008;last=[e.clientX,e.clientY];draw()}});
 canvas.addEventListener('wheel',e=>{e.preventDefault();zoom=Math.max(.5,Math.min(1000,zoom*Math.exp(e.deltaY*.001)));draw()},{passive:false});
-frameSlider.addEventListener('input',draw);combine.addEventListener('change',draw);document.getElementById('reset').onclick=()=>{yaw=-.65;pitch=.55;zoom=span*1.1;draw()};setup();
+frameSlider.addEventListener('input',draw);combine.addEventListener('change',draw);baseToggle.addEventListener('change',draw);document.getElementById('reset').onclick=()=>{yaw=-.65;pitch=.55;zoom=span*1.1;draw()};setup();
 </script></body></html>'''
 
 
-def write_photo_viewer(ply, frames, out, max_faces_per_frame=6000, shell=None):
+def write_photo_viewer(ply, frames, out, max_faces_per_frame=6000, shell=None, base_mesh=None):
     scene = photo_scene(ply, frames, max_faces_per_frame=max_faces_per_frame, shell=shell)
+    if base_mesh is not None:
+        from plan_viewer import mesh_preview_from_ply
+        scene["base_mesh"] = mesh_preview_from_ply(base_mesh, max_faces=150000)
     encoded = json.dumps(scene, separators=(",", ":")).replace("<", "\\u003c")
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
