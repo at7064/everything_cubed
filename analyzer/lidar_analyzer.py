@@ -305,6 +305,50 @@ def _area_past(frames, ax, sign, c, floor_y, low=0.5):
     return total
 
 
+def roomplan_walls(frames, room, ex, ez, log):
+    """RoomPlan's walls, as {(axis, sign): coordinate} like find_walls. RoomPlan fits each wall to the whole scan,
+    so where it found one it wins over the LiDAR's innermost plane, which can land on a fridge front or a desk
+    side and turn everything behind it into glass. On a side with several RoomPlan walls (an L-shaped room) the
+    longest one is used."""
+    if not room or not room.get("walls"):
+        return {}
+    cam = np.median([fr["C"] for fr in frames], axis=0)
+    best = {}
+    for wl in room["walls"]:
+        T = _mat(wl["transform"])
+        n = T[:3, 2]                       # a RoomPlan wall's normal is its local z
+        ai = 0 if abs(n @ ex) >= abs(n @ ez) else 1
+        ax = (ex, ez)[ai]
+        c = float(T[:3, 3] @ ax)
+        key = (ai, 1 if c > cam @ ax else -1)
+        if key not in best or wl["dimensions"][0] > best[key][1]:
+            best[key] = (c, wl["dimensions"][0])
+    names = {(0, -1): "x-", (0, 1): "x+", (1, -1): "z-", (1, 1): "z+"}
+    log("[lidar] RoomPlan walls used: " + ", ".join(f"{names[k]} {v[0] - cam @ (ex, ez)[k[0]]:+.2f} m"
+                                                   for k, v in sorted(best.items())))
+    return {k: v[0] for k, v in best.items()}
+
+
+def _under_roomplan_object(table, room, log, share=0.3):
+    """A table top found in the depth that is mostly the top of something RoomPlan already reported (a bed's
+    mattress is at table height, so is a dresser, and RoomPlan's own tables), which would otherwise be built a
+    second time as a table. Chairs and sofas don't count: they stand partly under tables."""
+    t_lo, t_hi, cells, x0, z0, m, sl = table
+    i, k = np.nonzero(m)
+    P = np.stack([x0 + (i + sl[0].start + 0.5) * 0.05, np.full(len(i), (t_lo + t_hi) / 2),
+                  z0 + (k + sl[1].start + 0.5) * 0.05], 1)
+    for o in (room or {}).get("objects", []):
+        if next(iter(o["category"])) in ("chair", "sofa"):   # seats tuck under tables
+            continue
+        T, d = _mat(o["transform"]), np.asarray(o["dimensions"], float)
+        loc = (P - T[:3, 3]) @ T[:3, :3]
+        inside = (np.abs(loc[:, 0]) <= d[0] / 2 + 0.1) & (np.abs(loc[:, 2]) <= d[2] / 2 + 0.1)
+        if inside.mean() >= share:
+            log(f"[lidar] a table top found in the depth is RoomPlan's {next(iter(o['category']))}: not a table")
+            return True
+    return False
+
+
 # ----------------------------------------------------------------------------------- per-pixel labels
 
 def _box_mask(P, T, dims, margin=0.04):
@@ -352,9 +396,11 @@ def label_frame(fr, ex, ez, floor_y, ceil_y, walls, room, tables):
         between = (y > floor_y + 0.5 * tol) & (y < top - 0.5 * tol)
         lab[valid & (np.abs(cp - c) < 1.5 * tol) & faces & between] = L["wall"]
         # Seen through the wall plane: through glass (or an open door). The ray crossed the wall between the
-        # floor and the ceiling, inside the other two walls.
+        # floor and the ceiling, inside the other two walls. When RoomPlan measured the walls, only its own
+        # windows, doors and openings (below) are see-through: a wall plane a little off, or depth leaking past
+        # a corner, would otherwise turn the furniture behind the plane and the wall itself into glass.
         C = fr["C"]
-        if (C @ ax - c) * sign >= 0:
+        if (C @ ax - c) * sign >= 0 or (room or {}).get("walls"):
             continue
         other = axes[1 - ai]
         lo_o, hi_o = walls.get((1 - ai, -1), -np.inf), walls.get((1 - ai, 1), np.inf)
@@ -586,7 +632,8 @@ def main(argv=None):
     ex, ez = manhattan_axes(frames, room, log)
     floor_y, ceil_y = floor_ceiling(frames, room, log)
     walls = find_walls(frames, ex, ez, floor_y, ceil_y, log)
-    tables = find_tables(frames, floor_y, log)
+    walls.update(roomplan_walls(frames, room, ex, ez, log))
+    tables = [t for t in find_tables(frames, floor_y, log) if not _under_roomplan_object(t, room, log)]
     labels = [label_frame(fr, ex, ez, floor_y, ceil_y, walls, room, tables) for fr in frames]
     geo_views, geo_labels, views, label_maps = to_views(frames, labels)
     del frames
