@@ -86,9 +86,9 @@ struct ScanView: View {
         case .finishing:
             ProgressView("Sending the scan…").padding().background(.ultraThinMaterial, in: Capsule())
         default:
-            // After a scan: scan another room, or spectate this one once it is built (LiDAR scans only).
+            // After a scan: another room on the same connection, spectate this one once it is built (LiDAR room
+            // scans only), or leave the game.
             HStack(spacing: 16) {
-                // Spectate only for LiDAR room scans; it waits for the mod to finish building the house.
                 if model.scanIsLidar {
                     Button("Scan another room") { model.scanAgain() }.buttonStyle(.bordered)
                     Button("Spectate this room") { model.startSpectate() }
@@ -97,6 +97,7 @@ struct ScanView: View {
                 } else {
                     Button("Scan another room") { model.scanAgain() }.buttonStyle(.borderedProminent)
                 }
+                Button("Disconnect", role: .destructive) { model.disconnect() }.buttonStyle(.bordered)
             }
         }
     }

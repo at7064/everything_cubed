@@ -45,7 +45,40 @@ final class TrackedPhotoSource: NSObject, CaptureSource {
     }
 
     func finish(extra: @escaping (WireMessage?) -> Void) {
+        let planes = Self.planesJSON(sceneView.session.currentFrame?.anchors ?? [])
         sceneView.session.pause()
-        extra(nil)  // no whole-scan result: the frames and their camera positions are the scan
+        extra(planes.map { WireMessage("planes", blobs: [.init(name: "planes", format: "json", data: $0)]) })
+    }
+
+    /// The flat surfaces ARKit found, measured in metres, labelled where the device can (A12 and later):
+    /// wall, floor, ceiling, table, seat, window, door. The analyzer takes the room's walls, floor and ceiling
+    /// from them instead of from depth MapAnything had to guess.
+    private static func planesJSON(_ anchors: [ARAnchor]) -> Data? {
+        let planes: [[String: Any]] = anchors.compactMap { $0 as? ARPlaneAnchor }.map { p in
+            let t = p.transform
+            return [
+                "transform": (0 ..< 4).flatMap { r in (0 ..< 4).map { c in t[c][r] } },  // row-major, like cam2world
+                "center": [p.center.x, p.center.y, p.center.z],
+                "extent": [p.planeExtent.width, p.planeExtent.height],
+                "alignment": p.alignment == .vertical ? "vertical" : "horizontal",
+                "classification": label(p.classification),
+                "boundary": p.geometry.boundaryVertices.map { [$0.x, $0.y, $0.z] },  // in the plane's own frame
+            ]
+        }
+        guard !planes.isEmpty else { return nil }
+        return try? JSONSerialization.data(withJSONObject: ["planes": planes])
+    }
+
+    private static func label(_ c: ARPlaneAnchor.Classification) -> String {
+        switch c {
+        case .wall: return "wall"
+        case .floor: return "floor"
+        case .ceiling: return "ceiling"
+        case .table: return "table"
+        case .seat: return "seat"
+        case .window: return "window"
+        case .door: return "door"
+        default: return "none"
+        }
     }
 }

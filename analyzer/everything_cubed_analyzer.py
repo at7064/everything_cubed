@@ -43,6 +43,8 @@ def main(argv=None):
     # Apache variant: on a taped 9.45 x 4.57 m room it measured 0.91x / 1.10x, the research variant
     # (facebook/map-anything, CC-BY-NC 4.0) 1.22x / 1.25x; the research variant was closer only on a 20 m high hall.
     ap.add_argument("--mapanything-model", default="facebook/map-anything-apache")
+    ap.add_argument("--max-views", type=int, default=24,
+                    help="photos of an iOS photo scan given to MapAnything at once (default 24; more needs more memory)")
     ap.add_argument("--no-exif-camera", action="store_true",
                     help="do not give MapAnything the camera geometry from the photos' lens data")
     ap.add_argument("--vggt-model", default="facebook/VGGT-1B-Commercial")
@@ -82,11 +84,22 @@ def main(argv=None):
     paths = list_images(opts.images)
     device = pick_device(opts.device)
     log(f"[analyzer] {len(paths)} photo(s) from {opts.images}")
+    planes = None
+    if tracked:
+        from perception import load_planes
+        planes = load_planes(opts.images) or None   # walls / floor / ceiling ARKit measured, when the app sent them
     # ARKit measured where each photo was taken (camera + motion sensors): built at measured size like LiDAR.
     enlarge = 1.0 if tracked else opts.enlarge
     if tracked:
+        import atexit
+        import shutil
+        import tempfile
         from perception import reconstruct_tracked
-        views, metric, paths = reconstruct_tracked(opts.images, device, opts.mapanything_model, log)
+        # The upright copies are only needed while analysing: never left in the scan folder.
+        work = tempfile.mkdtemp(prefix="everything_cubed_upright_")
+        atexit.register(shutil.rmtree, work, ignore_errors=True)
+        views, metric, paths = reconstruct_tracked(opts.images, device, opts.mapanything_model, log, opts.max_views,
+                                                   work_dir=work)
     else:
         views, metric = reconstruct(paths, opts.backend, device, opts, log)
     label_maps, id2label = segment(views, device, opts.seg_model, log)
@@ -109,7 +122,8 @@ def main(argv=None):
     ctx = {}
     object_instances = detections.pop("_instances", []) if detections else []
     plan = build_plan(pts, rgb, cats, surface_palette(opts.mc_jar, cache), scale=opts.scale, metric=metric, log=log, ctx=ctx,
-                      known_height=opts.known_height, object_instances=object_instances, enlarge=enlarge)
+                      known_height=opts.known_height, object_instances=object_instances, enlarge=enlarge,
+                      planes=planes)
     plan["source"] = {"photos": [p.name for p in paths], "metric": metric, "tracked": tracked,
                       "enlarge": None if opts.scale else enlarge}
     out = opts.out or opts.images / "plan.json"

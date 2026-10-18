@@ -23,8 +23,10 @@ Then `roomplan.py`:
    tables or sun by a window never split it; rugs are separate objects). They are matched in CIELAB to the real average texture colours read from your
    Minecraft jar (concrete, terracotta, wool, planks, stone, ...).
 5. Clusters each object class in 3D and converts it to real, usable blocks at the right size and position:
-   beds (colour-matched, side by side for wide beds), doors, glass-pane windows, stair chairs and sofas, slab tables,
-   barrels and cabinets, chiseled bookshelves, shelves, furnace/smoker, cauldron sinks, carpets for rugs,
+   beds (colour-matched, side by side for wide beds; a bed seen mostly above 1 m is a loft bed when furniture stands
+   under it, else a bunk bed, with a real ladder at its foot), doors, glass-pane windows, stair chairs and sofas, slab
+   tables, barrels and cabinets, chiseled bookshelves, wall shelves (one board on brackets with a row of books),
+   furnace/smoker, cauldron sinks, carpets for rugs,
    lanterns, chandeliers hung from the ceiling, potted plants and paintings. Classroom and public-room things:
    whiteboards and chalkboards (their real size, white or green), exit signs high on the wall (a dim light),
    fire extinguishers low on the wall (heights follow NFPA 101 and NFPA 10), ceiling projectors aimed at the
@@ -186,8 +188,12 @@ scale is learned from ordinary rooms; it put Suzzallo's 19.8 m ceiling at 7.85 m
 **Photo scans from the iOS app (ARKit tracking, any iPhone).** A scan folder with a `capture.json` whose frames have
 no depth was taken with ARKit world tracking: every photo has its camera pose and intrinsics in metres. Each photo
 is turned upright (into the scan's hidden `.upright/` folder) and MapAnything is given those poses and intrinsics,
-marked metric, so it no longer guesses the scale or where the photos were taken. Like LiDAR scans, these rooms
-are built at their measured size (no `--enlarge`). Frames with depth go to `lidar_analyzer.py` as before.
+marked metric, so it no longer guesses the scale or where the photos were taken (on a real scan it kept ARKit's
+camera positions to about 1 cm). MapAnything still has to guess each photo's depth, so each photo's depth is then
+scaled to agree with ARKit's tracked feature points seen in it, and the walls and ceiling height come from the planes
+ARKit measured and labelled (`planes.json`) when the app sent them. When cutting a long scan down to `--max-views`
+(24) photos, the sharpest photo of each stretch is used. Like LiDAR scans, these rooms are built at their measured
+size (no `--enlarge`). Frames with depth go to `lidar_analyzer.py` as before.
 
 **MapAnything model and license.** The default is `facebook/map-anything-apache` (Apache 2.0). On a tape-measured
 9.45 x 4.57 m room it measured 0.91x / 1.10x the true length / width, while the research variant
@@ -247,9 +253,19 @@ from ordinary rooms and can be far off. If you know the floor-to-ceiling height,
 ```json
 {
   "python": "/path/to/venv/bin/python",
-  "extraArgs": ["--known-height", "19.8", "--perceptron"]
+  "extraArgs": ["--known-height", "19.8", "--perceptron"],
+  "alwaysReanalyze": true,
+  "keepScans": 5
 }
 ```
+
+`"alwaysReanalyze": true` (the default) re-analyses a folder's photos on every `/everything_cubed build`, so changed
+settings always take effect; `false` reuses a `plan.json` that is newer than every photo. Building a `plan.json` path
+directly (`/everything_cubed build <folder>/plan.json`) never re-analyses.
+
+`"keepScans": 5` (the default) keeps the five newest scans streamed from the iOS app in the photos folder; older ones
+are deleted when a new scan starts. Only phone scans (folders with a `capture.json`) are ever deleted, never photo
+folders you made yourself; `0` keeps every scan.
 
 `--perceptron` needs `PERCEPTRON_API_KEY` set in the environment Minecraft is started from, and sends the photos
 (people blurred) to Perceptron; see above.

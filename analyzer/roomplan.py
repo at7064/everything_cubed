@@ -79,7 +79,7 @@ TEMPLATE_INFO = {
     "nightstand": "a small bedside table with drawers", "podium": "a lecture podium or lectern",
     "student_desk": "a classroom chair with an attached writing arm", "chair_stack": "several chairs stacked together",
     "wardrobe": "a wardrobe or closet", "bookshelf": "a bookcase or shelving unit full of books",
-    "shelf": "one wall-mounted shelf board", "chair": "any chair, armchair or stool",
+    "shelf": "a single shelf board fixed to a wall, with books or things on it", "chair": "any chair, armchair or stool",
     "sofa": "a sofa, couch or upholstered bench", "lamp": "a floor or table lamp standing on something",
     "ceiling_light": "a small light fixed flat on the ceiling",
     "chandelier": "a chandelier, pendant or any light hanging down from the ceiling on chains or rods",
@@ -127,12 +127,12 @@ NO_FOOTPRINT = WALL_MOUNTED | CEILING_FIXTURES | {"chandelier", "ceiling_fan", "
 # Placement priority (earlier wins collisions).
 PRIORITY = ["bed", "counter", "fridge", "stove", "sink", "bathtub", "shower", "toilet", "wardrobe", "bookshelf",
             "cabinet", "dresser", "nightstand", "piano", "podium", "fireplace", "sofa", "desk", "student_desk",
-            "table", "coffee_table", "shelf", "washer", "tv", "chair", "chair_stack", "coat_rack",
+            "table", "coffee_table", "washer", "tv", "chair", "chair_stack", "coat_rack",
             "lamp", "fan", "storage", "trash", "microwave", "plant"]
 # Max height in blocks per category (None = up to the ceiling).
 MAX_HEIGHT = {"bed": 1, "table": 1, "desk": 1, "coffee_table": 1, "counter": 1, "chair": 1, "sofa": 1,
               "cabinet": 2, "storage": 1, "trash": 1, "washer": 1, "sink": 1, "bathtub": 1, "toilet": 1,
-              "stove": 1, "microwave": 1, "plant": 1, "lamp": 2, "fireplace": 2, "tv": 2, "shelf": 3, "fan": 2,
+              "stove": 1, "microwave": 1, "plant": 1, "lamp": 2, "fireplace": 2, "tv": 2, "fan": 2,
               "podium": 2, "student_desk": 1, "chair_stack": 2, "nightstand": 1, "dresser": 2,
               "piano": 2, "shower": 2, "coat_rack": 2}
 # Smallest believable cluster (points after 3 cm voxelisation) per category.
@@ -146,8 +146,19 @@ MIN_POINTS = {"window": 60, "door": 120, "bed": 200, "rug": 150, "painting": 40,
                                "light_switch", "outlet", "thermostat", "fire_alarm", "soap_dispenser",
                                "sanitizer_dispenser", "paper_towel_dispenser")}}
 
-WALL_MOUNTED |= {"drinking_fountain"}
-NO_FOOTPRINT |= {"drinking_fountain", "globe"}   # a globe sits on its desk (or is placed on the floor below)
+WALL_MOUNTED |= {"drinking_fountain", "shelf"}
+NO_FOOTPRINT |= {"drinking_fountain", "globe", "shelf"}   # a globe sits on its desk (or is placed on the floor below)
+# Raised beds. A bed cluster with most of its points above RAISED_Y is a bunk or a loft bed: a loft when furniture
+# stands under it (a desk, a dresser), else a bunk when part of the bed is also low. Thresholds are first guesses.
+# RAISED_Y is above an ordinary bed's headboard (most stop below 1.2 m), so a bed box that includes a headboard (a
+# RoomPlan box is sampled down its sides) does not read as raised; a bunk's or loft's upper deck is at about 1.3-1.8 m.
+RAISED_Y, LOW_Y = 1.2, 0.7          # metres above the floor
+RAISED_SHARE, LOW_SHARE = 0.35, 0.2
+# Furniture that stands under a loft bed. Not chairs, nightstands or bins: they stand next to any bed.
+UNDER_LOFT = {"desk", "table", "dresser", "cabinet", "wardrobe", "sofa", "storage", "fridge", "bookshelf",
+              "student_desk"}
+UNDER_SHARE = 0.5                   # of the furniture's own footprint that is under the bed
+UPPER_BUNK = 3                      # block y of a raised bed: two blocks of headroom below it
 PRIORITY += ["locker", "umbrella_stand", "backpack"]
 MAX_HEIGHT.update({"locker": 2, "umbrella_stand": 1, "backpack": 1})
 MIN_POINTS.update({"backpack": 20, "globe": 15, "locker": 60, "drinking_fountain": 15, "umbrella_stand": 12})
@@ -353,9 +364,68 @@ class Room:
         return self.bx(x) if side in ("north", "south") else self.bz(z)
 
 
+DUP_OVERLAP = 0.5  # same-type clusters whose floor footprints overlap this much (of the smaller one) are one object
+
+
+def footprint_overlap(a, b):
+    """How much two clusters' floor (x, z) boxes overlap, as a share of the smaller one."""
+    ix = min(a["hi"][0], b["hi"][0]) - max(a["lo"][0], b["lo"][0])
+    iz = min(a["hi"][2], b["hi"][2]) - max(a["lo"][2], b["lo"][2])
+    if ix <= 0 or iz <= 0:
+        return 0.0
+    area = lambda c: max(1e-6, (c["hi"][0] - c["lo"][0]) * (c["hi"][2] - c["lo"][2]))
+    return ix * iz / min(area(a), area(b))
+
+
+def merge_duplicates(obj_clusters, log=print):
+    """One object seen in several photos whose depth disagreed shows up as overlapping copies: merge same-type
+    clusters whose floor (x, z) footprints overlap by DUP_OVERLAP of the smaller one, averaging their boxes by
+    point count. Side-by-side objects do not overlap and stay apart; wall-mounted things are left to the wall code.
+    (The two mattresses of a bunk bed, when they come out as two clusters, merge too: their height shares average.)"""
+    overlap = footprint_overlap
+
+    out, merged = [], 0
+    for cat in dict.fromkeys(c for c, _ in obj_clusters):
+        cls = [cl for c, cl in obj_clusters if c == cat]
+        if cat in WALL_MOUNTED or len(cls) == 1:
+            out += [(cat, cl) for cl in cls]
+            continue
+        parent = list(range(len(cls)))
+        def root(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+        for i in range(len(cls)):
+            for j in range(i + 1, len(cls)):
+                if overlap(cls[i], cls[j]) >= DUP_OVERLAP:
+                    parent[root(j)] = root(i)
+        groups = {}
+        for i in range(len(cls)):
+            groups.setdefault(root(i), []).append(cls[i])
+        for g in groups.values():
+            if len(g) == 1:
+                out.append((cat, g[0]))
+                continue
+            w = np.array([c["n"] for c in g], float)
+            avg = lambda k: np.average(np.stack([c[k] for c in g]), axis=0, weights=w)
+            big = max(g, key=lambda c: c["n"])
+            shares = {k: float(avg(k)) for k in ("raised", "low") if all(k in c for c in g)}
+            out.append((cat, dict(big, lo=avg("lo"), hi=avg("hi"), c=avg("c"), rgb=avg("rgb"), n=int(w.sum()), **shares)))
+            merged += len(g) - 1
+    if merged:
+        log(f"[plan] merged {merged} duplicate object(s) (one thing seen from photos whose depth disagreed)")
+    return out
+
+
 def summarize_cluster(p, rgb):
     lo, hi = np.percentile(p, 2, axis=0), np.percentile(p, 98, axis=0)
-    return {"lo": lo, "hi": hi, "c": np.median(p, axis=0), "rgb": np.median(rgb, axis=0), "n": len(p)}
+    return {"lo": lo, "hi": hi, "c": np.median(p, axis=0), "rgb": np.median(rgb, axis=0), "n": len(p), **heights(p)}
+
+
+def heights(p):
+    """Shares of a cluster's points high up and low down (y is metres above the floor): tells raised beds apart."""
+    return {"raised": float(np.mean(p[:, 1] > RAISED_Y)), "low": float(np.mean(p[:, 1] < LOW_Y))}
 
 
 def cluster_category(p, eps=0.12, min_samples=8):
@@ -368,10 +438,12 @@ def cluster_category(p, eps=0.12, min_samples=8):
 # ----------------------------------------------------------------------------------- main entry
 
 def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metric=True, log=print, ctx=None,
-               known_height=None, object_instances=None, enlarge=ENLARGE):
+               known_height=None, object_instances=None, enlarge=ENLARGE, planes=None):
     """ctx: optional dict that receives the room frame (origin, R, y_shift, f, room) for texture projection.
     known_height: the room's real floor-to-ceiling height in metres; rescales the whole reconstruction to it.
-    enlarge: factor on the automatic scale (an explicit `scale` is used exactly as given)."""
+    enlarge: factor on the automatic scale (an explicit `scale` is used exactly as given).
+    planes: flat surfaces measured by ARKit, [{"normal", "point" (same world frame as `points`), "area", "label"}]:
+    labelled walls set the wall positions and ceilings the room height, instead of the photos' guessed depth."""
     points = np.asarray(points, float)
     colors = np.asarray(colors, float)
     cats = np.asarray(cats)
@@ -445,6 +517,19 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
         bounds[name] = c if c is not None else inferred(axis, neg)
         if c is None:
             log(f"[plan] wall {name} not visible - inferred from other geometry")
+    # Measured walls beat walls from guessed depth: each side takes the area-weighted median of the ARKit planes
+    # labelled wall that face along its axis.
+    meas = [(np.asarray(p["normal"], float) @ R.T,
+             ((np.asarray(p["point"], float) - origin) @ R.T - np.array([0, y_shift, 0])) * f,
+             float(p["area"]), p["label"]) for p in planes or []]
+    for name, axis, neg in (("xmin", 0, True), ("xmax", 0, False), ("zmin", 2, True), ("zmax", 2, False)):
+        mid = (bounds[name[0] + "min"] + bounds[name[0] + "max"]) / 2
+        hits = [(q[axis], a) for n, q, a, lab in meas if lab == "wall" and abs(n[axis]) > 0.9 and (q[axis] < mid) == neg]
+        if sum(a for _, a in hits) >= 0.5:
+            c, a = np.array(hits).T
+            order = np.argsort(c)
+            bounds[name] = float(c[order][np.searchsorted(np.cumsum(a[order]), a.sum() / 2)])
+            log(f"[plan] wall {name} from {len(hits)} measured ARKit plane(s)")
     for lo_k, hi_k in (("xmin", "xmax"), ("zmin", "zmax")):
         if bounds[hi_k] - bounds[lo_k] < 1.5:
             mid = (bounds[hi_k] + bounds[lo_k]) / 2
@@ -459,6 +544,10 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
         hm = float(np.percentile(y[wall_m], 98))
     else:
         hm = 2.5
+    ceilings = [(q[1], a) for n, q, a, lab in meas if lab == "ceiling" and abs(n[1]) > 0.9 and q[1] > 1.5]
+    if sum(a for _, a in ceilings) >= 0.5:
+        hm = float(np.average([c for c, _ in ceilings], weights=[a for _, a in ceilings]))
+        log(f"[plan] ceiling height {hm:.2f} m from {len(ceilings)} measured ARKit plane(s)")
     hm = float(np.clip(hm, 2.0, 40.0 if known_height else 25.0))
 
     # ---------------- object clusters (in metres; they don't depend on the scale)
@@ -486,7 +575,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             continue
         cl = {"lo": np.percentile(p, 5, axis=0), "hi": np.percentile(p, 95, axis=0),
               "c": center, "rgb": np.median(inst["colors"], axis=0), "n": len(p),
-              "source_views": inst["views"]}
+              "source_views": inst["views"], **heights(p)}
         candidates = [(np.linalg.norm(old["c"] - center), j) for j, (cat, old) in enumerate(obj_clusters)
                       if cat == inst["category"] and j not in used_clusters]
         if candidates:
@@ -500,6 +589,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
         matched += 1
     if matched:
         log(f"[plan] {matched} object(s) located from matching detections in multiple views")
+    obj_clusters = merge_duplicates(obj_clusters, log)
     log("[plan] detected: " + ", ".join(f"{n}x {c}" for c, n in Counter(c for c, _ in obj_clusters).items()))
 
     # Generic segmentation light labels are refined from shape and position.
@@ -520,6 +610,8 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             cat = "desk_lamp"
         elif cat == "plant" and cl["lo"][1] > 0.55:
             cat = "small_plant"
+        elif cat == "shelf" and cl["lo"][1] < 0.3 and cl["hi"][1] - cl["lo"][1] > 0.9:
+            cat = "bookshelf"  # shelving standing on the floor, not one board on a wall (SegFormer calls both "shelf")
         refined.append((cat, cl))
     obj_clusters = refined
 
@@ -655,6 +747,9 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
         elif cat == "drinking_fountain":
             # On the wall, its basin at counter height: the bottom block row.
             entry.update(type="drinking_fountain", y=0, w=1, h=1)
+        elif cat == "shelf":
+            # One board with a row of books, in the block row its bottom was seen in (never on the floor row).
+            entry.update(type="shelf", y=int(np.clip(y0, 1, max(1, H - 2))), h=1, material=WOOD_PALETTE.nearest(cl["rgb"]))
         else:
             continue
         entry["u"] = int(np.clip(entry["u"], 0, L - 1))
@@ -681,8 +776,14 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
     tables = [cl for c, cl in obj_clusters if c in ("table", "desk", "coffee_table")]
     floor_objs = sorted([(c, cl) for c, cl in obj_clusters if c not in NO_FOOTPRINT and not is_wall_tv(c, cl)],
                         key=lambda t: (PRIORITY.index(t[0]) if t[0] in PRIORITY else 99, -t[1]["n"]))
+    lofts = []  # opened up for the furniture under them once every bed is placed (else a second bed could go there)
+    all_lofts = []
     placed = []   # (object, its cluster) for the floor furniture
     for cat, cl in floor_objs:
+        if cat != "bed":
+            for o in lofts:
+                occupancy[o["x"]:o["x"] + o["w"], o["z"]:o["z"] + o["d"]] = -1
+            lofts = []
         # A detector sometimes labels an entire vertical stack as one ordinary chair.
         if cat == "chair" and cl["hi"][1] - cl["lo"][1] > 1.25 and max(cl["hi"][0] - cl["lo"][0],
                                                                   cl["hi"][2] - cl["lo"][2]) < 1.3:
@@ -705,6 +806,21 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
         if obj is None:
             log(f"[plan] no room for {cat}, skipped")
             continue
+        if cat == "bed":
+            style = bed_style(cl, obj_clusters, H)
+            log(f"[plan] bed at x={obj['x']}, z={obj['z']}: {cl.get('raised', 0):.0%} of it above {RAISED_Y} m, "
+                f"{cl.get('low', 0):.0%} below {LOW_Y} m -> {style or 'ordinary'}")
+            if style:
+                obj.update(style=style, upper=UPPER_BUNK)
+                if style == "loft":
+                    lofts.append(obj)  # a desk may go under it
+                    all_lofts.append(obj)
+                for a, b in ladder_cells(obj):
+                    if 0 <= a < W and 0 <= b < D and occupancy[a, b] == -1:
+                        occupancy[a, b] = 1  # the way up stays clear
+        if cat != "bed" and any(obj["x"] < o["x"] + o["w"] and o["x"] < obj["x"] + obj["w"] and
+                                obj["z"] < o["z"] + o["d"] and o["z"] < obj["z"] + obj["d"] for o in all_lofts):
+            obj["h"] = min(obj["h"], UPPER_BUNK - 1)  # under a loft bed: below its deck
         if "source_views" in cl:
             obj["source_views"] = cl["source_views"]
             obj["estimated_center_m"] = [round(float(x), 3) for x in cl["c"]]
@@ -730,7 +846,7 @@ def build_plan(points, colors, cats, surface_palette: Palette, scale=None, metri
             continue
         x, z = int(room.bx(cl["c"][0])), int(room.bz(cl["c"][2]))
         support = next((o for o in objects if o["type"] in ("desk", "table", "counter", "student_desk", "cabinet",
-                                                             "dresser", "nightstand", "shelf")
+                                                             "dresser", "nightstand")
                         and o["x"] <= x < o["x"] + o["w"] and o["z"] <= z < o["z"] + o["d"]), None)
         if support:
             objects.append({"type": "globe", "x": x, "z": z, "w": 1, "d": 1, "h": 1, "y": 1 + support["h"],
@@ -812,6 +928,33 @@ def surface_grid(ij, rgb, shape, palette, default_rgb):
     return np.zeros(shape, int), [blocks[dominant]]
 
 
+def bed_style(cl, obj_clusters, H):
+    """"bunk", "loft" or None (an ordinary bed) from the bed cluster's heights and what stands under it.
+    H is the room's interior height in blocks: a raised bed needs UPPER_BUNK blocks below it and two above (to climb
+    on and stand on it; HouseBuilder builds an ordinary bed otherwise)."""
+    if H < UPPER_BUNK + 2 or cl.get("raised", 0.0) < RAISED_SHARE:
+        return None
+    def share_under(o):
+        ix = min(o["hi"][0], cl["hi"][0]) - max(o["lo"][0], cl["lo"][0])
+        iz = min(o["hi"][2], cl["hi"][2]) - max(o["lo"][2], cl["lo"][2])
+        return max(ix, 0) * max(iz, 0) / max(1e-6, (o["hi"][0] - o["lo"][0]) * (o["hi"][2] - o["lo"][2]))
+    under = any(c in UNDER_LOFT and o["hi"][1] < RAISED_Y + 0.3 and share_under(o) >= UNDER_SHARE
+                for c, o in obj_clusters)
+    if under:
+        return "loft"
+    return "bunk" if cl.get("low", 0.0) >= LOW_SHARE else "loft"
+
+
+def ladder_cells(bed):
+    """Floor cells just past the foot of each bed of a placed bed object (where HouseBuilder puts the ladder)."""
+    x0, z0, w, d, head = bed["x"], bed["z"], bed["w"], bed["d"], bed["facing"]
+    if head in ("west", "east"):
+        x = x0 + 2 if head == "west" else x0 - 1
+        return [(x, z0 + i) for i in range(d)]
+    z = z0 + 2 if head == "north" else z0 - 1
+    return [(x0 + i, z) for i in range(w)]
+
+
 def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
     W, D, H, s = room.W, room.D, room.H, room.s
     lo, hi, c = cl["lo"], cl["hi"], cl["c"]
@@ -859,7 +1002,7 @@ def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
             obj["color"] = DYE_PALETTE.nearest(cl["rgb"])  # upholstery
         if cat in ("chair", "chair_stack", "student_desk"):
             w = d = 1
-    elif cat in ("table", "desk", "coffee_table", "shelf", "bookshelf", "wardrobe", "cabinet", "dresser",
+    elif cat in ("table", "desk", "coffee_table", "bookshelf", "wardrobe", "cabinet", "dresser",
                  "nightstand", "counter", "podium", "piano"):
         obj["material"] = WOOD_PALETTE.nearest(cl["rgb"])
         if cat in ("nightstand", "podium"):

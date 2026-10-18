@@ -12,7 +12,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-from perception import ARKIT_TO_CV, capture_has_depth, crop_intrinsics, prepare_tracked, view_crop
+from perception import (ARKIT_TO_CV, capture_has_depth, crop_intrinsics, depth_scale_from_points, prepare_tracked,
+                        rigid_fit, view_crop)
 
 IW, IH, F = 1920, 1440, 1450.0
 K = np.array([[F, 0, IW / 2], [0, F, IH / 2], [0, 0, 1.0]])
@@ -58,7 +59,7 @@ assert capture_has_depth(lidar)
 
 shots = prepare_tracked(tmp)
 assert len(shots) == 2
-for (path, K2, c2w2, size), name in zip(shots, ("portrait", "landscape")):
+for (path, K2, c2w2, size, _frame), name in zip(shots, ("portrait", "landscape")):
     img = np.asarray(Image.open(path).convert("RGB")).astype(int)
     assert img.shape[1::-1] == size
     assert (size[1] > size[0]) == (name == "portrait"), (name, size)   # upright: portrait is taller than wide
@@ -81,4 +82,39 @@ for u, v in ((100.0, 200.0), (720.0, 960.0), (1300.0, 1800.0)):
     x, y = (u - K[0, 2]) / K[0, 0], (v - K[1, 2]) / K[1, 1]     # the same ray
     uv = (Kv[0, 0] * x + Kv[0, 2], Kv[1, 1] * y + Kv[1, 2])
     assert abs(uv[0] - (u - l) * s) < 1e-6 and abs(uv[1] - (v - t) * s) < 1e-6, (uv, ((u - l) * s, (v - t) * s))
+# The photo cap is hard (memory): 50 frames, 30 of them shutter photos, capped at 24 -> 24, shutter photos first.
+many = tmp / "many"
+many.mkdir()
+fr = []
+for i in range(50):
+    Image.new("RGB", (64, 48)).save(many / f"f{i:02d}.jpg")
+    fr.append(dict(frames[1], image=f"f{i:02d}.jpg", kind="photo" if i % 5 else "keyframe", imageSize=[64, 48]))
+(many / "capture.json").write_text(json.dumps({"frames": fr}))
+capped = prepare_tracked(many, max_views=24)
+assert len(capped) == 24, len(capped)
+print("photo cap OK")
+
+# rigid_fit: MapAnything's output frame = ARKit's turned and moved; the fit undoes it from the camera centres.
+rng = np.random.default_rng(0)
+cams = []
+for k in range(6):
+    c = np.eye(4); c[:3, 3] = rng.uniform(-2, 2, 3); cams.append(c)
+cams = np.stack(cams)
+a = np.radians(164)
+Tm = np.eye(4); Tm[:3, :3] = [[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]]; Tm[:3, 3] = [0.5, -0.2, 1.0]
+out = np.stack([Tm @ c for c in cams])
+fit = rigid_fit(out, cams)
+assert np.allclose(np.stack([fit @ o for o in out]), cams, atol=1e-9), "rigid_fit must take the output back"
+
+# depth_scale_from_points: a wall 3 m in front, predicted at 2.3 m; ARKit's points on it say 3 m -> scale 1.3.
+Hv, Wv = 120, 160
+Kv = np.array([[100.0, 0, 80], [0, 100.0, 60], [0, 0, 1]])
+vv, uu = np.mgrid[0:Hv, 0:Wv]
+ray = np.stack([(uu - 80) / 100.0, (vv - 60) / 100.0, np.ones_like(uu, float)], -1)
+view = {"cam2world": np.eye(4), "K": Kv, "points": ray * (3.0 / 1.3), "mask": np.ones((Hv, Wv), bool)}
+true_pts = (ray * 3.0).reshape(-1, 3)[rng.choice(Hv * Wv, 300, replace=False)]
+s = depth_scale_from_points(view, true_pts)
+assert abs(s - 1.3) < 0.02, s
+assert depth_scale_from_points(view, true_pts[:5]) is None, "too few points: no correction"
+print("rigid fit + depth correction OK", round(s, 3))
 print("OK")

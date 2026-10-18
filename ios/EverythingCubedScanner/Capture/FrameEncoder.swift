@@ -22,6 +22,8 @@ struct FrameSnapshot: @unchecked Sendable {
     let imageResolution: CGSize
     let transform: simd_float4x4
     let tracking: String
+    /// ARKit's tracked 3D feature points (world, metres) seen in this frame: sparse, but measured, also without LiDAR.
+    let points: [simd_float3]
     /// ARKit's person segmentation (0 = background, 255 = person), when the session runs it.
     let person: CVPixelBuffer?
 
@@ -36,6 +38,9 @@ struct FrameSnapshot: @unchecked Sendable {
         intrinsics = frame.camera.intrinsics
         imageResolution = frame.camera.imageResolution
         transform = frame.camera.transform
+        let raw = frame.rawFeaturePoints?.points ?? []
+        let step = max(1, raw.count / 3000)  // at most ~3000 per frame
+        points = stride(from: 0, to: raw.count, by: step).map { raw[$0] }
         person = frame.segmentationBuffer
         switch frame.camera.trackingState {
         case .normal: tracking = "normal"
@@ -106,6 +111,12 @@ final class FrameEncoder: @unchecked Sendable {
             "imageSize": [w, h], "K": K, "cam2world": pose,
         ]
         var blobs = [WireMessage.Blob(name: "image", format: "jpeg", data: jpeg)]
+        if !s.points.isEmpty {
+            // x, y, z little-endian float32 per point, ARKit world coordinates (metres, +Y up).
+            let xyz = s.points.flatMap { [$0.x, $0.y, $0.z] }
+            fields["pointCount"] = s.points.count
+            blobs.append(.init(name: "points", format: "f32xyz", data: xyz.withUnsafeBytes { Data($0) }))
+        }
         if let depth = s.depth, let d = Self.float16(depth) {
             fields["depthSize"] = [CVPixelBufferGetWidth(depth), CVPixelBufferGetHeight(depth)]
             blobs.append(.init(name: "depth", format: "f16", data: d))

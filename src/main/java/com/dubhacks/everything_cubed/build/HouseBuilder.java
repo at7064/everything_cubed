@@ -56,6 +56,8 @@ public class HouseBuilder {
 	private final UndoLog undo;
 	/** Every block we set, so a final pass can recompute connections (panes, fences, stairs, doors). */
 	private final Map<BlockPos, BlockState> placed = new LinkedHashMap<>();
+	/** Raised beds' ladder blocks (house-relative), set last: see {@link #placeLadders()}. */
+	private final Map<BlockPos, BlockState> ladders = new LinkedHashMap<>();
 	/** Interior cells already used by furniture or kept clear for a doorway. */
 	private final Set<Long> occupied = new HashSet<>();
 	/** Wall blocks that are part of something built into the wall (a fireplace): no wall picture on them. */
@@ -91,6 +93,7 @@ public class HouseBuilder {
 		buildObjects(); // lights are only the ones detected in the photos: a dark room stays dark
 		finishShapes();
 		hangWallTextures();
+		placeLadders();
 		return undo;
 	}
 
@@ -342,7 +345,7 @@ public class HouseBuilder {
 				case "whiteboard", "exit_sign", "fire_extinguisher", "clock", "curtain", "mirror",
 						"bulletin_board", "projection_screen", "radiator", "range_hood", "wall_hooks",
 						"light_switch", "outlet", "thermostat", "fire_alarm", "soap_dispenser",
-						"sanitizer_dispenser", "paper_towel_dispenser", "drinking_fountain" -> {
+						"sanitizer_dispenser", "paper_towel_dispenser", "drinking_fountain", "shelf" -> {
 					// Flat things on the wall: a model in the interior cells along it, its back against the wall.
 					int[] a = insideCell(side, u0), b = insideCell(side, u0 + w - 1);
 					int x0 = Math.min(a[0], b[0]), z0 = Math.min(a[1], b[1]);
@@ -371,6 +374,8 @@ public class HouseBuilder {
 						case "light_switch", "outlet", "thermostat", "fire_alarm", "soap_dispenser",
 								"sanitizer_dispenser", "paper_towel_dispenser" -> FurnitureDesigns.wallDevice(m, type, y0);
 						case "drinking_fountain" -> FurnitureDesigns.drinkingFountain(m, y0);
+						case "shelf" -> FurnitureDesigns.wallShelf(m, y0,
+								FurnitureDesigns.planks(o.has("material") ? o.get("material").getAsString() : "oak"));
 						default -> FurnitureDesigns.fireExtinguisher(m, y0);
 					}
 					furnish(m, List.of());
@@ -411,23 +416,61 @@ public class HouseBuilder {
 				BlockState bed = with(first(color + "_bed", "red_bed"), BlockStateProperties.HORIZONTAL_FACING, facing);
 				boolean alongX = facing.getAxis() == Direction.Axis.X;
 				int count = alongX ? d : w;
+				int[][] foot = new int[count][], head = new int[count][], ladderAt = new int[count][];
+				for (int i = 0; i < count; i++) {
+					foot[i] = alongX ? new int[]{x0 + (facing == Direction.EAST ? 0 : 1), z0 + i}
+							: new int[]{x0 + i, z0 + (facing == Direction.SOUTH ? 0 : 1)};
+					head[i] = new int[]{foot[i][0] + facing.getStepX(), foot[i][1] + facing.getStepZ()};
+					ladderAt[i] = new int[]{foot[i][0] - facing.getStepX(), foot[i][1] - facing.getStepZ()};
+				}
+				// "style": "bunk" (beds at y 1 and "upper") or "loft" (one bed at "upper", open underneath). A raised bed
+				// needs two free blocks above it (to stand up on it) and, past each foot, a free column for its ladder
+				// up to head height at the top; everything is checked before anything is claimed, and a raised bed that
+				// does not fit (a wall light or TV already in its cells, a low room) becomes an ordinary bed.
+				String style = o.has("style") ? o.get("style").getAsString() : "";
+				int upper = o.has("upper") ? o.get("upper").getAsInt() : 3;
+				boolean bunk = style.equals("bunk");
+				int[] levels = bunk ? new int[]{1, upper} : new int[]{upper};
+				boolean raised = (bunk || style.equals("loft")) && upper >= 3 && upper + 2 <= H;
+				for (int i = 0; i < count && raised; i++) {
+					for (int y : levels) raised &= free(foot[i][0], y, foot[i][1]) && free(head[i][0], y, head[i][1]);
+					for (int y = 1; y <= upper + 1; y++) raised &= free(ladderAt[i][0], y, ladderAt[i][1]);
+				}
+				if (!raised) levels = new int[]{1};
+				int top = levels[levels.length - 1];
+				// Real ladder blocks only where air is behind them (a ladder against a bed pops off when the bed's
+				// state changes, e.g. someone lies in it): up to the block below the top bed, from where a player
+				// steps onto the mattress (9/16 high, under the 0.6 step height); a bunk's starts above the lower bed,
+				// and the model draws the rungs below. The column stays clear up to head height at the top.
+				BlockState ladder = with(Blocks.LADDER.defaultBlockState(), BlockStateProperties.HORIZONTAL_FACING, facing.getOpposite());
 				List<BlockPos> core = new ArrayList<>();
 				for (int i = 0; i < count; i++) {
-					int fx, fz;
-					if (alongX) { fx = x0 + (facing == Direction.EAST ? 0 : 1); fz = z0 + i; }
-					else { fx = x0 + i; fz = z0 + (facing == Direction.SOUTH ? 0 : 1); }
-					int hx = fx + facing.getStepX(), hz = fz + facing.getStepZ();
-					if (!inside(fx, fz) || !inside(hx, hz) || !claim(fx, 1, fz) || !claim(hx, 1, hz)) continue;
-					set(fx, 1, fz, with(bed, BlockStateProperties.BED_PART, BedPart.FOOT));
-					set(hx, 1, hz, with(bed, BlockStateProperties.BED_PART, BedPart.HEAD));
-					core.add(origin.offset(fx, 1, fz));
-					core.add(origin.offset(hx, 1, hz));
+					if (!inside(foot[i][0], foot[i][1]) || !inside(head[i][0], head[i][1])) continue;
+					for (int y : levels) {
+						if (!claim(foot[i][0], y, foot[i][1]) || !claim(head[i][0], y, head[i][1])) continue;
+						set(foot[i][0], y, foot[i][1], with(bed, BlockStateProperties.BED_PART, BedPart.FOOT));
+						set(head[i][0], y, head[i][1], with(bed, BlockStateProperties.BED_PART, BedPart.HEAD));
+						core.add(origin.offset(foot[i][0], y, foot[i][1]));
+						core.add(origin.offset(head[i][0], y, head[i][1]));
+					}
+					if (!raised) continue;
+					for (int y = 1; y <= upper + 1; y++) {
+						claim(ladderAt[i][0], y, ladderAt[i][1]);
+						if (y >= (bunk ? 2 : 1) && y < upper) ladders.put(new BlockPos(ladderAt[i][0], y, ladderAt[i][1]), ladder);
+					}
 				}
-				if (core.size() == 2 * count) {
-					// The head is at the model's back, so its front faces the foot end.
-					FurnitureModel m = alongX ? new FurnitureModel(x0, z0, 2, count, 1, facing.getOpposite())
-							: new FurnitureModel(x0, z0, count, 2, 1, facing.getOpposite());
-					FurnitureDesigns.bed(m, FurnitureDesigns.planks(wood), first(color + "_wool", "white_wool"));
+				if (core.size() == 2 * count * levels.length) {
+					// The head is at the model's back, so its front faces the foot end. Model y 0 is the floor's top,
+					// so a bed in block row y has its base at model y - 1; a raised model is as tall as its head posts.
+					double height = raised ? (top - 1) + FurnitureDesigns.RAISED_POST : 1;
+					FurnitureModel m = alongX ? new FurnitureModel(x0, z0, 2, count, height, facing.getOpposite())
+							: new FurnitureModel(x0, z0, count, 2, height, facing.getOpposite());
+					BlockState frame = FurnitureDesigns.planks(wood), duvet = first(color + "_wool", "white_wool");
+					if (raised) {
+						double[] bases = new double[levels.length];
+						for (int k = 0; k < levels.length; k++) bases[k] = levels[k] - 1;
+						FurnitureDesigns.raisedBed(m, bases, frame, duvet, bunk ? 1 : 0);
+					} else FurnitureDesigns.bed(m, frame, duvet);
 					furnish(m, core);
 				}
 			}
@@ -787,6 +830,11 @@ public class HouseBuilder {
 		return with(s, BlockStateProperties.HALF, Half.BOTTOM);
 	}
 
+	/** Inside the room and not yet claimed. */
+	private boolean free(int x, int y, int z) {
+		return inside(x, z) && !occupied.contains(BlockPos.asLong(x, y, z));
+	}
+
 	private boolean inside(int x, int z) {
 		return x >= 0 && z >= 0 && x < W && z < D;
 	}
@@ -940,6 +988,15 @@ public class HouseBuilder {
 		ItemStack stack = new ItemStack(Items.FILLED_MAP);
 		stack.set(DataComponents.MAP_ID, id);
 		return stack;
+	}
+
+	/**
+	 * Ladders have only air behind them (see the raised beds), which a ladder survives only until a block next to it
+	 * changes; set after everything else (a desk under a loft, a wall's light blocks), nothing in the build does.
+	 */
+	private void placeLadders() {
+		for (Map.Entry<BlockPos, BlockState> e : ladders.entrySet())
+			set(e.getKey().getX(), e.getKey().getY(), e.getKey().getZ(), e.getValue());
 	}
 
 	/** Recompute shape-dependent states (pane/fence connections, stair corners) once everything exists. */

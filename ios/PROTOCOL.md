@@ -23,9 +23,10 @@ Implementations: `ios/EverythingCubedScanner/Network/WireMessage.swift` and
 | type | fields | blobs |
 |---|---|---|
 | `hello` | `protocol` (1), `code` (pairing code from `/everything_cubed phone`), `device`, `app` | |
-| `begin` | `mode` (`capture` / `spectate`), `folder` (spectate: the scan to spectate, from `ready`), `name`, `source` (`roomplan`: RoomPlan's LiDAR scan; `tracked`: photos under ARKit world tracking, any iPhone; `arkit-live`: spectate, LiDAR), `app` | |
-| `frame` | `seq`, `kind` (`keyframe` / `photo`), `time`, `tracking`, `imageSize` [w,h], `depthSize` [w,h], `K` (3×3), `cam2world` (4×4) | `image` (jpeg), `depth` (f16), `confidence` (u8), `person` (u8, spectate) |
+| `begin` | `mode` (`capture` / `spectate`), `folder` (spectate: the scan to spectate, from `ready`), `name`, `source` (`roomplan`: RoomPlan's LiDAR scan; `tracked`: photos under ARKit world tracking, any iPhone), `app` | |
+| `frame` | `seq`, `kind` (`keyframe` / `photo`), `time`, `tracking`, `imageSize` [w,h], `depthSize` [w,h], `K` (3×3), `cam2world` (4×4), `pointCount` | `image` (jpeg), `depth` (f16), `confidence` (u8), `points` (f32xyz: ARKit's tracked feature points, world metres), `person` (u8, spectate) |
 | `room` | | `room` (RoomPlan `CapturedRoom` as JSON: the finished scan's, or the live one while spectating) |
+| `planes` | | `planes` (JSON `{"planes": [...]}`: per ARKit plane anchor `transform` 4×4 row-major, `center`, `extent` [w,h], `alignment`, `classification` (wall/floor/ceiling/table/seat/window/door/none), `boundary`), sent at the end of a `tracked` scan |
 | `end` | `build` (default true), `scale` (blocks per metre, optional) | |
 | `ping` | | |
 
@@ -54,6 +55,8 @@ person is, also per depth pixel; it is left out when nobody is in view.
 photos/<name>-<yyyyMMdd-HHmmss>/
   frame_0001.jpg ...           photos (also usable by the photo-only analyzer backends)
   depth/frame_0001.depth .conf LiDAR depth and confidence
+  points/frame_0001.points     ARKit feature points (float32 x, y, z per point)
+  planes.json                  ARKit planes, if sent
   room.json                    RoomPlan room model, if sent
   capture.json                 begin fields + per-frame fields, with file names instead of blobs
 ```

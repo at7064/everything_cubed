@@ -48,6 +48,60 @@ public final class AnalyzerRunner {
 		return workDir().resolve("photos");
 	}
 
+	static final int DEFAULT_KEEP_SCANS = 5;
+
+	/** {@code "keepScans"} in the config: phone scans kept in the photos folder (the newest ones); 0 keeps them all. */
+	public static int keepScans() {
+		try {
+			JsonObject cfg = config();
+			return cfg.has("keepScans") ? Math.max(0, cfg.get("keepScans").getAsInt()) : DEFAULT_KEEP_SCANS;
+		} catch (IOException | RuntimeException e) {
+			return DEFAULT_KEEP_SCANS;
+		}
+	}
+
+	/** Called as a new phone scan starts recording into {@code current}: see {@link #pruneScans}. */
+	public static void pruneOldScans(Path current) {
+		int keep = keepScans();
+		try {
+			for (Path old : pruneScans(photosDir(), current, keep))
+				EverythingCubed.LOGGER.info("Deleted old phone scan {} (keepScans = {})", old.getFileName(), keep);
+		} catch (IOException e) {
+			EverythingCubed.LOGGER.warn("Could not tidy old phone scans", e);
+		}
+	}
+
+	/**
+	 * Deletes the oldest phone scans in {@code photos} so that {@code keep} remain counting {@code current} (the scan
+	 * starting now, which has no capture.json yet and is never deleted); {@code keep <= 0} keeps them all. Only folders
+	 * the phone stream wrote (they hold a capture.json) are touched: photo folders made by hand are never deleted.
+	 * Returns the deleted folders.
+	 */
+	static List<Path> pruneScans(Path photos, Path current, int keep) throws IOException {
+		List<Path> deleted = new ArrayList<>();
+		if (keep <= 0 || !Files.isDirectory(photos)) return deleted;
+		List<Path> scans;
+		try (Stream<Path> s = Files.list(photos)) {
+			scans = new ArrayList<>(s.filter(p -> !p.equals(current) && Files.isRegularFile(p.resolve("capture.json"))).toList());
+		}
+		scans.sort((a, b) -> Long.compare(modified(b), modified(a)));  // newest first
+		for (Path old : scans.subList(Math.min(keep - 1, scans.size()), scans.size())) {
+			try (Stream<Path> files = Files.walk(old)) {
+				for (Path f : files.sorted((a, b) -> b.getNameCount() - a.getNameCount()).toList()) Files.deleteIfExists(f);
+			}
+			deleted.add(old);
+		}
+		return deleted;
+	}
+
+	private static long modified(Path p) {
+		try {
+			return Files.getLastModifiedTime(p).toMillis();
+		} catch (IOException e) {
+			return 0;
+		}
+	}
+
 	/** Whether folder builds should refresh a cached plan. Defaults to true. */
 	public static boolean alwaysReanalyze() {
 		try {
@@ -203,6 +257,15 @@ public final class AnalyzerRunner {
 		}
 		if (!cfg.has("extraArgs")) {
 			cfg.add("extraArgs", new JsonArray());
+			changed = true;
+		}
+		// Written out so the switches are easy to find.
+		if (!cfg.has("alwaysReanalyze")) {
+			cfg.addProperty("alwaysReanalyze", true);
+			changed = true;
+		}
+		if (!cfg.has("keepScans")) {
+			cfg.addProperty("keepScans", DEFAULT_KEEP_SCANS);
 			changed = true;
 		}
 		if (changed) {

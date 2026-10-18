@@ -15,6 +15,9 @@
 			"com.dubhacks.everything_cubed.EverythingCubed"
 		]
 	},
+	"mixins": [
+		"everything_cubed.mixins.json"
+	],
 	"depends": {
 		"fabricloader": ">=0.19.5",
 		"minecraft": "~26.3",
