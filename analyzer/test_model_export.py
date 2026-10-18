@@ -53,11 +53,13 @@ def test_export():
                                        dtype="<f4").reshape(-1, 5)
         assert np.all((photo_vertices[:, 3:] > 0) & (photo_vertices[:, 3:] < 1))
         write_photo_viewer(ply, [photo], root / "photo_view.html", max_faces_per_frame=100)
-        assert "Original video pixels" in (root / "photo_view.html").read_text()
+        assert "WASD to move" in (root / "photo_view.html").read_text()
         layered = write_photo_viewer(ply, [photo], root / "photo_on_original.html",
                                       max_faces_per_frame=100, base_mesh=ply)
         assert layered["base_mesh"]["vertices_b64"]
-        assert "Show original mesh" in (root / "photo_on_original.html").read_text()
+        layered_html = (root / "photo_on_original.html").read_text()
+        assert "Show original mesh" in layered_html and "Enter room" in layered_html
+        assert "requestAnimationFrame(walk)" in layered_html
         shell = {"origin": [0, 0, 0], "rotation": np.eye(3).tolist(),
                  "y_shift": 0, "scale": 1,
                  "bounds": {"xmin": -1, "xmax": 100, "zmin": -1, "zmax": 100,

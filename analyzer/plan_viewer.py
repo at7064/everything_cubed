@@ -172,13 +172,14 @@ input[type=range]{width:100%}button,a{margin-top:9px;border:1px solid #5a7480;ba
 <label>Wall opacity <input id="alpha" type="range" min="0" max="100" value="40"></label>
 <button id="reset">Reset view</button> <a id="photoLink" href="photo_view.html" style="display:none">Photo textures</a></div><div id="tip"></div><script>
 const scene = __SCENE__;
+// The reconstructed mesh uses image coordinates; room-plan boxes already use viewer coordinates.
 if(scene.photo_view)document.getElementById('photoLink').style.display='inline-block';
 const canvas=document.getElementById('view'),ctx=canvas.getContext('2d'),tip=document.getElementById('tip');
 const meshCanvas=document.getElementById('meshview');let gl=null,meshProgram=null,meshCount=0;
 function shader(type,source){let s=gl.createShader(type);gl.shaderSource(s,source);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s}
 function initMesh(){if(!scene.mesh)return;gl=meshCanvas.getContext('webgl',{antialias:true});if(!gl){mode.options[1].disabled=true;return}
  const vs=shader(gl.VERTEX_SHADER,`attribute vec3 aPos;attribute vec3 aColor;varying vec3 vColor;uniform vec3 uCenter;uniform float uYaw,uPitch,uZoom,uAspect;
- void main(){vec3 p=aPos-uCenter;float c=cos(uYaw),s=sin(uYaw);float a=p.x*c-p.z*s,b=p.x*s+p.z*c;float q=b*cos(uPitch)-p.y*sin(uPitch),v=b*sin(uPitch)+p.y*cos(uPitch);float depth=max(0.1,uZoom-q);gl_Position=vec4(a/uAspect,v,depth*1.0002-0.2,depth);vColor=aColor;}`);
+ void main(){vec3 p=aPos-uCenter;p.x=-p.x;p.y=-p.y;float c=cos(uYaw),s=sin(uYaw);float a=p.x*c-p.z*s,b=p.x*s+p.z*c;float q=b*cos(uPitch)-p.y*sin(uPitch),v=b*sin(uPitch)+p.y*cos(uPitch);float depth=uZoom-q;gl_Position=vec4(a/uAspect,v,depth*1.0002-0.2,depth);vColor=aColor;}`);
  const fs=shader(gl.FRAGMENT_SHADER,`precision mediump float;varying vec3 vColor;void main(){gl_FragColor=vec4(vColor,1.0);}`);
  meshProgram=gl.createProgram();gl.attachShader(meshProgram,vs);gl.attachShader(meshProgram,fs);gl.linkProgram(meshProgram);
  if(!gl.getProgramParameter(meshProgram,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(meshProgram));gl.useProgram(meshProgram);
@@ -212,9 +213,9 @@ for(let surface of [canvas,meshCanvas]){surface.addEventListener('pointerdown',e
 surface.addEventListener('pointerup',()=>drag=false);surface.addEventListener('pointermove',e=>{hover=[e.clientX,e.clientY];if(drag){yaw+=(e.clientX-last[0])*.008;pitch+=(e.clientY-last[1])*.008;last=[e.clientX,e.clientY]}draw()});
 surface.addEventListener('wheel',e=>{e.preventDefault();zoom=Math.max(2,Math.min(100,zoom*Math.exp(e.deltaY*.001)));draw()},{passive:false})}
 for(let id of ['walls','objects','alpha'])document.getElementById(id).addEventListener('input',draw);
-mode.addEventListener('change',()=>{meshCanvas.style.display=mode.value==='mesh'?'block':'none';canvas.style.display=mode.value==='mesh'?'none':'block';if(mode.value==='mesh'&&scene.mesh){let [a,b]=scene.mesh.bounds;center=a.map((v,i)=>(v+b[i])/2);zoom=Math.max(...b.map((v,i)=>v-a[i]))*1.7}
- else{center=[W/2,H*.38,D/2];zoom=Math.max(W,D,H)*1.7}draw()});
-document.getElementById('reset').onclick=()=>{yaw=-.65;pitch=.55;mode.dispatchEvent(new Event('change'))};initMesh();resize();if(gl){mode.value='mesh';mode.dispatchEvent(new Event('change'))}
+mode.addEventListener('change',()=>{meshCanvas.style.display=mode.value==='mesh'?'block':'none';canvas.style.display=mode.value==='mesh'?'none':'block';if(mode.value==='mesh'&&scene.mesh){let [a,b]=scene.mesh.bounds;center=a.map((v,i)=>(v+b[i])/2);zoom=Math.max(...b.map((v,i)=>v-a[i]))*1.7;yaw=.65;pitch=-.35}
+ else{center=[W/2,H*.38,D/2];zoom=Math.max(W,D,H)*1.7;yaw=-.65;pitch=.55}draw()});
+document.getElementById('reset').onclick=()=>mode.dispatchEvent(new Event('change'));initMesh();resize();if(gl){mode.value='mesh';mode.dispatchEvent(new Event('change'))}
 </script></body></html>'''
 
 
