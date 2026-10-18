@@ -218,6 +218,7 @@ class Furniture:
             f"linked to RoomPlan objects")
         self.live = {}             # live RoomPlan id -> {"scan", "index": plan object index or None, "anchor": Pose}
         self.pending = {}          # live id -> (target key, updates in a row)
+        self.tracking, self.updates = None, 0   # last tracking state logged, room updates seen
         self.held = set()          # live ids not added because a scanned piece of their kind is unseen (logged once)
 
     def _occupancy(self, skip=None):
@@ -239,7 +240,7 @@ class Furniture:
             return s, d[s]
         return place_object(cat, pose.cluster, self.room, self._occupancy(skip), self._tables(skip), nearest_side)
 
-    def _link(self, rid, cat, pose):
+    def _link(self, rid, cat, pose, o=None):
         """A live object first seen: the scanned object of its kind nearest to it, if close enough and not taken."""
         claimed = {v["scan"] for v in self.live.values() if v["scan"] is not None}
         best = None
@@ -254,8 +255,21 @@ class Furniture:
             self.live[rid] = {"scan": j, "index": self.scanned[j][2], "anchor": self.scanned[j][1]}
         else:
             self.live[rid] = {"scan": None, "index": None, "anchor": None}
-            log(f"[spectate] live {cat} {rid[:8]} ({pose.describe(self.fr)}) matches no scanned {kind(cat)} within "
-                f"{MATCH_M} m: a new piece if RoomPlan keeps it")
+        # First sighting, matched or not: how far it is from the nearest scanned piece of its kind. The same offset
+        # on every object means RoomPlan's coordinates moved, not the furniture.
+        same = [(float(np.hypot(*(pose.c - sp.c)[[0, 2]])), j, sp) for j, (k, sp, _) in enumerate(self.scanned)
+                if k == kind(cat)]
+        if same:
+            dist, j, sp = min(same, key=lambda t: t[0])
+            off = pose.c - sp.c
+            verdict = ("matched" if best else f"already matched to another live {cat}" if j in claimed
+                       else f"not matched (more than {MATCH_M} m)")
+            near = (f"nearest scanned {kind(cat)} {sp.describe(self.fr)}: offset ({off[0]:+.2f}, {off[2]:+.2f}) m, "
+                    f"{dist:.2f} m, {pose.inside_share(sp):.0%} inside it; {verdict}")
+        else:
+            near = f"no scanned {kind(cat)}"
+        log(f"[spectate] first sight: {cat} {rid[:8]} {pose.describe(self.fr)}, {rp_confidence(o) if o else '?'} "
+            f"confidence; {near}")
 
     def _unseen_scanned(self, k):
         """How many scanned pieces of kind k no live object has been matched to."""
@@ -268,7 +282,13 @@ class Furniture:
         self.pending[rid] = (key, n)
         return n >= MOVE_UPDATES
 
-    def update(self, room):
+    def update(self, room, tracking=None):
+        """tracking: ARKit's tracking state the phone sent with this room update (None from an older app)."""
+        if self.updates == 0 or tracking != self.tracking:
+            log(f"[spectate] phone tracking: {tracking or 'not sent (older app)'}"
+                + (f" (was {self.tracking or 'not sent'})" if self.updates else ""))
+            self.tracking = tracking
+        self.updates += 1
         moves, adds = [], []
         for o in room.get("objects", []):
             cat = rp_category(o)
@@ -277,7 +297,7 @@ class Furniture:
                 continue
             pose = Pose(self.fr, o)
             if rid not in self.live:
-                self._link(rid, cat, pose)
+                self._link(rid, cat, pose, o)
             link = self.live[rid]
             if rp_confidence(o) not in CONFIDENT:
                 self.pending.pop(rid, None)   # unsure: whatever was building up starts over
@@ -414,7 +434,7 @@ class People:
 def step(furniture, people, header, blobs):
     out = {"type": "update", "moves": [], "adds": [], "people": people.kept()}
     if header.get("type") == "room" and "room" in blobs:
-        out["moves"], out["adds"] = furniture.update(json.loads(blobs["room"]))
+        out["moves"], out["adds"] = furniture.update(json.loads(blobs["room"]), header.get("tracking"))
     elif header.get("type") == "frame" and header.get("tracking", "normal") == "normal":
         fr = decode_frame(header, blobs)
         if fr is not None:

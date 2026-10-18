@@ -25,7 +25,7 @@ Implementations: `ios/EverythingCubedScanner/Network/WireMessage.swift` and
 | `hello` | `protocol` (1), `code` (pairing code from `/everything_cubed phone`), `device`, `app` | |
 | `begin` | `mode` (`capture` / `spectate`), `folder` (spectate: the scan to spectate, from `ready`), `name`, `source` (`roomplan`: RoomPlan's LiDAR scan; `tracked`: photos under ARKit world tracking, any iPhone), `app` | |
 | `frame` | `seq`, `kind` (`keyframe` / `photo`), `time`, `tracking`, `imageSize` [w,h], `depthSize` [w,h], `K` (3×3), `cam2world` (4×4), `pointCount` | `image` (jpeg), `depth` (f16), `confidence` (u8), `points` (f32xyz: ARKit's tracked feature points, world metres), `person` (u8, spectate) |
-| `room` | | `room` (RoomPlan `CapturedRoom` as JSON: the finished scan's, or the live one while spectating) |
+| `room` | `tracking` (spectating only: ARKit's tracking state, `normal`, `limited: relocalizing`, ...) | `room` (RoomPlan `CapturedRoom` as JSON: the finished scan's, or the live one while spectating) |
 | `planes` | | `planes` (JSON `{"planes": [...]}`: per ARKit plane anchor `transform` 4×4 row-major, `center`, `extent` [w,h], `alignment`, `classification` (wall/floor/ceiling/table/seat/window/door/none), `boundary`), sent at the end of a `tracked` scan |
 | `end` | `build` (default true), `scale` (blocks per metre, optional) | |
 | `ping` | | | (also every second while spectating: the phone is there)
