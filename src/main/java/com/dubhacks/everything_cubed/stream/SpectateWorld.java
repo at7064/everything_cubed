@@ -1,5 +1,6 @@
 package com.dubhacks.everything_cubed.stream;
 
+import com.dubhacks.everything_cubed.EverythingCubed;
 import com.dubhacks.everything_cubed.analyzer.AnalyzerRunner;
 import com.dubhacks.everything_cubed.build.HouseBuilder;
 import com.dubhacks.everything_cubed.build.UndoLog;
@@ -125,9 +126,10 @@ final class SpectateWorld {
 				v.snapTo(at.x, at.y, at.z, 0, 0);
 				level.addFreshEntity(v);
 				people.put(id, v);
+				EverythingCubed.LOGGER.info("[spectate] villager #{} appears at {} ({} villager(s) now)", id, at, people.size());
 				continue;
 			}
-			if (sleep(v, p)) continue;
+			if (sleep(id, v, p)) continue;
 			Vec3 d = at.subtract(v.position());
 			float yaw = v.getYRot();
 			if (d.horizontalDistance() > MIN_TURN) yaw = (float) Math.toDegrees(Math.atan2(-d.x, d.z));
@@ -137,6 +139,7 @@ final class SpectateWorld {
 		}
 		people.entrySet().removeIf(en -> {
 			if (seen.contains(en.getKey())) return false;
+			EverythingCubed.LOGGER.info("[spectate] villager #{} removed from {}", en.getKey(), en.getValue().position());
 			remove(en.getValue());
 			return true;
 		});
@@ -152,7 +155,7 @@ final class SpectateWorld {
 	 * A person lying on a bed: the villager sleeps in that bed (its head block), and gets up when they do.
 	 * Returns true while the villager sleeps, so it is not moved.
 	 */
-	private boolean sleep(Villager v, JsonObject p) {
+	private boolean sleep(int id, Villager v, JsonObject p) {
 		JsonArray at = p.getAsJsonArray("sleep");
 		BlockPos head = null;
 		if (at != null) {
@@ -161,18 +164,32 @@ final class SpectateWorld {
 			if (bed.getBlock() instanceof BedBlock) {
 				// Villagers sleep with their head on the bed's head block.
 				head = bed.getValue(BedBlock.PART) == BedPart.FOOT ? pos.relative(bed.getValue(BedBlock.FACING)) : pos;
+			} else if (noBedLogged.add(id)) {
+				EverythingCubed.LOGGER.info("[spectate] person #{} lies on plan block ({}, {}) = {}, but that is {}, not a bed: not asleep",
+						id, at.get(0).getAsInt(), at.get(1).getAsInt(), pos.toShortString(), bed);
 			}
 		}
 		if (head == null) {
-			if (v.isSleeping()) v.stopSleeping();
+			if (v.isSleeping()) {
+				v.stopSleeping();
+				EverythingCubed.LOGGER.info("[spectate] villager #{} wakes, now at {}", id, v.position());
+			}
 			return false;
 		}
+		noBedLogged.remove(id);
 		if (!v.isSleeping() || !v.getSleepingPos().map(head::equals).orElse(false)) {
 			if (v.isSleeping()) v.stopSleeping();
+			Vec3 before = v.position();
 			v.startSleeping(head);
+			EverythingCubed.LOGGER.info("[spectate] villager #{} sleeps in the bed with its head at {} ({}), house origin {}: "
+							+ "moved from {} to {}, sleeping {}", id, head.toShortString(), level.getBlockState(head),
+					build.origin().toShortString(), before, v.position(), v.isSleeping());
 		}
 		return true;
 	}
+
+	/** People already logged as lying where there is no bed (once each, until they are on one). */
+	private final Set<Integer> noBedLogged = new HashSet<>();
 
 	/** Ends spectating: the rest of the queued blocks are placed, villagers go, the player gets their mode back. */
 	void finish() {

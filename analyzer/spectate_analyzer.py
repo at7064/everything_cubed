@@ -544,6 +544,7 @@ class People:
         self.fr = frame
         self.furniture = furniture      # its objects are the beds as they stand now (they can move)
         self.tracks, self.next_id = [], 1
+        self.last_count, self.noted = 0, 0.0   # for the log: people in the last frame, last rate-limited line
 
     def bed_under(self, xz):
         """The bed block (x, z) under a point (room metres): on a built bed (half a block of slack), or anywhere on
@@ -592,9 +593,15 @@ class People:
                 top, span = np.percentile(y, 95), np.percentile(y, 95) - np.percentile(y, 5)
                 xz = np.median(loc[sel][:, [0, 2]], axis=0)
                 bed = self.bed_under(xz) if top < LYING_TOP and span < LYING_SPAN else None
+                info = (f"block ({self.fr.block_x(xz[0]):.1f}, {self.fr.block_z(xz[1]):.1f}), top {top:.2f} m, "
+                        f"span {span:.2f} m, {int(sel.sum())} px" + (f", on bed block {bed}" if bed else ""))
                 if span < 0.4 and bed is None:
+                    self._note(f"flat shape not on a bed dropped: {info}")
                     continue   # too flat for someone standing or sitting, and not on a bed: not a person
-                found.append((xz, bed))
+                found.append((xz, bed, info))
+        if len(found) != self.last_count:
+            log(f"[spectate] people: {len(found)} in this frame" + "".join(f"; {f[2]}" for f in found))
+            self.last_count = len(found)
         now = fr["time"]
         free = list(range(len(found)))
         for t in sorted(self.tracks, key=lambda t: -t["seen"]):
@@ -603,7 +610,7 @@ class People:
             d = [np.linalg.norm(found[f][0] - t["xz"]) for f in free]
             best = int(np.argmin(d))
             if d[best] <= PERSON_MATCH:
-                t["xz"], bed = found[free.pop(best)]
+                t["xz"], bed, _ = found[free.pop(best)]
                 t["seen"] += 1
                 t["last"] = now
                 # Lying down or getting up only after LYING_FRAMES frames in a row agree.
@@ -612,14 +619,27 @@ class People:
                 if lying and t["bed"]:
                     t["bed"] = bed
                 elif t["streak"] >= LYING_FRAMES:
+                    log(f"[spectate] person #{t['id']} " + (f"lies down on bed block {bed}" if bed else "gets up"))
                     t["bed"], t["streak"] = bed, 0
         for f in free:
+            log(f"[spectate] person #{self.next_id} new: {found[f][2]}"
+                + (f" (nearest tracked person {min(np.linalg.norm(found[f][0] - t['xz']) for t in self.tracks):.2f} m "
+                   f"away, matching takes {PERSON_MATCH} m)" if self.tracks else ""))
             # A first sighting on a bed counts towards lying down.
             self.tracks.append({"id": self.next_id, "xz": found[f][0], "seen": 1, "last": now, "bed": None,
                                 "streak": int(found[f][1] is not None)})
             self.next_id += 1
+        for t in self.tracks:
+            if now - t["last"] > PERSON_KEEP:
+                log(f"[spectate] person #{t['id']} gone (unseen for {now - t['last']:.1f} s)")
         self.tracks = [t for t in self.tracks if now - t["last"] <= PERSON_KEEP]
         return self.kept()
+
+    def _note(self, msg):
+        """A log line, at most once a second (dropped shapes come every frame)."""
+        if time.time() - self.noted >= 1.0:
+            self.noted = time.time()
+            log(f"[spectate] people: {msg}")
 
     def kept(self):
         """Tracked people in plan block coordinates, standing on the floor (y = 1)."""
