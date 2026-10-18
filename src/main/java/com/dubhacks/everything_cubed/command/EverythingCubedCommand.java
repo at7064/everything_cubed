@@ -36,6 +36,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 /**
  * /everything_cubed build <folder or plan.json>        analyse the photos (if needed) and build in front of you
@@ -96,6 +97,11 @@ public final class EverythingCubedCommand {
 
 	/** Analyses {@code input} (if needed) in the background and builds it in front of {@code src}. */
 	public static int start(CommandSourceStack src, Path input, Double scale) {
+		return start(src, input, scale, b -> { });
+	}
+
+	/** Same, and {@code onBuilt} runs on the server thread once the house stands (not when it failed). */
+	public static int start(CommandSourceStack src, Path input, Double scale, Consumer<Built> onBuilt) {
 		if (!Files.exists(input)) {
 			src.sendFailure(Component.literal("Not found: " + input + " (relative paths are looked up in "
 					+ AnalyzerRunner.photosDir() + ")"));
@@ -117,7 +123,7 @@ public final class EverythingCubedCommand {
 			try {
 				JsonObject plan = loadPlan(src, input, scale);
 				Path planFile = Files.isRegularFile(input) ? input : input.resolve("plan.json");
-				server.execute(() -> build(src, level, at, facing, plan, planFile));
+				server.execute(() -> build(src, level, at, facing, plan, planFile, onBuilt));
 			} catch (Exception ex) {
 				EverythingCubed.LOGGER.error("everything_cubed failed", ex);
 				server.execute(() -> src.sendFailure(Component.literal("everything_cubed failed: " + ex.getMessage())));
@@ -145,7 +151,8 @@ public final class EverythingCubedCommand {
 		return AnalyzerRunner.analyze(input, scale, line -> server.execute(() -> progress(src, line)));
 	}
 
-	private static void build(CommandSourceStack src, ServerLevel level, BlockPos at, Direction facing, JsonObject plan, Path planFile) {
+	private static void build(CommandSourceStack src, ServerLevel level, BlockPos at, Direction facing, JsonObject plan, Path planFile,
+			Consumer<Built> onBuilt) {
 		try {
 			JsonObject size = plan.getAsJsonObject("size");
 			int w = size.get("x").getAsInt(), d = size.get("z").getAsInt();
@@ -156,11 +163,12 @@ public final class EverythingCubedCommand {
 			BlockPos origin = new BlockPos(cx - w / 2, at.getY() - 1, cz - d / 2);
 			UndoLog log = new HouseBuilder(level, origin, plan).build();
 			remember(log);
+			Built b = new Built(level, origin, planFile, w, d, size.get("y").getAsInt());
 			if (src.getEntity() instanceof ServerPlayer p) {
-				Built b = new Built(level, origin, planFile, w, d, size.get("y").getAsInt());
 				LAST.put(p.getUUID(), b);
 				BUILT_BY.put(log, p.getUUID());
 			}
+			onBuilt.accept(b);
 			JsonObject m = plan.getAsJsonObject("metres");
 			String metres = m == null ? "" : String.format(" (room %.1f x %.1f m)", m.get("x").getAsDouble(), m.get("z").getAsDouble());
 			src.sendSuccess(() -> Component.literal("Built a " + w + " x " + d

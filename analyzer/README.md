@@ -125,25 +125,31 @@ Photo-only flags (`--perceptron`, `--backend`, model names) are ignored with a l
 
 ## Spectate: live LiDAR (`spectate_analyzer.py`)
 
-The mod starts this worker when the iOS app spectates, and keeps it running. It reads the phone's frames on stdin
-(about 5 a second) and answers each with one JSON line of block changes and people. It runs the LiDAR pipeline
-above per frame (same unprojection, labels and surface palette): the room's axes, floor, walls and table tops are
-measured once from the first 15 frames, and every later frame is labelled against them. A frame takes about 16 ms.
+The mod starts this worker when the iOS app spectates a room it has scanned and built, and keeps it running. It
+reads the phone's frames on stdin (about 5 a second) and answers each with one JSON line of block changes and
+people. `lidar_analyzer.py` saves an `arkit` frame in every LiDAR plan: how ARKit's world metres map onto the plan's
+blocks. The phone relocalises to the scan's world map, so each frame (unprojected with `frame_geometry`, as for
+build) lands on the built house's blocks. New blocks are coloured with build's surface palette. A frame takes about
+11 ms.
 
-Only confident changes reach the world:
+The build is the starting state, taken as certain (`--baseline`: the blocks inside the house that hold something
+now). Only the inside changes; the floor, walls and ceiling never do. Only confident changes reach the world:
 
-- the first 15 frames are the initial scan, and everything they show is built as it is;
-- after that, a block appears or disappears only when 5 frames in a row show the change clearly, with
-  high-confidence LiDAR depth closer than 5 m. A different colour needs 10 frames in a row that agree;
-- a frame that shows a spot both ways, or only at low confidence, resets that spot's count, and spots out of view
-  keep theirs. Unclear spots stay as they were;
-- evidence is kept on 3 x 3 x 3 sub-cells per block, so rays passing over a partly filled block (a 1 m crate in a
-  0.8 m block row) don't count the filled part as empty;
+- evidence is kept on 3 x 3 x 3 sub-cells per block. A sub-cell changes only when 5 frames in a row show the
+  change clearly, with high-confidence LiDAR depth closer than 5 m. A frame that shows it both ways, or only at
+  low confidence, resets its count, and sub-cells out of view keep theirs;
+- a built block goes only when 2/3 of its sub-cells are clearly empty (a chair fills about half its block, so it
+  stays), and it takes its whole furniture model with it. Built blocks are never recoloured;
+- a new block appears where sub-cells are newly and clearly filled;
+- depth within 10 cm of the floor, walls or ceiling is that surface, not something new;
+- frames before the phone has relocalised are no evidence;
 - people (masked by the phone) are never built. They are grouped into tracked positions, which the mod shows as
   villagers.
 
-`python test_spectate.py` streams a synthetic room through it. A crate is carried away and a person walks in.
-It checks that a box seen in one frame and changes seen only at low confidence leave the world alone.
+`python test_spectate.py` streams a synthetic built room through it. It checks that seeing the room as built
+changes nothing (a half-filled block stays), and that a box seen in one frame, low-confidence views and
+relocalising frames change nothing. A crate carried away goes, a new box appears, and a person walking in is
+reported, never built.
 
 ## Optional: open-vocabulary detection (`--perceptron`)
 

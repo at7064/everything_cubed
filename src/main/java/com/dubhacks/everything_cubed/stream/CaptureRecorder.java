@@ -107,7 +107,8 @@ final class CaptureRecorder implements StreamSession {
 				return;
 			}
 			var src = player.get().createCommandSourceStack().withSource(phone.mirror(player.get()));
-			EverythingCubedCommand.start(src, dir, scale);
+			// Tells the app the house stands: it can now offer to spectate this scan.
+			EverythingCubedCommand.start(src, dir, scale, b -> phone.send(StreamMessage.of("built").with("folder", folder)));
 		});
 	}
 

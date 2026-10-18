@@ -48,14 +48,6 @@ struct ScanSetupView: View {
                         .disabled(!supported || name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
                 Section {
-                    Button("Spectate") { model.startSpectate() }
-                        .disabled(!LiveSource.isSupported)
-                } footer: {
-                    Text(LiveSource.isSupported
-                         ? "Streams the camera live: the world around you in game follows the room about 5 times a second, and people show up as villagers. You are put in spectator mode until you stop. Hold still for the first few seconds while the room is scanned."
-                         : "Spectate needs LiDAR (Pro models): live updates are measured with LiDAR depth. Photo scans above work on this iPhone.")
-                }
-                Section {
                     Button("Disconnect", role: .destructive) { model.disconnect() }
                 }
             }

@@ -86,7 +86,13 @@ struct ScanView: View {
         case .finishing:
             ProgressView("Sending the scan…").padding().background(.ultraThinMaterial, in: Capsule())
         default:
-            Button("Scan another room") { model.scanAgain() }.buttonStyle(.borderedProminent)
+            // After a scan: scan another room, or spectate this one once it is built (LiDAR scans only).
+            HStack(spacing: 16) {
+                Button("Scan another room") { model.scanAgain() }.buttonStyle(.bordered)
+                Button("Spectate this room") { model.startSpectate() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!model.canSpectate)
+            }
         }
     }
 

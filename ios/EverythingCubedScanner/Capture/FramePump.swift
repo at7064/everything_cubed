@@ -69,6 +69,9 @@ final class FramePump {
         guard let frame = session.currentFrame, let sink else { stats.noFrame += 1; return }
         guard case .normal = frame.camera.trackingState else {
             stats.limited += 1
+            if case .limited(.relocalizing) = frame.camera.trackingState {
+                return hint("Point at the scanned room to line up with it")
+            }
             return hint("Move slowly, tracking is limited")
         }
         let kind: FrameKind

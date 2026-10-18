@@ -23,7 +23,7 @@ Implementations: `ios/EverythingCubedScanner/Network/WireMessage.swift` and
 | type | fields | blobs |
 |---|---|---|
 | `hello` | `protocol` (1), `code` (pairing code from `/everything_cubed phone`), `device`, `app` | |
-| `begin` | `mode` (`capture` / `spectate`), `name`, `source` (`roomplan`: RoomPlan's LiDAR scan; `tracked`: photos under ARKit world tracking, any iPhone; `arkit-live`: spectate, LiDAR), `app`, `scale` (spectate, optional) | |
+| `begin` | `mode` (`capture` / `spectate`), `folder` (spectate: the scan to spectate, from `ready`), `name`, `source` (`roomplan`: RoomPlan's LiDAR scan; `tracked`: photos under ARKit world tracking, any iPhone; `arkit-live`: spectate, LiDAR), `app` | |
 | `frame` | `seq`, `kind` (`keyframe` / `photo`), `time`, `tracking`, `imageSize` [w,h], `depthSize` [w,h], `K` (3×3), `cam2world` (4×4) | `image` (jpeg), `depth` (f16), `confidence` (u8), `person` (u8, spectate) |
 | `room` | | `room` (RoomPlan `CapturedRoom` as JSON) |
 | `end` | `build` (default true), `scale` (blocks per metre, optional) | |
@@ -43,6 +43,7 @@ person is, also per depth pixel; it is left out when nobody is in view.
 | `welcome` | `protocol`, `modes` (supported `begin` modes) |
 | `error` | `text`; the mod closes the connection after a failed `hello` |
 | `ready` | `folder`, the scan's folder under `everything_cubed/photos` (capture); `mode` = `spectate` (spectate) |
+| `built` | `folder`: a capture's house stands in game; the app can now offer to spectate it |
 | `stopped` | `text`: the game ended spectating (`/everything_cubed spectate stop`, the player left, ...) |
 | `status` | `level` (`info` / `progress` / `success` / `error`), `text`: progress and chat lines for the app's log |
 | `pong` | |
@@ -63,9 +64,13 @@ The analyzer reads `capture.json`: frames with depth go to `analyzer/lidar_analy
 
 ## Mode `spectate`
 
-LiDAR only: frames without depth are skipped. The phone streams `frame`s continuously, every 0.2 s, until `end` (or until the mod sends `stopped`). Nothing is
-saved: each frame goes to `analyzer/spectate_analyzer.py`, which the mod keeps running. While it works on one
-frame, only the newest one that arrives is kept. The player is in spectator mode until the session ends.
+Starts from a scan the player has built (their last build, named by `folder`); the mod refuses it otherwise. The
+phone relocalises to the scan's ARKit world map, so its frames are in the scan's coordinates, and sends no frame
+until tracking is normal. LiDAR only: frames without depth are skipped. The phone streams `frame`s continuously,
+every 0.2 s, until `end` (or until the mod sends `stopped`). Nothing is saved: each frame goes to
+`analyzer/spectate_analyzer.py`, which the mod keeps running with the scan's `plan.json` (its `arkit` frame maps
+ARKit metres onto the plan's blocks) and the blocks inside the house as built. While it works on one frame, only
+the newest one that arrives is kept. The player is in spectator mode until the session ends.
 
 ## Extending
 

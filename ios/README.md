@@ -26,11 +26,14 @@ copying. Two scan types:
 
 ### Spectate (live)
 
-Needs LiDAR (Pro models). After pairing, tap **Spectate** instead of starting a scan. The camera streams to the game about 5 times a second,
-and the world around you follows the real room. Hold still for the first 3 seconds while the room is scanned. After
-that, a block only changes once the LiDAR has clearly seen the change for about a second. People in view show up as
-villagers. You are in spectator mode in game until you tap **Stop** or run `/everything_cubed spectate stop`. You
-then get your game mode and position back, and `/everything_cubed undo` reverts the mirrored blocks.
+Needs LiDAR (Pro models), and starts from a scan. When a LiDAR scan is built, the finished screen offers **Scan
+another room** or **Spectate this room**. The app keeps ARKit's map of the room from the scan; spectating, ARKit
+relocalises to it (point the phone at the scanned room), so the live frames line up with the built house. The
+camera then streams to the game about 5 times a second. A piece of furniture only goes, or something new only
+appears, once the LiDAR has clearly seen it for about a second; anything unclear stays as built. People in view
+show up as villagers. You are in spectator mode in game until you tap **Stop** or run
+`/everything_cubed spectate stop`. You then get your game mode and position back, and `/everything_cubed undo`
+reverts the changes.
 
 ## Build
 
