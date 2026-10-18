@@ -246,7 +246,8 @@ print("got up: awake after 3 frames")
 p.stdin.close()
 p.wait(timeout=10)
 print(f"median {np.median(ms):.0f} ms per message")
-# RoomPlan's live coordinates off from the scan's (a real session: every object 1.75 m off), here also turned 8 deg.
+# RoomPlan's live coordinates off from the scan's (real sessions: every object 1.75 m off, and 0.65 m high), here
+# also turned 8 deg.
 # The worker aligns the live walls and objects onto the scanned ones first, so nothing moves or is added; a chair that
 # really moves still moves, to where it really went.
 def wall(x0, z0, x1, z1, h=2.5):
@@ -259,7 +260,7 @@ def wall(x0, z0, x1, z1, h=2.5):
 
 walls = [wall(0, 0, W, 0), wall(W, 0, W, D), wall(0, D, 0, 0)]          # the south wall was never scanned
 scan_w = dict(scan, walls=walls)
-G = np.eye(4); G[:3, :3] = rot_y(np.radians(8)); G[:3, 3] = rot_y(TURN) @ [-1.75, 0, -0.17]   # live = G @ scan
+G = np.eye(4); G[:3, :3] = rot_y(np.radians(8)); G[:3, 3] = rot_y(TURN) @ [-1.75, 0.65, -0.17]   # live = G @ scan
 
 
 def shifted(o):
@@ -306,6 +307,18 @@ asleep = [q for q in seen if "sleep" in q]
 assert asleep and wbed["x"] <= asleep[0]["sleep"][0] < wbed["x"] + wbed["w"] \
     and wbed["z"] <= asleep[0]["sleep"][1] < wbed["z"] + wbed["d"], (seen, wbed)
 print(f"person on the bed through the shifted frame: asleep in bed block {asleep[0]['sleep']}")
+
+# A speck of stray mask pixels (36 px, 1.8 m up at the far wall) beside a person is not a second person.
+specked = frame_of(body_frame(35, *w_lying, w_eye, w_look, live=G))
+specked["person"][:6, :6] = True
+specked["valid"][:6, :6] = True
+specked["P"][:6, :6] = (G @ WORLD @ [W - 0.1, 1.8, D - 0.1, 1])[:3]
+crowd2 = sa.People(frame, fw)
+for i in range(3):
+    specked["time"] = 36 + i
+    seen2 = crowd2.update(specked)
+assert len(seen2) == 1, seen2
+print("a speck beside the person: still one person")
 
 # At 2.5 blocks/m the built bed (2 x 1 blocks, 0.8 x 0.4 m) is far smaller than the real 2 x 1.1 m one, so someone
 # lying at the real bed's foot end is off the built blocks; they still lie on the bed (and sleep in it). A real

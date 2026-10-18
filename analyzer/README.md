@@ -172,8 +172,9 @@ answers each with one JSON line.
 The build is the starting state, taken as certain. Only whole pieces of furniture change, and only from RoomPlan's
 objects; no single blocks are ever placed:
 
-- RoomPlan's live coordinates are first aligned onto the scan's: they have come out 1.75 m off, so the shift (and any
-  turn) that puts the live walls and objects onto the scanned ones is found, once at least two of them agree, and
+- RoomPlan's live coordinates are first aligned onto the scan's: they have come out 1.75 m off and 0.65 m high, so
+  the shift (and any turn, and the height from the walls) that puts the live walls and objects onto the scanned ones
+  is found, once at least two of them agree, and
   applied to every live box. Until then nothing is matched; the alignment is logged;
 - every built piece is linked to the RoomPlan object of the scan it came from (`room.json`), by kind and position;
 - a piece moves when RoomPlan places its object mostly outside where it was (less than half of its live floor
@@ -187,7 +188,8 @@ objects; no single blocks are ever placed:
 - low-confidence objects, jitter within a footprint, and objects RoomPlan stops reporting change nothing;
 - people are found in the frames (the phone's person mask over LiDAR depth), moved by the same alignment as the
   furniture (nobody is reported before it is agreed), and reported as tracked positions, which the mod shows as
-  villagers. Someone lying anywhere on the real bed (not just over the smaller Minecraft bed built for it) sleeps in
+  villagers. Specks much smaller than the person beside them (stray mask pixels) are not people. Someone lying
+  anywhere on the real bed (not just over the smaller Minecraft bed built for it) sleeps in
   the built bed.
 
 `python test_spectate.py` streams synthetic RoomPlan updates through it. It checks that the room as scanned (and

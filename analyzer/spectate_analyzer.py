@@ -60,6 +60,7 @@ CONFIDENT = ("medium", "high")
 PERSON_CELL = 0.2         # metres: grid for grouping person points into people
 PERSON_MIN_PIXELS = 25
 PERSON_MATCH = 0.8        # metres a person may move between frames and keep their id
+PERSON_SHARE = 0.2        # a cluster smaller than this share of the frame's largest is a speck, not a person
 PERSON_SHOW = 2           # frames a person must be seen before they are reported
 PERSON_KEEP = 1.0         # seconds a person stays after they were last seen
 LYING_TOP = 1.2          # metres: a person whose highest point is below this, and
@@ -178,24 +179,26 @@ def _rot2(th):
 
 
 def _room_walls(frame: PlanFrame, room):
-    """Walls as (centre, unit direction, length) on the floor plane in room metres."""
+    """Walls as (centre, unit direction, length, centre height) on the floor plane in room metres."""
     out = []
     for w in (room or {}).get("walls", []):
         T = _mat(w["transform"])
         u = (frame.R @ T[:3, 0])[[0, 2]]
         if np.linalg.norm(u) < 1e-6:
             continue
-        out.append((frame.room_metres(T[:3, 3])[[0, 2]], u / np.linalg.norm(u), float(w["dimensions"][0]) * frame.f))
+        c = frame.room_metres(T[:3, 3])
+        out.append((c[[0, 2]], u / np.linalg.norm(u), float(w["dimensions"][0]) * frame.f, float(c[1])))
     return out
 
 
 def _room_objects(frame: PlanFrame, room):
-    """Objects build makes as (kind, centre) on the floor plane in room metres."""
+    """Objects build makes as (kind, centre on the floor plane, centre height) in room metres."""
     out = []
     for o in (room or {}).get("objects", []):
         cat = rp_category(o)
         if cat is not None:
-            out.append((kind(cat), frame.room_metres(_mat(o["transform"])[:3, 3])[[0, 2]]))
+            c = frame.room_metres(_mat(o["transform"])[:3, 3])
+            out.append((kind(cat), c[[0, 2]], float(c[1])))
     return out
 
 
@@ -204,7 +207,7 @@ def _corners(walls):
     out = []
     for i in range(len(walls)):
         for j in range(i + 1, len(walls)):
-            (ci, ui, _), (cj, uj, _) = walls[i], walls[j]
+            (ci, ui, _, _), (cj, uj, _, _) = walls[i], walls[j]
             if abs(ui @ uj) > 0.3:
                 continue
             a = np.linalg.solve(np.stack([ui, -uj], 1), cj - ci)
@@ -213,10 +216,12 @@ def _corners(walls):
 
 
 class Alignment:
-    """live room metres (floor plane) -> scan room metres: p -> rot(turn) p + shift."""
+    """live room metres -> scan room metres: floor point p -> rot(turn) p + shift, height y -> y + lift. The live
+    coordinates have also come out 0.65 m high: a person lying on the bed read 1.5 m up, not lying at all."""
 
-    def __init__(self, turn=0.0, shift=(0.0, 0.0), walls=0, objects=0):
+    def __init__(self, turn=0.0, shift=(0.0, 0.0), walls=0, objects=0, lift=0.0):
         self.turn, self.shift, self.walls, self.objects = float(turn), np.asarray(shift, float), walls, objects
+        self.lift = float(lift)
 
     @property
     def support(self):
@@ -224,7 +229,7 @@ class Alignment:
 
     def differs(self, other):
         return (other is None or np.linalg.norm(self.shift - other.shift) > ALIGN_LOG_M
-                or abs(np.degrees(self.turn - other.turn)) > ALIGN_LOG_DEG)
+                or abs(self.lift - other.lift) > ALIGN_LOG_M or abs(np.degrees(self.turn - other.turn)) > ALIGN_LOG_DEG)
 
     def world(self, frame: PlanFrame):
         """The same move as a 4x4 on ARKit world coordinates (RoomPlan transforms are multiplied by it)."""
@@ -233,12 +238,13 @@ class Alignment:
         rot[0, 0], rot[0, 2], rot[2, 0], rot[2, 2] = r2[0, 0], r2[0, 1], r2[1, 0], r2[1, 1]
         M = np.eye(4)
         M[:3, :3] = frame.R.T @ rot @ frame.R
-        t_room = np.array([self.shift[0], 0.0, self.shift[1]]) / frame.f
+        t_room = np.array([self.shift[0], self.lift, self.shift[1]]) / frame.f
         M[:3, 3] = frame.origin - M[:3, :3] @ frame.origin + frame.R.T @ t_room
         return M
 
     def describe(self):
-        return (f"shift ({self.shift[0]:+.2f}, {self.shift[1]:+.2f}) m, turn {np.degrees(self.turn):+.1f} deg, "
+        return (f"shift ({self.shift[0]:+.2f}, {self.shift[1]:+.2f}) m, up {self.lift:+.2f} m, "
+                f"turn {np.degrees(self.turn):+.1f} deg, "
                 f"agreed by {self.walls} wall(s) and {self.objects} object(s)")
 
 
@@ -247,25 +253,25 @@ def _agreement(turn, shift, live_w, live_o, scan_w, scan_o):
     object pairs (live, scanned) and wall pairs (live centre, scanned centre, scanned normal)."""
     r = _rot2(turn)
     walls, objs = [], []
-    for c, u, length in live_w:
+    for c, u, length, y in live_w:
         c2, u2 = r @ c + shift, r @ u
-        for cs, us, ls in scan_w:
+        for cs, us, ls, ys in scan_w:
             n = np.array([-us[1], us[0]])
             if abs(u2[0] * us[1] - u2[1] * us[0]) <= ALIGN_PARALLEL and abs(n @ (c2 - cs)) <= ALIGN_WALL_M \
                     and abs(us @ (c2 - cs)) <= (length + ls) / 2:
-                walls.append((c, cs, n))
+                walls.append((c, cs, n, ys - y))
                 break
     used = set()
-    for k, c in live_o:
+    for k, c, y in live_o:
         c2 = r @ c + shift
         best = None
-        for j, (ks, cs) in enumerate(scan_o):
+        for j, (ks, cs, _) in enumerate(scan_o):
             if ks == k and j not in used and np.linalg.norm(c2 - cs) <= ALIGN_OBJECT_M:
                 if best is None or np.linalg.norm(c2 - cs) < best[0]:
                     best = (np.linalg.norm(c2 - cs), j)
         if best:
             used.add(best[1])
-            objs.append((c, scan_o[best[1]][1]))
+            objs.append((c, scan_o[best[1]][1], scan_o[best[1]][2] - y))
     return walls, objs
 
 
@@ -273,8 +279,8 @@ def estimate_alignment(live_w, live_o, scan_w, scan_o):
     """The turn and shift that put the most live walls and objects onto scanned ones (at least ALIGN_MIN), its shift
     refined by least squares over those that agree; ties go to the smallest move. None when nothing reaches it."""
     turns = [0.0]
-    for _, u, _ in live_w:
-        for _, us, _ in scan_w:
+    for _, u, _, _ in live_w:
+        for _, us, _, _ in scan_w:
             d = np.arctan2(us[1], us[0]) - np.arctan2(u[1], u[0])
             for t in (d, d + np.pi):     # a wall's direction is only known up to a half turn
                 t = (t + np.pi) % (2 * np.pi) - np.pi
@@ -285,7 +291,7 @@ def estimate_alignment(live_w, live_o, scan_w, scan_o):
     for turn in turns:
         r = _rot2(turn)
         shifts = [np.zeros(2)]
-        shifts += [cs - r @ c for k, c in live_o for ks, cs in scan_o if ks == k]
+        shifts += [cs - r @ c for k, c, _ in live_o for ks, cs, _ in scan_o if ks == k]
         shifts += [cs - r @ c for c, _, _ in live_c for cs, _, _ in scan_c]
         for shift in shifts:
             walls, objs = _agreement(turn, shift, live_w, live_o, scan_w, scan_o)
@@ -293,18 +299,20 @@ def estimate_alignment(live_w, live_o, scan_w, scan_o):
                 continue
             # Least squares: objects pin both coordinates, walls only across themselves.
             A, b = np.zeros((2, 2)), np.zeros(2)
-            for c, cs in objs:
+            for c, cs, _ in objs:
                 A += np.eye(2); b += cs - r @ c
-            for c, cs, n in walls:
+            for c, cs, n, _ in walls:
                 A += np.outer(n, n); b += n * (n @ (cs - r @ c))
             if np.linalg.matrix_rank(A) == 2:
                 refined = np.linalg.solve(A, b)
                 w2, o2 = _agreement(turn, refined, live_w, live_o, scan_w, scan_o)
                 if len(w2) + len(o2) >= len(walls) + len(objs):
                     shift, walls, objs = refined, w2, o2
+            # Height: walls (full height, unlike a box RoomPlan has only partly seen) when any agree, else objects.
+            lifts = [w[3] for w in walls] or [o[2] for o in objs]
             key = (-(len(walls) + len(objs)), float(np.linalg.norm(shift)) + abs(turn))
             if best is None or key < best[0]:
-                best = (key, Alignment(turn, shift, len(walls), len(objs)))
+                best = (key, Alignment(turn, shift, len(walls), len(objs), float(np.median(lifts))))
     return best[1] if best else None
 
 
@@ -579,15 +587,22 @@ class People:
             loc = self.fr.room_metres(fr["P"][m])
             if align is not None:     # into the scan's coordinates, as the furniture (the frame's pose is live)
                 loc[:, [0, 2]] = loc[:, [0, 2]] @ _rot2(align.turn).T + align.shift
+                loc[:, 1] += align.lift
             gi = np.floor(loc[:, [0, 2]] / PERSON_CELL).astype(int)
             gi -= gi.min(0)
             grid = np.zeros(gi.max(0) + 1, np.int32)
             np.add.at(grid, (gi[:, 0], gi[:, 1]), 1)
             comp, nc = ndimage.label(grid > 0, np.ones((3, 3)))
             pid = comp[gi[:, 0], gi[:, 1]]
+            largest = max(int((pid == c).sum()) for c in range(1, nc + 1)) if nc else 0
             for c in range(1, nc + 1):
                 sel = pid == c
                 if sel.sum() < PERSON_MIN_PIXELS:
+                    continue
+                if sel.sum() < PERSON_SHARE * largest:
+                    # Stray mask pixels at the edge of someone's outline (25-90 px beside a 600-2000 px person, high
+                    # up on what is behind them) made a second villager appear for a second.
+                    self._note(f"speck beside a person dropped: {int(sel.sum())} px of the largest {largest} px")
                     continue
                 y = loc[sel, 1]
                 top, span = np.percentile(y, 95), np.percentile(y, 95) - np.percentile(y, 5)
