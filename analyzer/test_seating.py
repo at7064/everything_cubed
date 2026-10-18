@@ -70,3 +70,22 @@ for width, beds in ((1.12, 1), (1.6, 2), (1.95, 2)):
     b = place_object("bed", bed_cl, big, np.full((big.W, big.D), -1), [], lambda x, z: ("west", 1.0))
     assert sorted((b["w"], b["d"])) == sorted((beds, 2)), (width, b)
 print("beds: single 1 wide, queen and king 2 wide: OK")
+
+# A lone chair in front of a table's long side (a LiDAR scan: 5 x 9 blocks at 2.5 blocks/m). RoomPlan's chair box is
+# 0.6 m (1.5 blocks) square, centred at block (3.13, 2.36): just in front of the table (x 2-4, z 0-1). The footprint
+# was centred for 2 x 2 before chairs became 1 x 1, which aimed at (2, 1), on the table, and the search then took
+# the first free cell, north-west, beside the fridge at the table's end. It must stand at (3, 2).
+dorm = Room(0, 2.0, 0, 3.6, 2.3, 2.5)
+taken = np.full((dorm.W, dorm.D), -1)
+taken[2:5, 0:2] = 1   # table
+taken[1, 0] = 1       # fridge
+chair_cl = {**cl([3.13 / 2.5, 0.4, 2.36 / 2.5], [0.6, 0.8, 0.6]), "rgb": np.array([110.0, 80, 50]), "n": 1000}
+tables_cl = [cl([3.5 / 2.5, 0.4, 1.0 / 2.5], [1.2, 0.8, 0.8])]
+ch = place_object("chair", chair_cl, dorm, taken, tables_cl, lambda x, z: ("north", z))
+assert (ch["x"], ch["z"], ch["w"], ch["d"]) == (3, 2, 1, 1), ch
+# Target taken: the free cell nearest the real centre wins, not the first one in the ring.
+taken2 = np.full((dorm.W, dorm.D), -1)
+taken2[2:5, 0:2] = 1; taken2[1, 0] = 1; taken2[3, 2] = 1   # something already stands in the chair's spot
+ch2 = place_object("chair", chair_cl, dorm, taken2, tables_cl, lambda x, z: ("north", z))
+assert (ch2["x"], ch2["z"]) in ((3, 3), (2, 2)), ch2
+print(f"lone chair in front of the table: (3, 2); spot taken: ({ch2['x']}, {ch2['z']}): OK")

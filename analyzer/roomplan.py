@@ -1083,11 +1083,9 @@ def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
     lo, hi, c = cl["lo"], cl["hi"], cl["c"]
     x0, x1 = int(room.bx(lo[0])), int(room.bx(hi[0]))
     z0, z1 = int(room.bz(lo[2])), int(room.bz(hi[2]))
-    # Footprint from the real size (rounded), centred on the object's real position.
+    # Footprint from the real size (rounded); it is centred on the object's real position below.
     w = int(np.clip(round((hi[0] - lo[0]) * s), 1, x1 - x0 + 1))
     d = int(np.clip(round((hi[2] - lo[2]) * s), 1, z1 - z0 + 1))
-    x0 = int(round((c[0] - room.xmin) / (room.xmax - room.xmin) * W - w / 2))
-    z0 = int(round((c[2] - room.zmin) / (room.zmax - room.zmin) * D - d / 2))
     h = max(1, int(round(hi[1] * s)))
     cap = 2 if cat.startswith(GENERIC) else MAX_HEIGHT.get(cat)  # a noisy cluster must not become a pillar
     h = min(h, cap if cap else H - 1, H - 1)
@@ -1164,6 +1162,12 @@ def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
     elif cat.startswith(GENERIC):
         obj.update(type="generic", name=cat[len(GENERIC):], color=Palette(CONCRETE).nearest(cl["rgb"]))  # built as <color>_concrete
     w, d = max(1, min(w, W)), max(1, min(d, D))
+    # The real centre in blocks. A footprint set above (a chair is always 1 x 1) is centred on it again: one
+    # centred for the real 2 x 2 size sat half a block off, on the table beside the chair.
+    cx = (c[0] - room.xmin) / (room.xmax - room.xmin) * W
+    cz = (c[2] - room.zmin) / (room.zmax - room.zmin) * D
+    if cat != "bed":   # a bed is placed against its wall above
+        x0, z0 = int(round(cx - w / 2)), int(round(cz - d / 2))
 
     # Snap wall-hugging furniture onto the wall it is near (reconstruction noise leaves gaps). Bookcases are
     # usually built against a wall, often in front of piers or a recess that puts the fitted wall further back.
@@ -1173,10 +1177,16 @@ def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
         elif side == "east": x0 = W - w
         elif side == "north": z0 = 0
         else: z0 = D - d
+        if side in ("west", "east"):
+            cx = x0 + w / 2   # the search below keeps it on its wall
+        else:
+            cz = z0 + d / 2
     x0, z0 = int(np.clip(x0, 0, W - w)), int(np.clip(z0, 0, D - d))
 
-    # Find the closest free spot (spiral search up to 3 cells away).
+    # Find the closest free spot: rings up to 3 cells around the target, and in each ring the free spot whose
+    # centre is nearest the real one (not the first one found, which always leaned north-west).
     for r in range(0, 4):
+        free = []
         for dx in range(-r, r + 1):
             for dz in range(-r, r + 1):
                 if max(abs(dx), abs(dz)) != r:
@@ -1185,9 +1195,12 @@ def place_object(cat, cl, room: Room, occupancy, tables, nearest_side):
                 if ax < 0 or az < 0 or ax + w > W or az + d > D:
                     continue
                 if (occupancy[ax:ax + w, az:az + d] == -1).all():
-                    occupancy[ax:ax + w, az:az + d] = 1
-                    obj.update(x=int(ax), z=int(az), w=int(w), d=int(d), h=int(h))
-                    return obj
+                    free.append((np.hypot(ax + w / 2 - cx, az + d / 2 - cz), ax, az))
+        if free:
+            _, ax, az = min(free)
+            occupancy[ax:ax + w, az:az + d] = 1
+            obj.update(x=int(ax), z=int(az), w=int(w), d=int(d), h=int(h))
+            return obj
     return None
 
 
