@@ -543,6 +543,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--images", required=True, type=Path, help="scan folder with capture.json (from the iOS app)")
     ap.add_argument("--out", type=Path, help="output plan (default: <images>/plan.json)")
+    ap.add_argument("--mesh-out", type=Path, help="write measured coloured surface mesh as PLY")
     ap.add_argument("--mc-jar", help="Minecraft client jar, used to read real block texture colours")
     ap.add_argument("--scale", type=float, help="blocks per metre (default: automatic)")
     ap.add_argument("--known-height", type=float, help="the room's real floor-to-ceiling height in metres")
@@ -578,6 +579,10 @@ def main(argv=None):
     tables = find_tables(frames, floor_y, log)
     labels = [label_frame(fr, ex, ez, floor_y, ceil_y, walls, room, tables) for fr in frames]
     geo_views, geo_labels, views, label_maps = to_views(frames, labels)
+    if opts.mesh_out:
+        from mesh_export import write_ply
+        vertices, faces = write_ply(geo_views, opts.mesh_out)
+        log(f"[mesh] wrote {opts.mesh_out}: {vertices} vertices, {faces} triangles")
     del frames
     log(f"[lidar] labelled from geometry in {time.time() - t0:.1f}s")
 

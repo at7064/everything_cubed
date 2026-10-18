@@ -1,7 +1,23 @@
-x# Everything Cubed analyzer
+# Everything Cubed analyzer
 
 Turns a handful of photos of one room into `plan.json`, which the Everything Cubed mod builds.
 The mod runs this automatically; you only need to install the Python environment once.
+
+## Video and LiDAR to 3D
+
+Run the standalone modeller on a video, a photo folder, or an iOS scan folder containing `capture.json`:
+
+```bash
+uv run --no-project --with-requirements analyzer/requirements.txt python analyzer/video_to_3d.py room.mp4 --out room_3d --device cuda
+uv run --no-project --with-requirements analyzer/requirements.txt python analyzer/video_to_3d.py scan_folder --out scan_3d
+```
+
+The output contains `reconstruction.ply`, a coloured triangle mesh of the measured surfaces; `model.obj` and
+`model.mtl`, a simplified block room for Blender or other 3D editors; `plan.json`, the Minecraft build plan; and
+`view.html`, a standalone HTML viewer with orbit, zoom, and a switch between the room model and reconstructed
+surfaces. Open `view.html` directly in a browser. FFmpeg is used only to sample frames when the input is a video.
+Use `--frames 24` for more views, or `--perceptron` to detect additional small objects. A LiDAR `capture.json`
+uses its measured depths and camera poses; ordinary video is reconstructed from the sampled frames.
 
 ## Pipeline (all established open-source projects)
 

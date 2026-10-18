@@ -56,6 +56,7 @@ def main(argv=None):
                          "items: plain walls + things hanging on them; photo: full photos; none: blocks only")
     ap.add_argument("--texture-px", type=int, help="texture pixels per block (default 128 for photo, else 64)")
     ap.add_argument("--save-cloud", action="store_true", help="also write the labelled point cloud (.npz)")
+    ap.add_argument("--mesh-out", type=Path, help="write reconstructed coloured surface mesh as PLY")
     ap.add_argument("--perceptron", action="store_true",
                     help="also detect every object with Perceptron Mk1.5 (sends the photos to api.perceptron.inc; people "
                          "found locally (SegFormer + a COCO person detector) are blurred first, best effort; key in "
@@ -89,6 +90,10 @@ def main(argv=None):
         views, metric, paths = reconstruct_tracked(opts.images, device, opts.mapanything_model, log)
     else:
         views, metric = reconstruct(paths, opts.backend, device, opts, log)
+    if opts.mesh_out:
+        from mesh_export import write_ply
+        vertices, faces = write_ply(views, opts.mesh_out)
+        log(f"[mesh] wrote {opts.mesh_out}: {vertices} vertices, {faces} triangles")
     label_maps, id2label = segment(views, device, opts.seg_model, log)
     ade_to_category, detections = ADE_TO_CATEGORY, None
     if opts.perceptron:
