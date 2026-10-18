@@ -393,6 +393,102 @@ final class FurnitureDesigns {
 		m.box(0.18, 1.29, 0.48, 0.82, 1.73, 0.49, first("cyan_concrete"));
 	}
 
+	static void tabletop(FurnitureModel m, String type, BlockState color) {
+		switch (type) {
+			case "laptop" -> {
+				m.box(0.15, 1.01, 0.25, 0.85, 1.06, 0.72, DARK_STEEL);
+				m.box(0.17, 1.05, 0.25, 0.83, 1.1, 0.68, BLACK);
+				m.box(0.16, 1.06, 0.2, 0.84, 1.66, 0.25, BLACK);
+				m.glow(0.2, 1.11, 0.25, 0.8, 1.61, 0.26, first("cyan_concrete"));
+			}
+			case "book_stack" -> {
+				for (int i = 0; i < 4; i++) {
+					m.box(0.16, 1.01 + i * 0.09, 0.2, 0.8, 1.08 + i * 0.09, 0.72,
+							i % 2 == 0 ? color : RED);
+					m.box(0.22, 1.02 + i * 0.09, 0.23, 0.76, 1.07 + i * 0.09, 0.7, LINEN);
+				}
+			}
+			case "mug" -> {
+				m.box(0.32, 1.01, 0.32, 0.64, 1.34, 0.64, color);
+				m.box(0.38, 1.32, 0.38, 0.58, 1.35, 0.58, BLACK);
+				m.box(0.64, 1.12, 0.4, 0.75, 1.26, 0.56, color);
+			}
+			case "small_plant" -> {
+				m.box(0.28, 1.01, 0.28, 0.72, 1.35, 0.72, color);
+				m.box(0.34, 1.34, 0.34, 0.66, 1.42, 0.66, BLACK);
+				m.box(0.37, 1.4, 0.37, 0.63, 1.83, 0.63, first("green_concrete"));
+			}
+			case "printer" -> {
+				m.box(0.09, 1.01, 0.2, 0.91, 1.37, 0.8, STEEL);
+				m.box(0.2, 1.38, 0.3, 0.8, 1.48, 0.7, WHITE);
+				m.box(0.18, 1.14, 0.8, 0.82, 1.2, 0.84, BLACK);
+			}
+			case "desk_lamp" -> {
+				m.box(0.32, 1.01, 0.32, 0.68, 1.07, 0.68, DARK_STEEL);
+				m.box(0.47, 1.06, 0.47, 0.53, 1.5, 0.53, STEEL);
+				m.glow(0.27, 1.48, 0.27, 0.73, 1.73, 0.73, LINEN);
+			}
+		}
+	}
+
+	static void ceilingFixture(FurnitureModel m, String type, double bottom, double top) {
+		double cx = m.w / 2, cz = m.d / 2;
+		switch (type) {
+			case "led_panel" -> {
+				m.box(0.04, top - 0.12, 0.04, m.w - 0.04, top, m.d - 0.04, STEEL);
+				m.glow(0.1, top - 0.13, 0.1, m.w - 0.1, top - 0.11, m.d - 0.1, WHITE);
+			}
+			case "downlight" -> {
+				m.box(cx - 0.26, top - 0.04, cz - 0.26, cx + 0.26, top, cz + 0.26, STEEL);
+				m.glow(cx - 0.19, top - 0.045, cz - 0.19, cx + 0.19, top - 0.025, cz + 0.19, WHITE);
+			}
+			case "smoke_detector" -> {
+				m.box(cx - 0.22, top - 0.1, cz - 0.22, cx + 0.22, top, cz + 0.22, WHITE);
+				m.box(cx - 0.04, top - 0.105, cz + 0.12, cx + 0.04, top - 0.09, cz + 0.18, RED);
+			}
+			case "linear_light" -> {
+				m.box(cx - 0.025, bottom + 0.13, cz - 0.025, cx + 0.025, top, cz + 0.025, STEEL);
+				if (m.w >= m.d) {
+					m.box(0.04, bottom, cz - 0.12, m.w - 0.04, bottom + 0.18, cz + 0.12, DARK_STEEL);
+					m.glow(0.08, bottom - 0.025, cz - 0.09, m.w - 0.08, bottom, cz + 0.09, WHITE);
+				} else {
+					m.box(cx - 0.12, bottom, 0.04, cx + 0.12, bottom + 0.18, m.d - 0.04, DARK_STEEL);
+					m.glow(cx - 0.09, bottom - 0.025, 0.08, cx + 0.09, bottom, m.d - 0.08, WHITE);
+				}
+			}
+			case "pendant_lamp" -> {
+				m.box(cx - 0.025, bottom + 0.35, cz - 0.025, cx + 0.025, top, cz + 0.025, BLACK);
+				m.box(cx - 0.32, bottom + 0.08, cz - 0.32, cx + 0.32, bottom + 0.35, cz + 0.32, LINEN);
+				m.glow(cx - 0.22, bottom, cz - 0.22, cx + 0.22, bottom + 0.1, cz + 0.22, WHITE);
+			}
+		}
+	}
+
+	static void wallDevice(FurnitureModel m, String type, double y) {
+		BlockState housing = switch (type) {
+			case "fire_alarm" -> RED;
+			case "soap_dispenser", "sanitizer_dispenser" -> WHITE;
+			default -> STEEL;
+		};
+		double z = type.endsWith("dispenser") ? 0.22 : 0.11;
+		double width = type.equals("paper_towel_dispenser") ? 0.62 : 0.32;
+		m.box(0.5 - width / 2, y + 0.15, 0.01, 0.5 + width / 2, y + 0.72, z, housing);
+		switch (type) {
+			case "light_switch" -> m.box(0.44, y + 0.35, z, 0.56, y + 0.54, z + 0.03, WHITE);
+			case "outlet" -> {
+				m.box(0.42, y + 0.3, z, 0.45, y + 0.39, z + 0.02, BLACK);
+				m.box(0.55, y + 0.3, z, 0.58, y + 0.39, z + 0.02, BLACK);
+			}
+			case "thermostat" -> m.glow(0.37, y + 0.36, z, 0.63, y + 0.57, z + 0.02, first("cyan_concrete"));
+			case "fire_alarm" -> {
+				m.box(0.35, y + 0.43, z, 0.65, y + 0.57, z + 0.06, WHITE);
+				m.box(0.39, y + 0.2, z, 0.61, y + 0.39, z + 0.07, DARK_STEEL);
+			}
+			case "soap_dispenser", "sanitizer_dispenser" -> m.box(0.4, y + 0.18, z, 0.6, y + 0.36, z + 0.07, BLACK);
+			case "paper_towel_dispenser" -> m.box(0.35, y + 0.12, z, 0.65, y + 0.22, z + 0.08, WHITE);
+		}
+	}
+
 	static void studentDesk(FurnitureModel m, BlockState wood) {
 		chair(m, wood, DARK_STEEL);
 		m.box(0.78, 0.45, 0.15, 0.88, 0.95, 0.22, DARK_STEEL);

@@ -489,6 +489,38 @@ def test_new_templates():
     print("new templates OK", {k: (v.get("side"), v.get("y"), v.get("h")) for k, v in ops.items()}, pj, fan)
 
 
+def test_small_fixtures():
+    for name, want in [("LED panel", "led_panel"), ("recessed light", "downlight"),
+                       ("laptop", "laptop"), ("fire alarm pull station", "fire_alarm"),
+                       ("smoke detector", "smoke_detector"), ("paper towel dispenser", "paper_towel_dispenser")]:
+        assert P.synonym_template(name, TEMPLATES, ADE_TO_CATEGORY) == want, name
+    pts, cols, cats = [], [], []
+
+    def add(n, lo, hi, cat):
+        pts.append(rng.uniform(lo, hi, (n, 3)))
+        cols.append(np.tile((190, 190, 190), (n, 1)))
+        cats.extend([cat] * n)
+
+    add(8000, (0, 0, 0), (4, 0, 4), "floor")
+    add(8000, (0, 3, 0), (4, 3, 4), "ceiling")
+    for lo, hi in [((0, 0, 0), (4, 3, 0)), ((0, 0, 4), (4, 3, 4)),
+                   ((0, 0, 0), (0, 3, 4)), ((4, 0, 0), (4, 3, 4))]:
+        add(3000, lo, hi, "wall")
+    add(4000, (1, 0, 1), (2.6, 0.9, 1.8), "desk")
+    add(400, (1.3, 0.92, 1.2), (1.65, 1.3, 1.5), "laptop")
+    add(80, (0, 1.2, 2), (0.06, 1.5, 2.2), "fire_alarm")
+    add(1000, (1, 2.94, 2.5), (2.1, 3, 3.3), "ceiling_light")
+    add(60, (3, 2.93, 2.5), (3.2, 3, 2.7), "smoke_detector")
+    flip = np.diag([1, -1, -1.0])
+    plan = build_plan(np.concatenate(pts) @ flip.T, np.concatenate(cols), np.array(cats),
+                      Palette(builtin_surface_entries()), scale=1.5, log=lambda m: None)
+    assert any(o["type"] == "fire_alarm" for o in plan["openings"]), plan["openings"]
+    objects = {o["type"]: o for o in plan["objects"]}
+    assert {"desk", "laptop", "led_panel", "smoke_detector"} <= objects.keys(), objects
+    desk, laptop = objects["desk"], objects["laptop"]
+    assert desk["x"] <= laptop["x"] < desk["x"] + desk["w"] and laptop["y"] == 2
+
+
 if __name__ == "__main__":
     real_post = REAL_POST = P._post
 
@@ -506,6 +538,7 @@ if __name__ == "__main__":
         test_known_height_and_chandelier()
         test_vanilla_first(monkeypatch_post)
         test_new_templates()
+        test_small_fixtures()
         test_end_to_end(monkeypatch_post)
         test_plan_generic()
     finally:

@@ -30,8 +30,11 @@ Then `roomplan.py`:
    fire extinguishers low on the wall (heights follow NFPA 101 and NFPA 10), ceiling projectors aimed at the
    whiteboard or screen wall, and floor fans. The planner also builds wall clocks, curtains, bulletin boards,
    projection screens, radiators, range hoods, mirrors and wall hooks; desk monitors, podiums, chair-desks,
-   chair stacks, ceiling fans, dressers, nightstands, pianos, showers and coat racks. Desk monitors are placed
-   on detected tables or desks. Things with no template yet (from
+   chair stacks, ceiling fans, dressers, nightstands, pianos, showers and coat racks. Modern lights include
+   LED panels, downlights, linear suspended lights and pendants. Desks and tables can hold monitors, laptops,
+   books, mugs, small plants, printers and desk lamps. Wall fixtures include switches, outlets, thermostats,
+   red fire alarms, soap and sanitizer dispensers and paper towel dispensers; smoke detectors attach to ceilings.
+   Things with no template yet (from
    `--perceptron`) become a plain box named after what was detected.
 6. Walls (`walltex.py`): every wall is resampled straight from the photos with the reconstructed cameras.
    Each pixel comes from the most head-on photo that shows the wall surface itself, not furniture in front

@@ -327,9 +327,12 @@ KEEP_SEGFORMER = {"wall", "floor", "ceiling"}
 MAY_TAKE = {"painting": {"wall"}, "sconce": {"wall"}, "curtain": {"wall"}, "mirror": {"wall"}, "clock": {"wall"},
             "bulletin_board": {"wall"}, "projection_screen": {"wall"}, "radiator": {"wall"},
             "range_hood": {"wall"}, "wall_hooks": {"wall"},
+            **{c: {"wall"} for c in ("light_switch", "outlet", "thermostat", "fire_alarm",
+                "soap_dispenser", "sanitizer_dispenser", "paper_towel_dispenser")},
             "whiteboard": {"wall"}, "exit_sign": {"wall"}, "fire_extinguisher": {"wall"}, "rug": {"floor"},
             # Hanging things are seen against the ceiling (the depth gate keeps the real ceiling behind them).
-            "projector": {"ceiling"}, "chandelier": {"ceiling"}, "ceiling_fan": {"ceiling"}}
+            "projector": {"ceiling"}, "chandelier": {"ceiling"}, "ceiling_fan": {"ceiling"},
+            **{c: {"ceiling"} for c in ("led_panel", "downlight", "linear_light", "pendant_lamp", "smoke_detector")}}
 # Detector names that only map by these synonyms when the model's mapping is unavailable. ADE_TO_CATEGORY
 # is tried first; IGNORE_NAMES are people and parts of the building, never furniture.
 SYNONYMS = {"office chair": "chair", "dining chair": "chair", "couch": "sofa", "loveseat": "sofa",
@@ -337,9 +340,21 @@ SYNONYMS = {"office chair": "chair", "dining chair": "chair", "couch": "sofa", "
             "nightstand": "nightstand", "bedside table": "nightstand", "dresser": "dresser", "drawer": "dresser",
             "filing cabinet": "cabinet",
             "closet": "wardrobe", "end table": "table", "side table": "table", "dining table": "table",
-            "television": "tv", "tv": "tv", "laptop": "monitor", "computer monitor": "monitor",
-            "desktop monitor": "monitor", "desk lamp": "lamp", "floor lamp": "lamp",
-            "table lamp": "lamp", "pendant light": "ceiling_light", "ceiling light": "ceiling_light",
+            "television": "tv", "tv": "tv", "laptop": "laptop", "computer monitor": "monitor",
+            "desktop monitor": "monitor", "desk lamp": "desk_lamp", "floor lamp": "lamp",
+            "table lamp": "desk_lamp", "pendant light": "pendant_lamp", "ceiling light": "ceiling_light",
+            "led panel": "led_panel", "troffer": "led_panel", "recessed light": "downlight",
+            "downlight": "downlight", "linear light": "linear_light", "suspended light": "linear_light",
+            "pendant lamp": "pendant_lamp", "stack of books": "book_stack", "books on desk": "book_stack",
+            "mug": "mug", "coffee cup": "mug", "cup": "mug", "small potted plant": "small_plant",
+            "desktop printer": "printer", "printer": "printer", "light switch": "light_switch",
+            "power outlet": "outlet", "electrical outlet": "outlet", "socket": "outlet",
+            "thermostat": "thermostat", "fire alarm": "fire_alarm", "fire alarm box": "fire_alarm",
+            "fire alarm bell": "fire_alarm", "fire alarm horn strobe": "fire_alarm",
+            "fire alarm pull station": "fire_alarm",
+            "alarm pull station": "fire_alarm", "smoke detector": "smoke_detector",
+            "soap dispenser": "soap_dispenser", "sanitizer dispenser": "sanitizer_dispenser",
+            "hand sanitizer dispenser": "sanitizer_dispenser", "paper towel dispenser": "paper_towel_dispenser",
             "potted plant": "plant", "houseplant": "plant", "picture": "painting", "picture frame": "painting",
             "artwork": "painting", "bulletin board": "bulletin_board", "cork board": "bulletin_board",
             "corkboard": "bulletin_board", "whiteboard": "whiteboard", "dry erase board": "whiteboard",

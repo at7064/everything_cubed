@@ -305,7 +305,9 @@ public class HouseBuilder {
 						}
 				}
 				case "whiteboard", "exit_sign", "fire_extinguisher", "clock", "curtain", "mirror",
-						"bulletin_board", "projection_screen", "radiator", "range_hood", "wall_hooks" -> {
+						"bulletin_board", "projection_screen", "radiator", "range_hood", "wall_hooks",
+						"light_switch", "outlet", "thermostat", "fire_alarm", "soap_dispenser",
+						"sanitizer_dispenser", "paper_towel_dispenser" -> {
 					// Flat things on the wall: a model in the interior cells along it, its back against the wall.
 					int[] a = insideCell(side, u0), b = insideCell(side, u0 + w - 1);
 					int x0 = Math.min(a[0], b[0]), z0 = Math.min(a[1], b[1]);
@@ -331,6 +333,8 @@ public class HouseBuilder {
 						case "radiator" -> FurnitureDesigns.radiator(m, y0, y0 + Math.max(1, h));
 						case "range_hood" -> FurnitureDesigns.rangeHood(m, y0);
 						case "wall_hooks" -> FurnitureDesigns.wallHooks(m, y0);
+						case "light_switch", "outlet", "thermostat", "fire_alarm", "soap_dispenser",
+								"sanitizer_dispenser", "paper_towel_dispenser" -> FurnitureDesigns.wallDevice(m, type, y0);
 						default -> FurnitureDesigns.fireExtinguisher(m, y0);
 					}
 					furnish(m, List.of());
@@ -581,6 +585,16 @@ public class HouseBuilder {
 					furnish(m, List.of());
 				}
 			}
+			case "laptop", "book_stack", "mug", "small_plant", "printer", "desk_lamp" -> {
+				int y = Math.max(2, Math.min(H, o.has("y") ? o.get("y").getAsInt() : 2));
+				if (inside(x0, z0) && claim(x0, y, z0)) {
+					FurnitureModel m = new FurnitureModel(x0, z0, 1, 1, 1.9, facing);
+					FurnitureDesigns.tabletop(m, type, first(color + "_concrete", "white_concrete"));
+					furnish(m, List.of());
+					if (type.equals("desk_lamp"))
+						set(x0, y, z0, Blocks.LIGHT.defaultBlockState().setValue(LightBlock.LEVEL, 10));
+				}
+			}
 			case "shower" -> {
 				List<BlockPos> core = fill(x0, z0, w, d, 1,
 						with(Blocks.WATER_CAULDRON.defaultBlockState(), BlockStateProperties.LEVEL_CAULDRON, 3));
@@ -649,6 +663,17 @@ public class HouseBuilder {
 					FurnitureModel m = new FurnitureModel(x0, z0, w, d, H - 1, Direction.SOUTH);
 					FurnitureDesigns.ceilingFan(m, y - 1, H);
 					furnish(m, List.of());
+				}
+			}
+			case "led_panel", "downlight", "linear_light", "pendant_lamp", "smoke_detector" -> {
+				int y = Math.max(1, Math.min(H, o.has("y") ? o.get("y").getAsInt() : H));
+				int cx = x0 + w / 2, cz = z0 + d / 2;
+				if (inside(cx, cz) && claim(cx, y, cz)) {
+					FurnitureModel m = new FurnitureModel(x0, z0, w, d, H, Direction.SOUTH);
+					FurnitureDesigns.ceilingFixture(m, type, y - 1, H);
+					furnish(m, List.of());
+					if (!type.equals("smoke_detector"))
+						set(cx, y, cz, Blocks.LIGHT.defaultBlockState().setValue(LightBlock.LEVEL, 14));
 				}
 			}
 			case "ceiling_light" -> {
