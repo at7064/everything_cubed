@@ -6,9 +6,5 @@
 	<array>
 		<string>_everythingcubed._tcp</string>
 	</array>
-	<key>UIRequiredDeviceCapabilities</key>
-	<array>
-		<string>arkit</string>
-	</array>
 </dict>
 </plist>

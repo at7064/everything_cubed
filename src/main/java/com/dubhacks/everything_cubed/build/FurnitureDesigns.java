@@ -41,14 +41,58 @@ final class FurnitureDesigns {
 
 	/** Frame, mattress, headboard, pillows and duvet over one or more beds side by side (head at the back). */
 	static void bed(FurnitureModel m, BlockState frame, BlockState duvet) {
+		bed(m, 0, frame, duvet);
+	}
+
+	/** {@link #bed} with its frame's bottom at {@code y} (a raised bed's base). */
+	private static void bed(FurnitureModel m, double y, BlockState frame, BlockState duvet) {
 		double w = m.w, d = m.d;
-		m.box(0, 0, 0, w, 0.3, d, frame);
-		m.box(0, 0.3, 0, w, BED_TOP, d, LINEN);
-		m.box(0, 0, 0, w, 1.15, 0.12, frame); // headboard
+		m.box(0, y, 0, w, y + 0.3, d, frame);
+		m.box(0, y + 0.3, 0, w, y + BED_TOP, d, LINEN);
+		m.box(0, y, 0, w, y + 1.15, 0.12, frame); // headboard
 		for (int i = 0; i < (int) w; i++)
-			m.box(i + 0.12, BED_TOP, 0.18, i + 0.88, BED_TOP + 0.14, 0.55, LINEN);
-		m.box(-0.03, BED_TOP - 0.2, d * 0.4, w + 0.03, BED_TOP + 0.05, d + 0.03, duvet); // draped over the sides
-		m.box(0.03, BED_TOP + 0.05, d * 0.4, w - 0.03, BED_TOP + 0.08, d * 0.4 + 0.3, LINEN); // folded edge
+			m.box(i + 0.12, y + BED_TOP, 0.18, i + 0.88, y + BED_TOP + 0.14, 0.55, LINEN);
+		m.box(-0.03, y + BED_TOP - 0.2, d * 0.4, w + 0.03, y + BED_TOP + 0.05, d + 0.03, duvet); // draped over the sides
+		m.box(0.03, y + BED_TOP + 0.05, d * 0.4, w - 0.03, y + BED_TOP + 0.08, d * 0.4 + 0.3, LINEN); // folded edge
+	}
+
+	/** Height of a raised bed's head posts above its top bed's base. */
+	static final double RAISED_POST = 1.15;
+
+	/**
+	 * A bunk bed (beds at every level in {@code levels}, model y of each base) or a loft bed (one raised level, open
+	 * underneath), for one or more beds side by side: a post at every corner, guard rails along the top bed's sides
+	 * and a low footboard, a reading lamp, a caddy and fairy lights. The ladder past each foot is real ladder blocks
+	 * (see HouseBuilder); the model only draws its rungs below {@code rungsTo} (model y), where a ladder block would
+	 * lean on the lower bed.
+	 */
+	static void raisedBed(FurnitureModel m, double[] levels, BlockState frame, BlockState duvet, double rungsTo) {
+		double w = m.w, d = m.d, p = 0.12, top = levels[levels.length - 1];
+		for (double y : levels) bed(m, y, frame, duvet);
+		for (int i = 0; i <= (int) w; i++) {
+			double x = Math.min(Math.max(i - p / 2, 0), w - p);
+			m.box(x, 0, 0, x + p, top + RAISED_POST, p, frame);   // head posts, as high as the headboard
+			m.box(x, 0, d - p, x + p, top + 0.9, d, frame);        // foot posts
+		}
+		// Guard rails on both long sides of the top bed, and a low footboard to step over from the ladder.
+		m.box(-0.02, top + 0.75, 0, 0.06, top + 0.85, d, frame);
+		m.box(w - 0.06, top + 0.75, 0, w + 0.02, top + 0.85, d, frame);
+		m.box(0, top, d - 0.08, w, top + 0.35, d, frame);
+		// Dorm touches on the top bed: a clip-on reading lamp on a head post, a caddy hanging on one rail with a book
+		// in it, and fairy lights along the other rail.
+		m.box(w - 0.14, top + 1.0, 0.04, w - 0.06, top + 1.06, 0.3, DARK_STEEL);   // clamp arm
+		m.glow(w - 0.22, top + 0.86, 0.24, w - 0.02, top + 1.02, 0.42, LINEN);     // shade
+		m.box(w + 0.02, top + 0.35, 0.55, w + 0.12, top + 0.85, Math.min(d - 0.2, 1.05), DARK_STEEL);
+		m.box(w + 0.04, top + 0.6, 0.62, w + 0.1, top + 0.95, 0.72, RED);
+		for (int k = 0; 0.15 + k * 0.22 < d - 0.1; k++) {
+			double z = 0.15 + k * 0.22;
+			m.glow(-0.06, top + 0.83, z, -0.01, top + 0.88, z + 0.05, k % 2 == 0 ? AMBER : LINEN);
+		}
+		for (int i = 0; i < (int) w && rungsTo > 0; i++) {
+			m.box(i + 0.2, 0, d, i + 0.26, rungsTo, d + 0.06, frame);
+			m.box(i + 0.74, 0, d, i + 0.8, rungsTo, d + 0.06, frame);
+			for (double y = 0.25; y < rungsTo; y += 0.3) m.box(i + 0.26, y, d + 0.01, i + 0.74, y + 0.05, d + 0.05, frame);
+		}
 	}
 
 	/** Upholstered sofa around a row of stairs: base, backrest, arm rests and one cushion per seat. */
@@ -377,6 +421,34 @@ final class FurnitureDesigns {
 		m.box(0.1, y + 0.1, 0.1, m.w - 0.1, y + 0.13, 0.48, BLACK);
 	}
 
+	/**
+	 * One wall shelf in block row {@code y}: a board on two iron brackets with a row of books (mixed colours and
+	 * heights) held by a bookend, and a small plant at the left end of a longer shelf.
+	 * Parts start 0.07 out from the wall so a wall map tile behind the shelf (an item frame) shows cleanly.
+	 */
+	static void wallShelf(FurnitureModel m, double y, BlockState board) {
+		double w = m.w, b = y + 0.2;  // board top
+		m.box(0, b - 0.07, 0.07, w, b, 0.4, board);
+		for (double x : new double[]{0.15, w - 0.2}) {
+			m.box(x, b - 0.3, 0.07, x + 0.05, b - 0.07, 0.11, IRON);
+			m.box(x, b - 0.11, 0.11, x + 0.05, b - 0.07, 0.34, IRON);
+		}
+		BlockState[] covers = {RED, first("blue_concrete"), first("green_concrete"), first("brown_concrete"), BLACK,
+				first("yellow_concrete"), first("cyan_concrete"), WHITE};
+		double x = w >= 2 ? 0.45 : 0.08;
+		if (w >= 2) {
+			m.box(0.1, b, 0.14, 0.34, b + 0.22, 0.36, first("terracotta"));
+			m.box(0.14, b + 0.22, 0.18, 0.3, b + 0.42, 0.32, first("green_concrete"));
+		}
+		for (int i = 0; x < w * 0.82; i++) {
+			int k = (i * 7 + (int) (w * 3)) % 11;          // a fixed, varied pattern of widths and heights
+			double t = 0.07 + 0.01 * (k % 4), hgt = 0.38 + 0.03 * k;
+			m.box(x, b, 0.1, x + t, b + hgt, 0.36, covers[(i * 3 + k) % covers.length]);
+			x += t + 0.005;
+		}
+		m.box(x + 0.01, b, 0.12, x + 0.04, b + 0.4, 0.34, DARK_STEEL);   // bookend
+	}
+
 	static void wallHooks(FurnitureModel m, double y) {
 		m.box(0.06, y + 0.55, 0, m.w - 0.06, y + 0.67, 0.09, planks("oak"));
 		for (int i = 0; i < (int) m.w * 3; i++) {
@@ -510,10 +582,24 @@ final class FurnitureDesigns {
 		m.box(0, 0.77, 0, 1, 0.86, 1, wood);
 	}
 
+	/**
+	 * Dresser around barrels (its drawers are real storage): a dark plinth, three drawers per block with pulls, an
+	 * overhanging top, and on top a mirror propped at the back and a stack of folded clothes on a wider one.
+	 */
 	static void dresser(FurnitureModel m, BlockState wood) {
-		m.box(0, 0, 0, m.w, m.h, m.d, wood);
-		for (int i = 0; i < (int) m.w; i++) drawers(m, i + 0.08, i + 0.92, 0.08, m.h - 0.08, 3, planks("spruce"));
-		m.box(0, m.h - 0.05, 0, m.w, m.h + 0.04, m.d + 0.04, wood);
+		double w = m.w, d = m.d, h = m.h, t = h + 0.05;
+		m.box(0, 0, 0, w, h, d, wood);
+		m.box(0, 0, d, w, 0.1, d + 0.03, planks("dark_oak"));
+		for (int i = 0; i < (int) w; i++) drawers(m, i + 0.08, i + 0.92, 0.15, h - 0.08, 3, planks("spruce"));
+		m.box(-0.03, h - 0.03, -0.01, w + 0.03, t, d + 0.06, wood);
+		double mx = w >= 2 ? 0.2 : 0.15, mw = Math.min(0.7, w - 0.3);
+		m.box(mx, t, 0.06, mx + mw, t + 0.75, 0.11, planks("spruce"));
+		m.box(mx + 0.05, t + 0.05, 0.11, mx + mw - 0.05, t + 0.7, 0.12, first("light_blue_stained_glass"));
+		if (w >= 2) {
+			BlockState[] cloth = {first("gray_wool"), first("light_blue_wool"), LINEN};
+			for (int k = 0; k < cloth.length; k++)
+				m.box(w - 0.7, t + k * 0.07, 0.3, w - 0.2, t + (k + 1) * 0.07, 0.75, cloth[k]);
+		}
 	}
 
 	static void piano(FurnitureModel m) {

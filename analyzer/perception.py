@@ -197,21 +197,42 @@ def capture_has_depth(folder: Path) -> bool:
     return any("depth" in f for f in cap.get("frames", []))
 
 
-def prepare_tracked(folder: Path, max_views=60):
+TRACKED_MAX_VIEWS = 24   # MapAnything holds every photo at once: 60 used up 24 GB (and the swap) next to Minecraft
+
+
+def sharpness(path, size=320):
+    """Variance of the Laplacian of a downscaled grey image: low for a photo smeared by motion blur."""
+    from PIL import Image
+    from scipy import ndimage
+    with Image.open(path) as im:
+        im = im.convert("L")
+        im.thumbnail((size, size))
+        return float(ndimage.laplace(np.asarray(im, np.float32)).var())
+
+
+def prepare_tracked(folder: Path, max_views=TRACKED_MAX_VIEWS, out_dir=None):
     """Photos from the iOS app taken under ARKit world tracking (any iPhone, no LiDAR needed): each turned upright
-    into <folder>/.upright/, with its K and camera pose (OpenCV axes, metres) to match.
-    Returns [(path, K, cam2world, (w, h))]."""
+    into `out_dir` (default <folder>/.upright/), with its K and camera pose (OpenCV axes, metres) to match.
+    Returns [(path, K, cam2world, (w, h), frame record)]."""
     import json
     from PIL import Image
     cap = json.loads((folder / "capture.json").read_text())
     frames = [f for f in cap["frames"] if f.get("image") and f.get("tracking", "normal") == "normal"]
     if not frames:
         raise SystemExit("the scan has no photos taken with normal tracking")
-    if len(frames) > max_views:  # evenly thinned; shutter photos are always kept
-        keep = set(np.linspace(0, len(frames) - 1, max_views).round().astype(int))
-        frames = [f for i, f in enumerate(frames) if i in keep or f.get("kind") == "photo"]
-    out_dir = folder / ".upright"
-    out_dir.mkdir(exist_ok=True)
+    if len(frames) > max_views:
+        # A hard cap (memory): shutter photos first; the rest of the places go to keyframes spread over the walk,
+        # the sharpest of each stretch (frames kept while walking are often smeared by motion blur).
+        photos = [i for i, f in enumerate(frames) if f.get("kind") == "photo"][:max_views]
+        rest = [i for i in range(len(frames)) if i not in set(photos)]
+        n = max_views - len(photos)
+        picked = []
+        if n > 0 and rest:
+            for stretch in np.array_split(np.array(rest), min(n, len(rest))):
+                picked.append(int(max(stretch, key=lambda i: sharpness(folder / frames[i]["image"]))))
+        frames = [frames[i] for i in sorted(set(photos) | set(picked))]
+    out_dir = Path(out_dir) if out_dir else folder / ".upright"
+    out_dir.mkdir(parents=True, exist_ok=True)
     out = []
     for f in frames:
         img = Image.open(folder / f["image"]).convert("RGB")
@@ -226,22 +247,22 @@ def prepare_tracked(folder: Path, max_views=60):
             img = img.rotate(90 * (turns % 4), expand=True)   # PIL turns counterclockwise, like np.rot90
         p = out_dir / Path(f["image"]).name
         img.save(p, quality=95)
-        out.append((p, K, c2w, img.size))
+        out.append((p, K, c2w, img.size, f))
     return out
 
 
-def reconstruct_tracked(folder: Path, device, model_name, log):
+def reconstruct_tracked(folder: Path, device, model_name, log, max_views=TRACKED_MAX_VIEWS, work_dir=None):
     """MapAnything given each photo's real camera pose and intrinsics from ARKit, marked metric: it no longer
     guesses the scale or where the photos were taken, only the depth. Returns (views, metric, upright paths)."""
     import torch
     from mapanything.models import MapAnything
     from mapanything.utils.image import load_images
 
-    shots = prepare_tracked(folder)
+    shots = prepare_tracked(folder, max_views, work_dir)
     log(f"[recon] {len(shots)} photo(s) with ARKit camera positions -> MapAnything ({model_name}), device={device}")
     model = MapAnything.from_pretrained(model_name).to(device)
     views = load_images([str(p) for p, *_ in shots])
-    for v, (_, K, c2w, size) in zip(views, shots):
+    for v, (_, K, c2w, size, _f) in zip(views, shots):
         Hv, Wv = v["img"].shape[-2:]
         v["intrinsics"] = torch.from_numpy(crop_intrinsics(K, size, (Wv, Hv))).float()[None]
         v["camera_poses"] = torch.from_numpy(c2w).float()[None]
@@ -250,7 +271,88 @@ def reconstruct_tracked(folder: Path, device, model_name, log):
         preds = model.infer(views, memory_efficient_inference=True, use_amp=device == "cuda",
                             amp_dtype="bf16", apply_mask=True, mask_edges=True,
                             apply_confidence_mask=False, confidence_percentile=10)
-    return _mapanything_views(preds), True, [p for p, *_ in shots]
+    out = _mapanything_views(preds)
+    # MapAnything answers in its first camera's frame. It honours ARKit's poses (within ~1 cm on a real scan), so one
+    # rigid map takes everything back to ARKit's world, where the feature points and the planes are.
+    to_arkit = rigid_fit(np.stack([v["cam2world"] for v in out]), np.stack([s[2] for s in shots]))
+    scales = []
+    for v, (_, _K, c2w, _size, frame) in zip(out, shots):
+        v["points"] = v["points"] @ to_arkit[:3, :3].T + to_arkit[:3, 3]
+        v["cam2world"] = c2w
+        pts = load_feature_points(folder, frame)
+        if pts is not None:
+            s = depth_scale_from_points(v, pts)
+            if s is not None:
+                C = c2w[:3, 3]
+                v["points"] = C + s * (v["points"] - C)   # this photo's depth, rescaled to agree with ARKit's points
+                scales.append(s)
+    if scales:
+        log(f"[recon] depth of {len(scales)}/{len(out)} photo(s) corrected with ARKit's feature points "
+            f"(median change {np.median(np.abs(np.array(scales) - 1)) * 100:.0f}%)")
+    return out, True, [p for p, *_ in shots]
+
+
+def rigid_fit(src_c2w, dst_c2w):
+    """4x4 rigid transform taking poses src -> dst (no scale): from the camera centres when they are spread out,
+    else from the first camera alone."""
+    a, b = src_c2w[:, :3, 3], dst_c2w[:, :3, 3]
+    T = np.eye(4)
+    if len(a) >= 3 and np.linalg.norm(a - a.mean(0), axis=1).mean() > 0.2:
+        Ma, Mb = a - a.mean(0), b - b.mean(0)
+        U, _, Vt = np.linalg.svd(Ma.T @ Mb)
+        d = np.sign(np.linalg.det(Vt.T @ U.T))
+        Rm = Vt.T @ np.diag([1, 1, d]) @ U.T
+        T[:3, :3], T[:3, 3] = Rm, b.mean(0) - Rm @ a.mean(0)
+        return T
+    return dst_c2w[0] @ np.linalg.inv(src_c2w[0])
+
+
+def load_planes(folder: Path):
+    """The flat surfaces ARKit found during a photo scan (planes.json), as build_plan's `planes`: world normal
+    (the plane's local +Y), centre point, area and label, in ARKit's world frame. [] when there are none."""
+    import json
+    f = folder / "planes.json"
+    if not f.is_file():
+        return []
+    out = []
+    for p in json.loads(f.read_text()).get("planes", []):
+        T = np.array(p["transform"], dtype=np.float64).reshape(4, 4)
+        centre = T @ np.r_[np.array(p.get("center", [0, 0, 0]), float), 1.0]
+        w, h = p.get("extent", [0, 0])
+        out.append({"normal": T[:3, 1], "point": centre[:3], "area": float(w) * float(h),
+                    "label": p.get("classification", "none")})
+    return out
+
+
+def load_feature_points(folder: Path, frame):
+    """ARKit's tracked feature points of one frame (world, metres, ARKit axes), or None."""
+    ref = frame.get("points")
+    if not ref or not (folder / ref["file"]).is_file():
+        return None
+    pts = np.fromfile(folder / ref["file"], dtype="<f4")
+    return pts.reshape(-1, 3).astype(np.float64) if len(pts) >= 3 else None
+
+
+def depth_scale_from_points(view, pts_world, min_points=15):
+    """How much this view's depth must be scaled to agree with ARKit's measured feature points: the median ratio
+    of their true depth to the predicted depth at the pixels they project to (None: too few points)."""
+    c2w, K = view["cam2world"], view["K"]
+    w2c = np.linalg.inv(c2w)
+    pc = pts_world @ w2c[:3, :3].T + w2c[:3, 3]
+    pc = pc[pc[:, 2] > 0.1]
+    if not len(pc):
+        return None
+    h, w = view["points"].shape[:2]
+    u = np.round(K[0, 0] * pc[:, 0] / pc[:, 2] + K[0, 2]).astype(int)
+    v = np.round(K[1, 1] * pc[:, 1] / pc[:, 2] + K[1, 2]).astype(int)
+    inside = (u >= 0) & (u < w) & (v >= 0) & (v < h)
+    u, v, z_true = u[inside], v[inside], pc[inside, 2]
+    P = view["points"][v, u]
+    z_pred = (P - c2w[:3, 3]) @ c2w[:3, 2]          # depth along this camera's viewing axis
+    ok = view["mask"][v, u] & np.isfinite(z_pred) & (z_pred > 0.05)
+    if ok.sum() < min_points:
+        return None
+    return float(np.clip(np.median(z_true[ok] / z_pred[ok]), 0.5, 2.0))
 
 
 def reconstruct_vggt(paths, device, model_name, depth_model, log):

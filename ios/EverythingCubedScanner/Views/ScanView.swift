@@ -86,7 +86,11 @@ struct ScanView: View {
         case .finishing:
             ProgressView("Sending the scan…").padding().background(.ultraThinMaterial, in: Capsule())
         default:
-            Button("Scan another room") { model.scanAgain() }.buttonStyle(.borderedProminent)
+            // After a scan: another room on the same connection, or leave the game.
+            HStack(spacing: 16) {
+                Button("Scan another room") { model.scanAgain() }.buttonStyle(.borderedProminent)
+                Button("Disconnect", role: .destructive) { model.disconnect() }.buttonStyle(.bordered)
+            }
         }
     }
 

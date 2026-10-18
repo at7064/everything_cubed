@@ -16,19 +16,22 @@ import java.time.format.DateTimeFormatter;
 import java.util.Map;
 
 /**
- * Mode {@code capture}: saves a LiDAR scan as it streams in, then builds it like
+ * Mode {@code capture}: saves a scan (LiDAR, or photos under ARKit tracking) as it streams in, then builds it like
  * {@code /everything_cubed build <folder>}. The folder (under {@code everything_cubed/photos}) holds
  * <ul>
  *   <li>{@code frame_0001.jpg ...}: the photos, so the folder also works with the photo-only analyzer backends</li>
  *   <li>{@code depth/frame_0001.depth}, {@code .conf}: LiDAR depth (metres) and ARKit confidence per photo</li>
+ *   <li>{@code points/frame_0001.points}: ARKit's tracked 3D feature points per photo (any iPhone)</li>
  *   <li>{@code room.json}: Apple RoomPlan's room model, when the phone sent one</li>
+ *   <li>{@code planes.json}: the flat surfaces ARKit found (walls, floor, ...), for photo scans without RoomPlan</li>
  *   <li>{@code capture.json}: camera intrinsics and poses per photo, read by the analyzer's {@code arkit} backend</li>
  * </ul>
  */
 final class CaptureRecorder implements StreamSession {
 	private static final int MAX_FRAMES = 400;
-	/** Blob name -> file suffix. Frame blobs with other names are ignored. */
-	private static final Map<String, String> FRAME_BLOBS = Map.of("depth", ".depth", "confidence", ".conf");
+	/** Blob name -> file (folder and suffix). Frame blobs with other names are ignored. */
+	private static final Map<String, String> FRAME_BLOBS = Map.of("depth", "depth/%s.depth", "confidence", "depth/%s.conf",
+			"points", "points/%s.points");
 
 	private final PhoneConnection phone;
 	private final Path dir;
@@ -40,7 +43,8 @@ final class CaptureRecorder implements StreamSession {
 		String name = begin.string("name", "scan").replaceAll("[^A-Za-z0-9_-]+", "_");
 		if (name.isBlank()) name = "scan";
 		this.dir = AnalyzerRunner.photosDir().resolve(name + "-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")));
-		Files.createDirectories(dir.resolve("depth"));
+		Files.createDirectories(dir);
+		AnalyzerRunner.pruneOldScans(dir);  // keep only the newest phone scans (config "keepScans")
 		copyFields(begin, capture);
 		capture.addProperty("format", "everything_cubed.arkit");
 		capture.addProperty("version", 1);
@@ -61,6 +65,13 @@ final class CaptureRecorder implements StreamSession {
 					capture.addProperty("room", "room.json");
 				}
 			}
+			case "planes" -> {
+				var planes = msg.blob("planes");
+				if (planes.isPresent()) {
+					Files.write(dir.resolve("planes.json"), planes.get());
+					capture.addProperty("planes", "planes.json");
+				}
+			}
 			default -> EverythingCubed.LOGGER.debug("capture: ignoring '{}'", msg.type());
 		}
 	}
@@ -76,11 +87,12 @@ final class CaptureRecorder implements StreamSession {
 		f.addProperty("image", base + ".jpg");
 		for (JsonElement e : msg.header().getAsJsonArray("blobs")) {
 			JsonObject b = e.getAsJsonObject();
-			String suffix = FRAME_BLOBS.get(b.get("name").getAsString());
-			if (suffix == null) continue;
+			String pattern = FRAME_BLOBS.get(b.get("name").getAsString());
+			if (pattern == null) continue;
 			var data = msg.blob(b.get("name").getAsString());
 			if (data.isEmpty()) continue;
-			String file = "depth/" + base + suffix;
+			String file = String.format(pattern, base);
+			Files.createDirectories(dir.resolve(file).getParent());  // depth only exists on LiDAR devices
 			Files.write(dir.resolve(file), data.get());
 			JsonObject ref = new JsonObject();
 			ref.addProperty("file", file);
@@ -114,8 +126,11 @@ final class CaptureRecorder implements StreamSession {
 	@Override
 	public void onDisconnect() {
 		try {
-			// Keep what arrived; it can still be built by hand.
+			// Keep what arrived; it can still be built by hand. A scan that sent nothing leaves no empty folder.
 			if (!frames.isEmpty()) writeCapture();
+			else try (var files = Files.list(dir)) {
+				if (files.findAny().isEmpty()) Files.delete(dir);
+			}
 		} catch (IOException e) {
 			EverythingCubed.LOGGER.warn("Could not save {}", dir, e);
 		}

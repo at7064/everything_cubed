@@ -1,0 +1,12 @@
+{
+	"required": true,
+	"package": "com.dubhacks.everything_cubed.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"mixins": [
+		"PlayerMixin",
+		"ServerLevelMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

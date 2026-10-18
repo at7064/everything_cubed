@@ -24,8 +24,9 @@ Implementations: `ios/EverythingCubedScanner/Network/WireMessage.swift` and
 |---|---|---|
 | `hello` | `protocol` (1), `code` (pairing code from `/everything_cubed phone`), `device`, `app` | |
 | `begin` | `mode` (`capture`), `name`, `source` (`roomplan`: RoomPlan's LiDAR scan; `tracked`: photos under ARKit world tracking, any iPhone), `app` | |
-| `frame` | `seq`, `kind` (`keyframe` / `photo`), `time`, `tracking`, `imageSize` [w,h], `depthSize` [w,h], `K` (3×3), `cam2world` (4×4) | `image` (jpeg), `depth` (f16), `confidence` (u8) |
+| `frame` | `seq`, `kind` (`keyframe` / `photo`), `time`, `tracking`, `imageSize` [w,h], `depthSize` [w,h], `K` (3×3), `cam2world` (4×4), `pointCount` | `image` (jpeg), `depth` (f16), `confidence` (u8), `points` (f32xyz: ARKit's tracked feature points, world metres) |
 | `room` | | `room` (RoomPlan `CapturedRoom` as JSON) |
+| `planes` | | `planes` (JSON `{"planes": [...]}`: per ARKit plane anchor `transform` 4×4 row-major, `center`, `extent` [w,h], `alignment`, `classification` (wall/floor/ceiling/table/seat/window/door/none), `boundary`), sent at the end of a `tracked` scan |
 | `end` | `build` (default true), `scale` (blocks per metre, optional) | |
 | `ping` | | |
 
@@ -51,6 +52,8 @@ both `depthSize` pixels and aligned with the image. Frames from a phone without 
 photos/<name>-<yyyyMMdd-HHmmss>/
   frame_0001.jpg ...           photos (also usable by the photo-only analyzer backends)
   depth/frame_0001.depth .conf LiDAR depth and confidence
+  points/frame_0001.points     ARKit feature points (float32 x, y, z per point)
+  planes.json                  ARKit planes, if sent
   room.json                    RoomPlan room model, if sent
   capture.json                 begin fields + per-frame fields, with file names instead of blobs
 ```

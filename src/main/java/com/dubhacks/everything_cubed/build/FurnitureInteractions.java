@@ -1,7 +1,9 @@
 package com.dubhacks.everything_cubed.build;
 
+import net.fabricmc.fabric.api.entity.event.v1.EntitySleepEvents;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
+import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -17,9 +19,14 @@ import net.minecraft.world.entity.Interaction;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.AbstractBedBlock;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.LightBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
 
@@ -30,6 +37,7 @@ import java.util.UUID;
  * Makes furniture models usable. Each piece of furniture is a group of entities sharing a group tag:
  * <ul>
  *   <li>right-click a seat (chair, sofa, toilet) to sit on it, sneak to get up;</li>
+ *   <li>right-click a built bed in the daytime to lie down in it (at night it is ordinary sleep), "Leave Bed" to get up;</li>
  *   <li>right-click a lamp to switch it on or off;</li>
  *   <li>right-click a trash can with something in your main hand to throw that stack away;</li>
  *   <li>punch a seat or lamp, or break the real block inside a model, to remove that piece of furniture.</li>
@@ -41,6 +49,8 @@ public final class FurnitureInteractions {
 	static final String LAMP = "everything_cubed_lamp";
 	static final String TRASH = "everything_cubed_trash";
 	static final String GLOW = "everything_cubed_glow";
+	/** On a player lying in a built bed in the daytime (see the mixins PlayerMixin and ServerLevelMixin). */
+	public static final String RESTING = "everything_cubed_resting";
 	private static final String GROUP = "everything_cubed_group:";
 	/** On one display of a model, per real block inside it: breaking that block removes the model. */
 	private static final String CORE = "everything_cubed_core:";
@@ -52,6 +62,8 @@ public final class FurnitureInteractions {
 
 	public static void register() {
 		UseEntityCallback.EVENT.register(FurnitureInteractions::use);
+		UseBlockCallback.EVENT.register(FurnitureInteractions::useBlock);
+		EntitySleepEvents.STOP_SLEEPING.register((entity, bed) -> entity.removeTag(RESTING));
 		AttackEntityCallback.EVENT.register(FurnitureInteractions::attack);
 		PlayerBlockBreakEvents.AFTER.register((level, player, pos, state, blockEntity) -> {
 			if (level instanceof ServerLevel server) removeModelAround(server, pos);
@@ -105,6 +117,31 @@ public final class FurnitureInteractions {
 			return InteractionResult.SUCCESS;
 		}
 		return InteractionResult.PASS;
+	}
+
+	/**
+	 * Lie down in a built bed in the daytime, when vanilla would say "You can only sleep at night". At night (or
+	 * while sneaking, or in someone else's bed) vanilla handles the click. Beds that are not part of a built model
+	 * keep vanilla behaviour.
+	 */
+	private static InteractionResult useBlock(Player player, Level level, InteractionHand hand, BlockHitResult hit) {
+		if (!(level instanceof ServerLevel server) || hand != InteractionHand.MAIN_HAND || player.isShiftKeyDown()
+				|| player.isSleeping() || player.isSpectator()) return InteractionResult.PASS;
+		BlockPos pos = hit.getBlockPos();
+		BlockState state = level.getBlockState(pos);
+		if (!(state.getBlock() instanceof AbstractBedBlock bed) || state.getValue(AbstractBedBlock.OCCUPIED)
+				|| bed.getBedRule(level, pos).canSleep(level) || !isModelCore(server, pos)) return InteractionResult.PASS;
+		BlockPos head = state.getValue(AbstractBedBlock.PART) == BedPart.HEAD ? pos
+				: pos.relative(state.getValue(HorizontalDirectionalBlock.FACING));
+		if (!(level.getBlockState(head).getBlock() instanceof AbstractBedBlock)) return InteractionResult.PASS;
+		player.addTag(RESTING);
+		player.startSleeping(head);
+		return InteractionResult.SUCCESS;
+	}
+
+	private static boolean isModelCore(ServerLevel level, BlockPos pos) {
+		String core = coreTag(pos);
+		return !level.getEntitiesOfClass(Display.class, new AABB(pos).inflate(REACH), e -> e.entityTags().contains(core)).isEmpty();
 	}
 
 	private static InteractionResult attack(Player player, Level level, InteractionHand hand, Entity entity, EntityHitResult hit) {

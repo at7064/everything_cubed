@@ -9,6 +9,13 @@ dependencies {
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 	// Bonjour, so the iOS scanner app finds the game on the LAN. Bundled inside the mod jar.
 	include implementation("org.jmdns:jmdns:${project.jmdns_version}")
+
+	testImplementation "org.junit.jupiter:junit-jupiter:5.11.4"
+	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+test {
+	useJUnitPlatform()
 }
 
 processResources {
