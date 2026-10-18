@@ -117,7 +117,6 @@ final class FurnitureDesigns {
 		}
 	}
 
-	/** Newly Added Furniture */
 	/** Podium: a slanted reading stand for presentations with a base and angled top. */
 	static void podium(FurnitureModel m, BlockState wood) {
 
@@ -142,65 +141,6 @@ final class FurnitureDesigns {
 		m.box(cx - 0.35, 0.92, d * 0.12, cx + 0.35, 1.02, d * 0.18, IRON);
 		m.box(cx - 0.22, 1.04, d * 0.32, cx + 0.22, 1.32, d * 0.36, BLACK);
 		m.box(cx - 0.19, 1.07, d * 0.36, cx + 0.19, 1.29, d * 0.37, first("cyan_concrete"));
-
-	}
-
-/** Newly Added Furniture */
-	/** Laptop on a desk: base, open screen, and keyboard detailing. */
-
-	static void laptop(FurnitureModel m) {
-
-		double w = m.w;
-
-		// Center the laptop nicely on whatever width the desk/surface has
-
-		double cx = w / 2.0;
-
-		// Laptop base (keyboard tray) lying flat on the surface
-
-		m.box(cx - 0.28, 0.82, 0.3, cx + 0.28, 0.85, 0.65, STEEL);
-		
-		// Open screen angled upward at the back edge
-
-		m.box(cx - 0.28, 0.85, 0.3, cx + 0.28, 1.22, 0.34, BLACK);
-	}
-
-/** Newly Added Furniture */
-	/**A whiteboard on a wall */
-
-	static void whiteboard(FurnitureModel m) {
-
-		double w = m.w, h = m.h;
-
-		// having the whiteboard on a wall with z = 0
-		m.box(0, 0, 0, w, h, 0.04, STEEL);
-
-		// White writing surface inside the frame
-
-		m.box(0.04, 0.04, 0.02, w - 0.04, h - 0.04, 0.05, WHITE);
-
-		// Marker tray running along the bottom edge
-
-		m.box(0.1, 0.04, 0.05, w - 0.1, 0.1, 0.18, DARK_STEEL);
-
-	}
-
-/** Newly Added Furniture */
-	/** Modern indoor plant pot with foliage. */
-
-	static void pottedPlant(FurnitureModel m) {
-
-		// Ceramic pot base
-
-		m.box(0.3, 0, 0.3, 0.7, 0.4, 0.7, WHITE);
-
-		// Soil
-
-		m.box(0.32, 0.35, 0.32, 0.68, 0.4, 0.68, BLACK);
-
-		// Plant leaves / greenery
-
-		m.box(0.2, 0.4, 0.2, 0.8, 1.1, 0.8, planks("oak"));
 
 	}
 

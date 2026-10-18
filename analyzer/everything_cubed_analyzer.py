@@ -44,11 +44,13 @@ def main(argv=None):
     ap.add_argument("--vggt-model", default="facebook/VGGT-1B-Commercial")
     ap.add_argument("--depth-model", default="depth-anything/Depth-Anything-V2-Metric-Indoor-Base-hf")
     ap.add_argument("--seg-model", default="nvidia/segformer-b5-finetuned-ade-640-640")
-    ap.add_argument("--wall-detail", default="style", choices=["style", "pattern", "items", "photo", "none"],
-                    help="style (default): one wall style for the whole room on every wall; "
+    ap.add_argument("--wall-detail", default="uniform", choices=["uniform", "style", "pattern", "items", "photo", "none"],
+                    help="uniform (default): every wall block is a map in the wall's measured paint colour, with the "
+                         "things on the wall (posters, clocks, switches, boards) copied from the photos on top; "
+                         "style: one wall style for the whole room on every wall; "
                          "pattern: plain walls are blocks, patterned walls get their own pattern on every block; "
                          "items: plain walls + things hanging on them; photo: full photos; none: blocks only")
-    ap.add_argument("--texture-px", type=int, help="texture pixels per block (default 64 for items, 128 for photo)")
+    ap.add_argument("--texture-px", type=int, help="texture pixels per block (default 128 for photo, else 64)")
     ap.add_argument("--save-cloud", action="store_true", help="also write the labelled point cloud (.npz)")
     ap.add_argument("--perceptron", action="store_true",
                     help="also detect every object with Perceptron Mk1.5 (sends the photos to api.perceptron.inc; people "
@@ -73,11 +75,6 @@ def main(argv=None):
     device = pick_device(opts.device)
     log(f"[analyzer] {len(paths)} photo(s) from {opts.images}")
     views, metric = reconstruct(paths, opts.backend, device, opts, log)
-    # LiDAR measures the room itself: built at its real proportions. Photo reconstructions are enlarged.
-    lidar = bool(views) and bool(views[0].get("lidar"))
-    enlarge = 1.0 if lidar or opts.scale else opts.enlarge
-    if lidar and opts.enlarge != 1.0:
-        log("[analyzer] LiDAR scan: --enlarge does not apply, building at measured size")
     label_maps, id2label = segment(views, device, opts.seg_model, log)
     ade_to_category, detections = ADE_TO_CATEGORY, None
     if opts.perceptron:
@@ -98,8 +95,8 @@ def main(argv=None):
     ctx = {}
     object_instances = detections.pop("_instances", []) if detections else []
     plan = build_plan(pts, rgb, cats, surface_palette(opts.mc_jar, cache), scale=opts.scale, metric=metric, log=log, ctx=ctx,
-                      known_height=opts.known_height, object_instances=object_instances, enlarge=enlarge)
-    plan["source"] = {"photos": [p.name for p in paths], "metric": metric, "lidar": lidar, "enlarge": enlarge}
+                      known_height=opts.known_height, object_instances=object_instances, enlarge=opts.enlarge)
+    plan["source"] = {"photos": [p.name for p in paths], "metric": metric, "enlarge": None if opts.scale else opts.enlarge}
     out = opts.out or opts.images / "plan.json"
     if detections:
         # Every detected name and what it became, so missing templates are easy to spot.
@@ -108,13 +105,15 @@ def main(argv=None):
     if opts.wall_detail != "none":
         try:
             from walltex import render_walls
+            from wallitems import wall_item_masks
             px = opts.texture_px or (128 if opts.wall_detail == "photo" else 64)
             from perception import detection_masks
             # Detected windows and doors are never wall paint or pattern, even where SegFormer says wall
             # (big stained-glass windows); their boxes do not change the room's geometry, only the textures.
             tex = render_walls(views, label_maps, category_lut(id2label, ade_to_category), ctx,
                                out.parent, px=px, detail=opts.wall_detail, log=log,
-                               exclude=detection_masks(detections, views))
+                               exclude=detection_masks(detections, views),
+                               item_masks=wall_item_masks(opts, views, device, log))
             # Wall blocks follow the paint, so bare blocks and framed ones are the same colour.
             plan["walls"] = tex.pop("wall_blocks")
             plan["wall_main"] = tex.pop("wall_main")

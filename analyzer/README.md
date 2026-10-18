@@ -1,4 +1,4 @@
-# Everything Cubed analyzer
+x# Everything Cubed analyzer
 
 Turns a handful of photos of one room into `plan.json`, which the Everything Cubed mod builds.
 The mod runs this automatically; you only need to install the Python environment once.
@@ -16,12 +16,11 @@ Then `roomplan.py`:
 1. Fits the floor plane (gravity) and the dominant wall direction, so the room is axis-aligned.
 2. Measures each wall. Walls that never appear in a photo are inferred from the floor and furniture extents,
    and get the room's dominant wall material.
-3. Picks a scale (1.25 blocks per metre, enlarged so the short side is at least 6.25 blocks, max 2.5 blocks/m),
-   then builds a room from photos 25% larger than measured (`--enlarge 1.25`; `--enlarge 1` keeps true
-   proportions), since furniture is whole blocks and rooms otherwise feel crowded. LiDAR scans from the iOS app
-   are always built at their measured size, and so is a scale you pass (`--scale`, `buildscaled`).
-4. Colours each wall/floor cell from the photos. Up to 3 distinct materials are kept per surface, so you don't
-   get a blotchy result. They are matched in CIELAB to the real average texture colours read from your
+3. Picks a scale (1.25 blocks per metre, enlarged so the short side is at least 6.25 blocks, max 2.5 blocks/m)
+   unless you pass one.
+4. Colours each wall cell from the photos. Up to 3 distinct materials are kept per wall, so you don't
+   get a blotchy result. The floor is one block throughout: the material covering most of it (shadows under
+   tables or sun by a window never split it; rugs are separate objects). They are matched in CIELAB to the real average texture colours read from your
    Minecraft jar (concrete, terracotta, wool, planks, stone, ...).
 5. Clusters each object class in 3D and converts it to real, usable blocks at the right size and position:
    beds (colour-matched, side by side for wide beds), doors, glass-pane windows, stair chairs and sofas, slab tables,
@@ -44,7 +43,25 @@ Then `roomplan.py`:
    completely. Frames are lit per entity and can never blend with smoothly lit blocks, so they are not used
    for plain paint. Players can punch the frames off and break the blocks.
 
-   **Room style** (`--wall-detail style`, the default): one wall style for the whole room, so every wall
+   Before that, the lighting is taken out (`walltex.even_lighting`): every photo's exposure is matched on the
+   paint, and slow shading, lamp glare and shadows across a wall are divided out. One paint is then one colour,
+   and only real things on the wall stand out. Wall pictures are never dithered (no speckle on the maps).
+
+   **Default (`--wall-detail uniform`)**: every wall block is a map. The room is assumed to have one plain paint
+   colour, measured from the photos; each wall is filled evenly with its own measured shade of it. Each photo is
+   first white-balanced on its own (per colour channel, so the paint it saw becomes the room's paint), which
+   removes lamp colour, sun patches and exposure seams. The things on the wall (paintings, posters, clocks,
+   switches, sockets, thermostats, signs, whiteboards) are then copied from the photo on top at full detail.
+   They are found by an open-vocabulary detector, OWLv2 (`wallitems.py`, Google, Apache-2.0, ~600 MB downloaded
+   once from Hugging Face, needs torch + transformers), run on every photo; its boxes are projected onto the
+   walls and kept where enough of the photos seeing that spot agree, and where something in them really differs
+   from the paint (a blank panel taken for a whiteboard is dropped). Sun patches, glare and chairs against the
+   wall stay paint. Each thing is blended into the flat paint: recoloured so the photo's wall just around it
+   becomes exactly the flat colour, loose box edges that are really wall fade into the paint, and the outline is
+   feathered, so no photo-coloured halo shows. Without torch the walls are plain paint. The paint's own grain never shows. Blown-out glare is never an item. With LiDAR scans only photo pixels within 6 cm
+   of the wall plane count, so chairs and people in front of a wall are not painted onto it.
+
+   **Room style** (`--wall-detail style`): one wall style for the whole room, so every wall
    matches. It is the look shared by the most walls (an accent wall, such as dark acoustic panels, is left
    out rather than averaged in): its colour at each height is the median over all clean wall pixels of those
    walls, posterised into a few flat bands (a white wall, a wood trim line, a wainscot) by an optimal
@@ -55,7 +72,8 @@ Then `roomplan.py`:
    With `--wall-detail pattern`, each wall is instead judged **plain** or **patterned** on its own. A plain wall
    is built as above: real blocks plus framed wall items. A patterned wall (stone, brick, panelling,
    wallpaper) gets a map on every block: the photo where a camera saw it well, and everywhere else patches of
-   that same surface grown outward, brightness-matched and blended at the seams (patch-based filling in the
+   that same surface grown outward, brightness-matched and blended at the seams, all reduced to at most 8 flat
+   colours so it reads as a block texture rather than a photo (patch-based filling in the
    spirit of image quilting, Efros & Freeman, SIGGRAPH 2001). Only pixels seen within about 60 degrees of
    straight on are kept or copied, since steep views are smeared. The photos' own lighting (sun bands, cast
    shadows, glare) is evened out first: brightness changes slower than about 2 blocks are removed, colour and
@@ -184,14 +202,9 @@ from ordinary rooms and can be far off. If you know the floor-to-ceiling height,
 ```json
 {
   "python": "/path/to/venv/bin/python",
-  "extraArgs": ["--known-height", "19.8", "--perceptron"],
-  "alwaysReanalyze": true
+  "extraArgs": ["--known-height", "19.8", "--perceptron"]
 }
 ```
-
-`"alwaysReanalyze": true` (the default) re-analyses a folder's photos on every `/everything_cubed build`, so changed
-settings always take effect. Set it to `false` to reuse a `plan.json` that is newer than every photo. Building a
-`plan.json` path directly (`/everything_cubed build <folder>/plan.json`) never re-analyses.
 
 `--perceptron` needs `PERCEPTRON_API_KEY` set in the environment Minecraft is started from, and sends the photos
 (people blurred) to Perceptron; see above.

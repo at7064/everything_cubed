@@ -34,10 +34,6 @@ public final class PhoneConnection implements Runnable {
 		this.out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
 	}
 
-	public MinecraftServer server() {
-		return server;
-	}
-
 	public String device() {
 		return device;
 	}

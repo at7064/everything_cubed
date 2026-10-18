@@ -198,7 +198,7 @@ def reconstruct_arkit(folder: Path, log, max_views=ARKIT_MAX_VIEWS):
         pts = cam @ c2w[:3, :3].T + c2w[:3, 3]
         mask = np.isfinite(d) & (d > 0.1) & (d < ARKIT_MAX_DEPTH) & (c >= 1)
         out.append(_upright({"points": pts.astype(np.float32), "K": K, "cam2world": c2w, "conf": c,
-                             "mask": mask, "rgb": rgb, "lidar": True}))
+                             "mask": mask, "rgb": rgb}))
     return out, True
 
 
@@ -266,6 +266,8 @@ def fuse(views, label_maps, id2label, ade_to_category, voxel=0.03, conf_drop=20)
         V.append(np.full(valid.sum(), view_index, np.int32))
     P, C, L, V = (np.concatenate(P).astype(np.float64), np.concatenate(C).astype(np.float64),
                   np.concatenate(L), np.concatenate(V))
+    if not len(P):
+        raise SystemExit("the reconstruction has no usable 3D points (photos too dark, too few or not overlapping)")
 
     key = np.floor(P / voxel).astype(np.int64)
     _, inv = np.unique(key, axis=0, return_inverse=True)
@@ -451,7 +453,7 @@ def map_names(names, templates, ade_to_category, key, log, use_model=True, vanil
         else:
             rest.append(n)
     if out:
-        log(f"[det] vanilla blocks: " + ", ".join(f"{n} -> {t.split(':')[1]}" for n, (t, _) in sorted(out.items())))
+        log("[det] vanilla blocks: " + ", ".join(f"{n} -> {t.split(':')[1]}" for n, (t, _) in sorted(out.items())))
     names = rest
     model = {}
     if use_model and names:

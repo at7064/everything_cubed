@@ -194,7 +194,7 @@ print("pattern walls OK")
 # Viewing angle and excluded pixels: the cosine of the chosen view stays in (0.2, 1]; pixels masked as
 # window or door in every view are never taken as wall.
 side0 = "north"
-img0, seen0, cos0 = walltex.project_wall(side0, room, to_world, R, views, labels, category_lut(ID2LABEL, ADE_TO_CATEGORY), 8, 0.12 / f)
+_, seen0, cos0 = walltex.project_wall(side0, room, to_world, R, views, labels, category_lut(ID2LABEL, ADE_TO_CATEGORY), 8, 0.12 / f)
 mid = cos0[cos0.shape[0] // 2, cos0.shape[1] // 2]
 print(f"{side0}: seen {seen0.mean():.0%}, head-on cosine at the centre {mid:.2f}, min seen {cos0[seen0].min():.2f}")
 assert seen0.mean() > 0.9 and cos0[seen0].min() > 0.2 and (cos0 <= 1.0001).all() and cos0.max() > 0.8
@@ -234,7 +234,7 @@ apply_wall_features(p1, {"north": {"seen": seen_all, "window": glass, "bookshelf
                          "south": {"seen": none, "window": none, "bookshelf": none}}, log=print)
 nw = [o for o in p1["openings"] if o["side"] == "north" and o["type"] == "window"]
 assert sorted((o["u"], o["w"], o["y"], o["h"]) for o in nw) == [(1, 2, 2, 3), (6, 2, 2, 3)], nw
-sw = _grid = np.zeros((rows, cols), bool)
+sw = np.zeros((rows, cols), bool)
 for o in p1["openings"]:
     if o["side"] == "south" and o["type"] == "window":
         sw[o["y"]:o["y"] + o["h"], o["u"]:o["u"] + o["w"]] = True
@@ -263,11 +263,10 @@ light[2 * px:5 * px, 10 * px:13 * px] *= 0.45                               # a 
 lit = (base * light[..., None]).clip(0, 255)
 lit[0:px // 2, 0:px // 2] = 255                                             # a glare spot
 seen_l = np.ones(xx.shape, bool)
-even, seen_e = walltex.even_lighting(lit, seen_l, px)
+even, seen_e = walltex.even_wall_lighting(lit, seen_l, px)
 Yb = lambda im: ndimage_gauss(im @ np.array([0.299, 0.587, 0.114]), 2 * px)
 from scipy.ndimage import gaussian_filter as ndimage_gauss  # noqa: E402
 spread_before = np.std(Yb(lit)[seen_e]); spread_after = np.std(Yb(even)[seen_e])
-stripe = lambda im: np.abs(im[4 * px, 6 * px:7 * px].mean(0) - im[4 * px, 6 * px + px // 2:7 * px + px // 2].mean(0)).mean()
 print(f"lighting spread {spread_before:.1f} -> {spread_after:.1f}; glare dropped {not seen_e[:2, :2].any()}")
 assert spread_after < 0.4 * spread_before and not seen_e[:2, :2].any()
 yl = 4 * px
@@ -308,3 +307,38 @@ assert st_a["walls"] == 2 and abs(prof_a[2 * px].mean() - 229) < 10, (st_a, prof
 prof_b, _, st_b = walltex.room_style([(w1, m1 & (xx < 2 * px)), (w2, m2 & (xx > 8 * px)), (dark, np.ones(yy.shape, bool))], px)
 assert st_b["walls"] == 2 and abs(prof_b[2 * px].mean() - 229) < 10, (st_b, prof_b[2 * px])
 print("room style OK")
+
+# Review regressions. Shelving never stands in a doorway or on furniture; a mirrored wall keeps its own doors clear.
+p3 = fplan()
+p3["openings"].append({"type": "door", "side": "north", "u": 3, "w": 1, "y": 0, "h": 2})
+p3["objects"] = [{"type": "bed", "x": 0, "z": 0, "w": 2, "d": 2, "h": 1}]
+shelf_hi = none.copy(); shelf_hi[2:4, 0:5] = 1          # shelving seen above the door and over the bed
+apply_wall_features(p3, {"north": {"seen": seen_all, "window": none, "bookshelf": shelf_hi},
+                         "south": {"seen": none, "window": none, "bookshelf": none}}, log=lambda m: None)
+cols_built = sorted(u for o in p3["objects"] if o.get("block") == "minecraft:bookshelf" for u in range(o["x"], o["x"] + o["w"]))
+assert cols_built == [2, 4], cols_built                 # not over the bed (0, 1), not in the doorway (3)
+p4 = fplan()
+p4["openings"] = [{"type": "door", "side": "south", "u": 6, "w": 1, "y": 0, "h": 2}]
+apply_wall_features(p4, {"north": {"seen": seen_all, "window": glass, "bookshelf": none},
+                         "south": {"seen": none, "window": none, "bookshelf": none}}, log=lambda m: None, mirror=True)
+for o in p4["openings"]:
+    if o["side"] == "south" and o["type"] == "window":
+        assert not (o["u"] <= 6 < o["u"] + o["w"] and o["y"] < 2), ("window over the door", o)
+
+# The default wall mode end to end. This small room's walls are a gentle gradient, judged plain: no maps on bare
+# walls. With the plain test switched off, every wall gets the same room-style picture.
+plain_tex = render_walls(views, labels, category_lut(ID2LABEL, ADE_TO_CATEGORY), ctx, Path(tempfile.mkdtemp()), px=16,
+                         detail="style", log=lambda m: None)
+assert not any(w["dither"] for w in plain_tex["walls"].values()), "a plain room style puts no style picture on walls"
+saved = walltex.STYLE_PLAIN_DE
+walltex.STYLE_PLAIN_DE = -1.0
+st_out = Path(tempfile.mkdtemp())
+tex_s = render_walls(views, labels, category_lut(ID2LABEL, ADE_TO_CATEGORY), ctx, st_out, px=16, detail="style", log=lambda m: None)
+walltex.STYLE_PLAIN_DE = saved
+imgs = {s: np.asarray(Image.open(st_out / w["image"])) for s, w in tex_s["walls"].items()}
+assert imgs, "a textured room style"
+rows_seen = {im.shape[0] for im in imgs.values()}
+assert len(rows_seen) == 1 and all(w["dither"] for w in tex_s["walls"].values())
+first = next(iter(imgs.values()))
+assert all(np.array_equal(im[:, :16], first[:, :16]) for im in imgs.values()), "the same style on every wall"
+print("review regressions + style end to end OK")

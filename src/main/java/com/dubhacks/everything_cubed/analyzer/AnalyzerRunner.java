@@ -31,7 +31,7 @@ import java.util.stream.Stream;
  * Which Python to use is configured in {@code config/everything_cubed.json}.
  */
 public final class AnalyzerRunner {
-	private static final String[] SCRIPTS = {"everything_cubed_analyzer.py", "perception.py", "roomplan.py", "palette.py", "walltex.py", "lidar_analyzer.py",
+	private static final String[] SCRIPTS = {"everything_cubed_analyzer.py", "perception.py", "roomplan.py", "palette.py", "walltex.py", "wallitems.py", "vanilla.py", "lidar_analyzer.py",
 			"requirements.txt", "README.md"};
 	private static final Set<String> IMAGE_EXT = Set.of("jpg", "jpeg", "png", "webp", "bmp", "heic");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -46,6 +46,16 @@ public final class AnalyzerRunner {
 	/** Where relative {@code /everything_cubed build} paths are looked up. */
 	public static Path photosDir() {
 		return workDir().resolve("photos");
+	}
+
+	/** Whether folder builds should refresh a cached plan. Defaults to true. */
+	public static boolean alwaysReanalyze() {
+		try {
+			JsonObject cfg = config();
+			return !cfg.has("alwaysReanalyze") || cfg.get("alwaysReanalyze").getAsBoolean();
+		} catch (IOException | RuntimeException e) {
+			return true;
+		}
 	}
 
 	/** Resolves a user-supplied path; relative paths are looked up in {@link #photosDir()}. */
@@ -124,19 +134,6 @@ public final class AnalyzerRunner {
 		return readPlan(plan);
 	}
 
-	/**
-	 * {@code "alwaysReanalyze"} in the config (default true): analyse a folder's photos on every build, so changed
-	 * settings take effect. False reuses a plan.json that is newer than every photo, which saves the analysis.
-	 */
-	public static boolean alwaysReanalyze() {
-		try {
-			JsonObject cfg = config();
-			return !cfg.has("alwaysReanalyze") || cfg.get("alwaysReanalyze").getAsBoolean();
-		} catch (IOException | RuntimeException e) {
-			return true;
-		}
-	}
-
 	/** TCP port for the iOS scanner app, {@code "phonePort"} in the config. */
 	public static int phonePort() {
 		try {
@@ -189,10 +186,6 @@ public final class AnalyzerRunner {
 		}
 		if (!cfg.has("extraArgs")) {
 			cfg.add("extraArgs", new JsonArray());
-			changed = true;
-		}
-		if (!cfg.has("alwaysReanalyze")) { // written out so the switch is easy to find
-			cfg.addProperty("alwaysReanalyze", true);
 			changed = true;
 		}
 		if (changed) {

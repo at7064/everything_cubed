@@ -31,7 +31,7 @@ import java.util.UUID;
  * <ul>
  *   <li>right-click a seat (chair, sofa, toilet) to sit on it, sneak to get up;</li>
  *   <li>right-click a lamp to switch it on or off;</li>
- *   <li>right-click a trash can with something in your hand to throw that stack away;</li>
+ *   <li>right-click a trash can with something in your main hand to throw that stack away;</li>
  *   <li>punch a seat or lamp, or break the real block inside a model, to remove that piece of furniture.</li>
  * </ul>
  * Tags are saved with the entities, so this keeps working after a restart.
@@ -96,8 +96,10 @@ public final class FurnitureInteractions {
 			return InteractionResult.SUCCESS;
 		}
 		if (box.entityTags().contains(TRASH)) {
+			// Main hand only: an empty main hand must not throw away a shield or totem held in the off hand.
+			if (hand != InteractionHand.MAIN_HAND) return InteractionResult.PASS;
 			ItemStack held = player.getItemInHand(hand);
-			if (held.isEmpty()) return InteractionResult.PASS; // nothing to throw away (the other hand may have)
+			if (held.isEmpty()) return InteractionResult.SUCCESS;
 			player.setItemInHand(hand, ItemStack.EMPTY);
 			server.playSound(null, box.blockPosition(), SoundEvents.COMPOSTER_FILL, SoundSource.BLOCKS, 1f, 1f);
 			return InteractionResult.SUCCESS;

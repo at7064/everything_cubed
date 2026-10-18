@@ -471,7 +471,6 @@ def test_new_templates():
     # a dark one stays a TV.
     for rgb, want in [((235, 236, 232), "whiteboard"), ((25, 25, 30), "tv")]:
         pts2, cols2, cats2 = [p.copy() for p in pts], [c.copy() for c in cols], list(cats)
-        n = len(cats2)
         keep = np.array([c != "whiteboard" for c in cats2])
         P2 = np.concatenate(pts2)[keep]; C2 = np.concatenate(cols2)[keep]; K2 = list(np.array(cats2)[keep])
         scr = rng.uniform((2.0, 0.9, 0.0), (4.4, 2.1, 0.05), (900, 3))
