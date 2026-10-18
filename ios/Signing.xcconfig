@@ -1,0 +1,9 @@
+// Signing for the scanner app, shared by everyone. Do not put your own team or bundle id here: create
+// ios/Local.xcconfig (git-ignored) with your own, for example
+//   EC_BUNDLE_ID = com.yourname.everythingcubed.scanner
+//   DEVELOPMENT_TEAM = ABCDE12345
+// and leave the Signing & Capabilities tab's Team and Bundle Identifier alone (Xcode would write them into the
+// shared project file).
+EC_BUNDLE_ID = com.dubhacks.everythingcubed.scanner
+
+#include? "Local.xcconfig"

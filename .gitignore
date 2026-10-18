@@ -50,3 +50,7 @@ ios/build/
 analyzer/vanilla_catalog.json
 .perceptron_cache/
 /Images/
+
+# xcode: personal signing (see ios/Signing.xcconfig)
+ios/Local.xcconfig
+xcuserdata/

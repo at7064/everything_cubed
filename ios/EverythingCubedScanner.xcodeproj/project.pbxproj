@@ -8,6 +8,7 @@
 
 /* Begin PBXFileReference section */
 		EC0000000000000000000003 /* EverythingCubedScanner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EverythingCubedScanner.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		EC0000000000000000000020 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 		EC000000000000000000000E /* EverythingCubedScanner-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "EverythingCubedScanner-Info.plist"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -35,6 +36,7 @@
 			children = (
 				EC0000000000000000000004 /* EverythingCubedScanner */,
 				EC000000000000000000000E /* EverythingCubedScanner-Info.plist */,
+				EC0000000000000000000020 /* Signing.xcconfig */,
 				EC0000000000000000000002 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -216,10 +218,10 @@
 		};
 		EC000000000000000000000F /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = EC0000000000000000000020 /* Signing.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = PB6HG4RT87;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "EverythingCubedScanner-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Cubed Scanner";
@@ -235,7 +237,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.anniewu.everythingcubed.scanner;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(EC_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -244,10 +246,10 @@
 		};
 		EC0000000000000000000010 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = EC0000000000000000000020 /* Signing.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = PB6HG4RT87;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "EverythingCubedScanner-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Cubed Scanner";
@@ -263,7 +265,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.anniewu.everythingcubed.scanner;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(EC_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";

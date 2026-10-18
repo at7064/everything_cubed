@@ -26,9 +26,18 @@ copying. Two scan types:
 
 ## Build
 
-Open `EverythingCubedScanner.xcodeproj` in Xcode 16 or newer, choose your team under *Signing & Capabilities*,
-and run on a device (iOS 17+): any iPhone with ARKit for photo scans, a LiDAR device for RoomPlan scans. The
+Open `EverythingCubedScanner.xcodeproj` in Xcode 16 or newer and run on a device (iOS 17+): any iPhone with ARKit for photo scans, a LiDAR device for RoomPlan scans. The
 simulator has no camera tracking, LiDAR or RoomPlan.
+
+Signing: to use your own Apple team (a free Personal Team works), create `ios/Local.xcconfig`, which git ignores:
+
+```
+EC_BUNDLE_ID = com.yourname.everythingcubed.scanner
+DEVELOPMENT_TEAM = ABCDE12345
+```
+
+Your team id is shown in Xcode under *Settings > Accounts*. Do not set the team or bundle id in the *Signing &
+Capabilities* tab: Xcode writes those into the shared project file, and they would be committed for everyone.
 
 ## Code
 
