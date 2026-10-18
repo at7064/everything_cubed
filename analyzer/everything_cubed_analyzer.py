@@ -40,7 +40,11 @@ def main(argv=None):
                     help="the room's real floor-to-ceiling height in metres; corrects the reconstruction's scale")
     ap.add_argument("--backend", default="auto", choices=["auto", "arkit", "mapanything", "vggt"])
     ap.add_argument("--device", help="torch device (default: cuda > mps > cpu)")
+    # Apache variant: on a taped 9.45 x 4.57 m room it measured 0.91x / 1.10x, the research variant
+    # (facebook/map-anything, CC-BY-NC 4.0) 1.22x / 1.25x; the research variant was closer only on a 20 m high hall.
     ap.add_argument("--mapanything-model", default="facebook/map-anything-apache")
+    ap.add_argument("--no-exif-camera", action="store_true",
+                    help="do not give MapAnything the camera geometry from the photos' lens data")
     ap.add_argument("--vggt-model", default="facebook/VGGT-1B-Commercial")
     ap.add_argument("--depth-model", default="depth-anything/Depth-Anything-V2-Metric-Indoor-Base-hf")
     ap.add_argument("--seg-model", default="nvidia/segformer-b5-finetuned-ade-640-640")

@@ -123,5 +123,7 @@ for with_room, detail in ((False, "items"), (True, "uniform")):
     assert len(glass) == 1, plan["openings"]
     tables = [o for o in plan["objects"] if o["type"] == "table"]
     assert len(tables) == 1, plan["objects"]
+    # LiDAR rooms are built at their measured size: 1.25 blocks/m for this room, not enlarged like photo rooms.
+    assert abs(plan["scale"] - 1.25) < 0.01, plan["scale"]
     print(f"room.json={with_room}, walls {detail}: room {m}, window on {glass}, table {tables[0]}")
 print("OK")

@@ -521,6 +521,26 @@ def test_small_fixtures():
     assert desk["x"] <= laptop["x"] < desk["x"] + desk["w"] and laptop["y"] == 2
 
 
+def test_exif_camera():
+    """Lens data -> camera geometry: an iPhone main camera (26 mm equivalent) on a 4032 x 3024 photo stored sideways
+    (EXIF orientation 6) is a 3024 x 4032 portrait with a ~3029 px focal length; its view keeps the field of view."""
+    import math
+    tmp = Path(tempfile.mkdtemp())
+    exif = Image.Exif()
+    exif[0x0112] = 6                                    # rotate 90 degrees when displayed
+    exif.get_ifd(0x8769)[0xA405] = 26                   # FocalLengthIn35mmFilm
+    Image.new("RGB", (4032, 3024), (128, 128, 128)).save(tmp / "a.jpg", exif=exif)
+    f, size = P.exif_focal_px(tmp / "a.jpg")
+    assert size == (3024, 4032) and abs(f - 26 / 43.2666 * 5040) < 1, (f, size)
+    K = P.view_intrinsics(f, size, (392, 518))
+    fov_photo = 2 * math.atan(size[1] / 2 / f)
+    fov_view = 2 * math.atan(518 / 2 / K[1, 1])
+    assert abs(fov_photo - fov_view) < 0.01 and K[0, 2] == 196 and K[1, 2] == 259, (fov_photo, fov_view, K)
+    Image.new("RGB", (64, 48)).save(tmp / "b.jpg")      # no lens data
+    assert P.exif_focal_px(tmp / "b.jpg") is None
+    print("exif camera OK", round(f), K.round(1).tolist())
+
+
 if __name__ == "__main__":
     real_post = REAL_POST = P._post
 
@@ -539,6 +559,7 @@ if __name__ == "__main__":
         test_vanilla_first(monkeypatch_post)
         test_new_templates()
         test_small_fixtures()
+        test_exif_camera()
         test_end_to_end(monkeypatch_post)
         test_plan_generic()
     finally:

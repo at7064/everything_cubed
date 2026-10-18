@@ -7,7 +7,7 @@ The mod runs this automatically; you only need to install the Python environment
 
 | Step | Project |
 |---|---|
-| 3D reconstruction from unposed photos, in metres | [MapAnything](https://github.com/facebookresearch/map-anything) (`facebook/map-anything-apache`) |
+| 3D reconstruction from unposed photos, in metres | [MapAnything](https://github.com/facebookresearch/map-anything) (`facebook/map-anything-apache`, given each photo's camera geometry from its lens data) |
 | Fallback reconstruction | [VGGT](https://github.com/facebookresearch/vggt) + [Depth Anything V2 Metric Indoor](https://huggingface.co/depth-anything/Depth-Anything-V2-Metric-Indoor-Base-hf) for scale |
 | What each pixel is (wall, floor, bed, window, door, sofa, ...) | [SegFormer-B5 fine-tuned on ADE20K](https://huggingface.co/nvidia/segformer-b5-finetuned-ade-640-640) via Hugging Face `transformers` |
 | Plane fitting, clustering, colour quantisation | scikit-learn (RANSAC, DBSCAN, KMeans), SciPy |
@@ -155,6 +155,15 @@ benches, or its chandeliers).
 
 `--known-height METRES` corrects the reconstruction's scale from the room's real ceiling height. MapAnything's metric
 scale is learned from ordinary rooms; it put Suzzallo's 19.8 m ceiling at 7.85 m.
+
+**MapAnything model and license.** The default is `facebook/map-anything-apache` (Apache 2.0). On a tape-measured
+9.45 x 4.57 m room it measured 0.91x / 1.10x the true length / width, while the research variant
+`facebook/map-anything` (which Meta recommends "for the best performance"; weights licensed **CC-BY-NC 4.0,
+non-commercial**) measured 1.22x / 1.25x. The research variant was closer only on Suzzallo's 20 m high reading room
+(0.52x vs 0.42x of the true height), so try `--mapanything-model facebook/map-anything` for halls. Each photo's
+camera geometry (focal length from the EXIF "35 mm equivalent", which phones record) is passed to MapAnything so it
+does not have to guess the field of view; `--no-exif-camera` turns that off, and it is skipped automatically when any
+photo lacks the data (screenshots, edited images).
 
 ## Install (once)
 

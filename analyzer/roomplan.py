@@ -140,6 +140,7 @@ MIN_POINTS = {"window": 60, "door": 120, "bed": 200, "rug": 150, "painting": 40,
 SIDES = ("north", "south", "west", "east")
 AUTO_SCALE = 1.25  # default blocks per metre
 ENLARGE = 1.25     # automatic scales are this much larger: one-block furniture leaves more room to move
+                   # (tuned with the Apache MapAnything, the default; the research variant measures rooms ~20% larger)
 OPPOSITE = {"north": "south", "south": "north", "west": "east", "east": "west"}
 
 
