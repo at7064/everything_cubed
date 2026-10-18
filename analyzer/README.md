@@ -20,7 +20,10 @@ The output contains `reconstruction.ply`, a full-resolution coloured triangle me
 `view.html`, a standalone HTML viewer with orbit, zoom, and a switch between the room model and reconstructed
 surfaces. For videos and photo folders, `photo_view.html` maps cropped original frames onto the measured triangle
 lattices, with a combined view and a frame slider. The photo viewer uses WebGL for dense rendering and a smaller
-interactive Canvas preview when WebGL is unavailable. Both HTML files open directly in a browser. FFmpeg is used
+interactive Canvas preview when WebGL is unavailable. The modeller also creates `photo_on_original.html`, which
+shows those same photo patches over a preview of the unchanged reconstruction mesh. If an older scan already has
+`reconstruction.ply` and `photo_view.html`, regenerate this view with
+`python analyzer/original_mesh_overlay.py scan_3d`. These HTML files open directly in a browser. FFmpeg is used
 only to sample frames when the input is a video.
 Use `--frames 24` for more views, or `--perceptron` to detect additional small objects. A LiDAR `capture.json`
 uses its measured depths and camera poses; ordinary video is reconstructed from the sampled frames.

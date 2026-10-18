@@ -123,13 +123,15 @@ def main(argv=None):
         from photo_texture import write_photo_viewer
         photo_scene = write_photo_viewer(out / "reconstruction.ply", list_images(images), out / "photo_view.html",
                                          max_faces_per_frame=opts.photo_faces, shell=plan.get("interior_shell"))
+        from original_mesh_overlay import generate as generate_original_mesh_overlay
+        original_mesh_view = generate_original_mesh_overlay(out)
         mesh_flip_xy = photo_scene["flip_xy"]
         photo_view = True
     scene = write_viewer(plan, out / "view.html", out / "solid.ply", photo_view=photo_view,
                          mesh_flip_xy=mesh_flip_xy)
     write_obj(scene, out / "model.obj")
     print(f"[3d] {out / 'reconstruction.ply'}\n[3d] {out / 'solid.ply'}\n[3d] {out / 'view.html'}\n"
-          + (f"[3d] {out / 'photo_view.html'}\n" if photo_view else "") +
+          + (f"[3d] {out / 'photo_view.html'}\n[3d] {original_mesh_view}\n" if photo_view else "") +
           f"[3d] {out / 'model.obj'}\n[3d] {plan_path}", flush=True)
 
 
