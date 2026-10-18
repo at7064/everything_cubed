@@ -61,6 +61,7 @@ PERSON_CELL = 0.2         # metres: grid for grouping person points into people
 PERSON_MIN_PIXELS = 25
 PERSON_MATCH = 0.8        # metres a person may move between frames and keep their id
 PERSON_SHARE = 0.2        # a cluster smaller than this share of the frame's largest is a speck, not a person
+PERSON_LIE_MATCH = 1.5    # metres a person may move between frames when they get onto a bed
 PERSON_SHOW = 2           # frames a person must be seen before they are reported
 PERSON_KEEP = 1.0         # seconds a person stays after they were last seen
 LYING_TOP = 1.2          # metres: a person whose highest point is below this, and
@@ -613,19 +614,27 @@ class People:
                 if span < 0.4 and bed is None:
                     self._note(f"flat shape not on a bed dropped: {info}")
                     continue   # too flat for someone standing or sitting, and not on a bed: not a person
-                found.append((xz, bed, info))
+                found.append((xz, bed, info, int(sel.sum())))
+        return self.track(found, fr["time"])
+
+    def track(self, found, now):
+        """Follows the people found in one frame: [(floor point in room metres, bed block or None, log text,
+        pixels)]. Returns them as kept()."""
+        found = self._one_per_bed(found)
         if len(found) != self.last_count:
             log(f"[spectate] people: {len(found)} in this frame" + "".join(f"; {f[2]}" for f in found))
             self.last_count = len(found)
-        now = fr["time"]
         free = list(range(len(found)))
         for t in sorted(self.tracks, key=lambda t: -t["seen"]):
             if not free:
                 break
-            d = [np.linalg.norm(found[f][0] - t["xz"]) for f in free]
+            # Getting onto a bed moves someone's middle about a metre (beside it -> along it): a person on a bed
+            # may be that far from their track.
+            d = [np.linalg.norm(found[f][0] - t["xz"]) - (PERSON_LIE_MATCH - PERSON_MATCH) * (found[f][1] is not None)
+                 for f in free]
             best = int(np.argmin(d))
             if d[best] <= PERSON_MATCH:
-                t["xz"], bed, _ = found[free.pop(best)]
+                t["xz"], bed, _, _ = found[free.pop(best)]
                 t["seen"] += 1
                 t["last"] = now
                 # Lying down or getting up only after LYING_FRAMES frames in a row agree.
@@ -649,6 +658,41 @@ class People:
                 log(f"[spectate] person #{t['id']} gone (unseen for {now - t['last']:.1f} s)")
         self.tracks = [t for t in self.tracks if now - t["last"] <= PERSON_KEEP]
         return self.kept()
+
+    def _bed_index(self, block):
+        """The built bed (plan object index) a bed block belongs to."""
+        for i, o in enumerate(self.furniture.objects if self.furniture else []):
+            if o["type"] == "bed" and o["x"] <= block[0] < o["x"] + o["w"] and o["z"] <= block[1] < o["z"] + o["d"]:
+                return i
+        return None
+
+    def _one_per_bed(self, found):
+        """Everything lying on one bed in a frame is one person: the camera often sees a lying body in two pieces
+        (head and legs, the middle hidden), and the smaller piece became a second villager in the same bed."""
+        by_bed, rest = {}, []
+        for f in found:
+            i = self._bed_index(f[1]) if f[1] else None
+            if i is None:
+                rest.append(f)
+            else:
+                by_bed.setdefault(i, []).append(f)
+        # Someone half up (sitting on the edge while lying down) shows an upright piece over the bed too: with
+        # anything lying on that bed, a piece over the real bed's footprint is the same person.
+        beds = dict(self.furniture.real_footprints("bed")) if self.furniture else {}
+        out = []
+        for f in rest:
+            i = next((i for i, pose in beds.items() if i in by_bed and pose.contains(f[0], BED_SLACK)), None)
+            if i is None:
+                out.append(f)
+            else:
+                by_bed[i].append(f)
+        for parts in by_bed.values():
+            n = sum(f[3] for f in parts)
+            xz = sum(f[0] * f[3] for f in parts) / n
+            main = max((f for f in parts if f[1]), key=lambda f: f[3])   # the bed block from the biggest lying piece
+            info = main[2] if len(parts) == 1 else f"{len(parts)} pieces on one bed, as one: " + " + ".join(f[2] for f in parts)
+            out.append((xz, main[1], info, n))
+        return out
 
     def _note(self, msg):
         """A log line, at most once a second (dropped shapes come every frame)."""

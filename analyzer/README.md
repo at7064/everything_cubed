@@ -188,7 +188,8 @@ objects; no single blocks are ever placed:
 - low-confidence objects, jitter within a footprint, and objects RoomPlan stops reporting change nothing;
 - people are found in the frames (the phone's person mask over LiDAR depth), moved by the same alignment as the
   furniture (nobody is reported before it is agreed), and reported as tracked positions, which the mod shows as
-  villagers. Specks much smaller than the person beside them (stray mask pixels) are not people. Someone lying
+  villagers. Specks much smaller than the person beside them (stray mask pixels) are not people, and everything on one bed in
+  a frame (a lying body seen as head and legs, or half up at the edge) is one person. Someone lying
   anywhere on the real bed (not just over the smaller Minecraft bed built for it) sleeps in
   the built bed.
 

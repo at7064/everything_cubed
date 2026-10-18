@@ -339,4 +339,24 @@ for i in range(3):
     seen25 = p25.update(frame_of(body_frame(40 + i, *lying25, (foot[0], 1.6, foot[1] - 2.0), (foot[0], 0.6, foot[1]))))
 assert seen25 and "sleep" in seen25[0], seen25
 print(f"lying on the real bed off the built blocks: asleep in bed block {seen25[0]['sleep']}")
+
+# A real first lie-down, as the log showed it (here on the 2.5 blocks/m bed, which runs along x from 4.4 to 6.4 m):
+# standing beside the bed, then half up (an upright piece at the bed's edge plus a lying piece), then lying seen in
+# two pieces 0.75-1 m apart (head and legs) that come and go. Always one person, asleep in the end.
+p_one = sa.People(frame25, f25)
+on = lambda x, z: p25.bed_under(np.array((x, z)))
+def piece(x, z, px, lying=True):
+    return (np.array((x, z)), on(x, z) if lying else None, f"({x}, {z})", px)
+steps = [[piece(5.4, 4.75, 1941, lying=False)]] * 3 + \
+        [[piece(4.9, 4.2, 472, lying=False), piece(5.9, 3.9, 173)],
+         [piece(6.0, 3.85, 457)],
+         [piece(4.9, 4.0, 200), piece(6.1, 3.8, 208)],
+         [piece(5.9, 3.8, 169)],
+         [piece(4.8, 4.0, 146), piece(5.9, 3.8, 161)],
+         [piece(5.1, 4.0, 34), piece(5.9, 3.8, 154)]] * 2
+for i, found in enumerate(steps):
+    out = p_one.track(found, 50 + i * 0.2)
+    assert len(out) <= 1, (i, out)
+assert out and "sleep" in out[0] and len(p_one.tracks) == 1, (out, p_one.tracks)
+print(f"first lie-down, the body in pieces: one person throughout, asleep in bed block {out[0]['sleep']}")
 print("OK")
