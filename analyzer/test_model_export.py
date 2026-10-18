@@ -47,6 +47,12 @@ def test_export():
         Image.fromarray(view["rgb"]).save(photo)
         textured = photo_scene(ply, [photo], max_faces_per_frame=100)
         assert textured["batches"][0]["grid"] == [5, 4]
+        assert textured["flip_xy"]
+        upright = dict(view, points=view["points"].copy())
+        upright["points"][:, :, 1] *= -1
+        upright_ply = root / "upright.ply"
+        write_ply([upright], upright_ply, max_side=20)
+        assert not photo_scene(upright_ply, [photo], max_faces_per_frame=100)["flip_xy"]
         assert 0 < textured["total_faces"] <= len(faces)
         assert base64.b64decode(textured["batches"][0]["coarse_b64"])
         photo_vertices = np.frombuffer(base64.b64decode(textured["batches"][0]["vertices_b64"]),
