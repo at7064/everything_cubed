@@ -27,15 +27,15 @@ Implementations: `ios/EverythingCubedScanner/Network/WireMessage.swift` and
 | `frame` | `seq`, `kind` (`keyframe` / `photo`), `time`, `tracking`, `imageSize` [w,h], `depthSize` [w,h], `K` (3×3), `cam2world` (4×4), `pointCount` | `image` (jpeg), `depth` (f16), `confidence` (u8), `points` (f32xyz: ARKit's tracked feature points, world metres), `person` (u8, spectate) |
 | `room` | | `room` (RoomPlan `CapturedRoom` as JSON: the finished scan's, or the live one while spectating) |
 | `planes` | | `planes` (JSON `{"planes": [...]}`: per ARKit plane anchor `transform` 4×4 row-major, `center`, `extent` [w,h], `alignment`, `classification` (wall/floor/ceiling/table/seat/window/door/none), `boundary`), sent at the end of a `tracked` scan |
-| `end` | `build` (default true), `scale` (blocks per metre, optional) | |
-| `ping` | | | (also every second while spectating: the phone is there)
+| `end` | `build` (default true), `scale` (blocks per metre, optional; not sent by the iOS app) | |
+| `ping` | | (none; also sent every second while spectating: the phone is there) |
 | `spectate_decline` | `text`: why the phone said no to `spectate_invite` | |
 
 `hello` must come first. Matrices are row-major, in ARKit conventions: world +Y is up, metres; the camera looks
 down -Z with +Y up, and `K` belongs to the image in the sensor's landscape orientation (the analyzer turns
 portrait shots upright). `depth` is little-endian float16 metres, `confidence` is ARKit's 0 (low) to 2 (high),
 both `depthSize` pixels and aligned with the image. Frames from a phone without LiDAR (`tracked`) have no `depthSize`,
-`depth` or `confidence`; their `K` and `cam2world` are still ARKit's, in metres. `person` (spectate only) is 1 where a
+`depth` or `confidence` (on a LiDAR device `tracked` photos carry depth and are analysed as a LiDAR scan); their `K` and `cam2world` are still ARKit's, in metres. `person` (spectate only) is 1 where a
 person is, also per depth pixel; it is left out when nobody is in view.
 
 ## Mod to phone
@@ -71,8 +71,8 @@ The analyzer reads `capture.json`: frames with depth go to `analyzer/lidar_analy
 
 ## Mode `spectate`
 
-Starts from a RoomPlan scan the player has built (their last build, named by `folder`); the mod refuses it
-otherwise. The phone continues that scan's RoomPlan session, so everything is in the scan's coordinates, and sends
+Starts from a RoomPlan scan the player has built (their last build, named by `folder`). The mod refuses it when
+there is no build or the folder differs; the analyzer worker refuses a build that has no RoomPlan `room.json`. The phone continues that scan's RoomPlan session, so everything is in the scan's coordinates, and sends
 `room` (RoomPlan's live room model) and `frame` (LiDAR frames with a `person` mask, for people) about every 0.2 s
 each, until `end` (or until the mod sends `stopped`). Nothing is saved: they go to
 `analyzer/spectate_analyzer.py`, which the mod keeps running with the scan's `plan.json` (its `arkit` frame maps
@@ -85,7 +85,7 @@ chat ([Allow] / [Deny], `/everything_cubed spectate allow|deny`, 60 s); only the
 phone streams nothing before that. When the player asks first (`/everything_cubed spectate`), the mod sends
 `spectate_invite`; the phone asks its user and answers with `begin` (which starts at once) or `spectate_decline`.
 Either side ends it (`end` / `stopped`). While spectating each side sends something every second (`ping` / `alive`)
-and ends it after 5 s of silence, so a dropped connection stops spectating within seconds.
+and closes the connection after 5 s of silence, so a dropped connection stops spectating within seconds.
 
 People are in the worker's answers as `{"id", "x", "y", "z"}` in plan blocks; someone lying on a bed also has
 `"sleep": [x, z]`, the bed block they lie on, and the mod puts their villager to sleep in that bed.

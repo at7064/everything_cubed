@@ -237,7 +237,8 @@ final class AppModel: ObservableObject, FrameSink {
         phase = .spectating
     }
 
-    /// Ends spectating; the game gives the player their game mode back and keeps the mirrored blocks.
+    /// Ends spectating; the game gives the player their game mode back and keeps the furniture where it was moved
+    /// (`/everything_cubed undo` reverts it).
     func stopSpectate() {
         guard phase == .spectating else { return }
         print("[app] spectate stopped")

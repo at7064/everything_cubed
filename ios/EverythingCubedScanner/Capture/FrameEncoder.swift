@@ -54,7 +54,7 @@ struct FrameSnapshot: @unchecked Sendable {
 /// ARKit confidence (0-2) as bytes, plus intrinsics and the camera-to-world pose (both row-major,
 /// ARKit conventions: world +Y up, camera looks down -Z, matrices for the image in sensor orientation).
 /// With `Options.live` (spectate) the photo is smaller and a `person` mask is added: one byte per depth pixel,
-/// 1 where a person is, so the mod never builds people as blocks.
+/// 1 where a person is: how people are found, to be shown as villagers.
 /// Only used from the pump's serial encode queue.
 final class FrameEncoder: @unchecked Sendable {
     struct Options {

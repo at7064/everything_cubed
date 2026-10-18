@@ -4,8 +4,9 @@ Usage:
   python everything_cubed_analyzer.py --images <folder> [--out <folder>/plan.json] [--mc-jar client.jar]
                                 [--scale BLOCKS_PER_METRE] [--backend auto|arkit|mapanything|vggt]
 
-A folder streamed from the iOS scanner app has a capture.json with LiDAR depth and camera poses;
-`auto` (or `arkit`) then hands it to lidar_analyzer.py, which needs no reconstruction or segmentation model.
+A folder streamed from the iOS scanner app has a capture.json with camera poses. With LiDAR depth it goes to
+lidar_analyzer.py, which needs no reconstruction or segmentation model; without (any iPhone) MapAnything is given
+ARKit's poses and only estimates depth (perception.reconstruct_tracked).
 """
 from __future__ import annotations
 
@@ -20,7 +21,8 @@ os.environ.setdefault("LOKY_MAX_CPU_COUNT", str(os.cpu_count() or 1))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from palette import surface_palette  # noqa: E402
-from roomplan import ADE_TO_CATEGORY, TEMPLATE_INFO, apply_wall_features, build_plan  # noqa: E402
+from perception import TRACKED_MAX_VIEWS  # noqa: E402
+from roomplan import ADE_TO_CATEGORY, ENLARGE, TEMPLATE_INFO, apply_wall_features, build_plan  # noqa: E402
 
 
 def log(msg):
@@ -33,7 +35,7 @@ def main(argv=None):
     ap.add_argument("--out", type=Path, help="output plan (default: <images>/plan.json)")
     ap.add_argument("--mc-jar", help="Minecraft client jar, used to read real block texture colours")
     ap.add_argument("--scale", type=float, help="blocks per metre (default: automatic)")
-    ap.add_argument("--enlarge", type=float, default=1.25,
+    ap.add_argument("--enlarge", type=float, default=ENLARGE,
                     help="build photo rooms this much larger than measured, e.g. 1.25 = 25%% (default); "
                          "LiDAR scans and --scale are always built at their measured size")
     ap.add_argument("--known-height", type=float,
@@ -50,7 +52,7 @@ def main(argv=None):
     ap.add_argument("--tracked-batch", type=int, default=0,
                     help="phone photo scans: MapAnything photos per batch, each batch placed with ARKit's poses "
                          "(0 = all photos in one run, the default; with batches --max-views can be raised)")
-    ap.add_argument("--max-views", type=int, default=24,
+    ap.add_argument("--max-views", type=int, default=TRACKED_MAX_VIEWS,
                     help="photos of an iOS photo scan given to MapAnything at once (default 24; more needs more memory)")
     ap.add_argument("--no-exif-camera", action="store_true",
                     help="do not give MapAnything the camera geometry from the photos' lens data")
@@ -69,7 +71,7 @@ def main(argv=None):
     ap.add_argument("--mesh-max-side", type=int, default=0,
                     help="downsample each mesh view to this side length; 0 keeps every reconstructed pixel")
     ap.add_argument("--upright-video", action="store_true",
-                    help="keep video reconstruction batches upright and at metric scale")
+                    help="level video reconstruction batches: their floors on one horizontal plane")
     ap.add_argument("--low-gpu-memory", action="store_true",
                     help="offload MapAnything sharing layers to CPU to reduce GPU memory use")
     ap.add_argument("--perceptron", action="store_true",

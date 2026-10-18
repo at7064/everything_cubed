@@ -120,6 +120,7 @@ public class HouseBuilder {
 		HouseBuilder b = new HouseBuilder(level, origin, plan, undo);
 		b.buildObject(o);
 		b.finishShapes();
+		b.placeLadders();  // a bunk or loft bed's ladder, as in build()
 	}
 
 	/**
@@ -888,10 +889,6 @@ public class HouseBuilder {
 	}
 
 	/**
-	 * Fill a footprint up to height h, skipping cells another object (or a doorway) already uses.
-	 * Returns the positions that were filled.
-	 */
-	/**
 	 * A fireplace built into the wall behind its footprint (the side away from {@code facing}), centred along it,
 	 * flush with the wall like a real one: brick, campfire, brick, a brick mantel row, and a one-block chimney in the
 	 * wall up to the ceiling. Bricks outside close the firebox at the back. Those wall blocks get no wall picture.
@@ -921,7 +918,7 @@ public class HouseBuilder {
 				cells[i] = inWall ? wallCell(side, u) : new int[]{alongX ? u : back, alongX ? back : u};
 				for (int y = 1; y <= 2; y++)
 					fits &= inWall ? u >= 0 && u < (alongX ? W : D) && solidWall(cells[i][0], y, cells[i][1])
-							: inside(cells[i][0], cells[i][1]) && !occupied.contains(BlockPos.asLong(cells[i][0], y, cells[i][1]));
+							: free(cells[i][0], y, cells[i][1]);
 			}
 			if (!fits) continue;
 			for (int i = 0; i < width; i++) {
@@ -947,6 +944,10 @@ public class HouseBuilder {
 		return !noFrame.contains(p) && level.getBlockState(p).isCollisionShapeFullBlock(level, p);
 	}
 
+	/**
+	 * Fill a footprint up to height h, skipping cells another object (or a doorway) already uses.
+	 * Returns the positions that were filled.
+	 */
 	private List<BlockPos> fill(int x0, int z0, int w, int d, int h, BlockState s) {
 		List<BlockPos> filled = new ArrayList<>();
 		for (int x = x0; x < x0 + w; x++)
@@ -966,7 +967,8 @@ public class HouseBuilder {
 	 * an invisible item frame holding a locked map. The paint is exactly the colour of the wall block behind
 	 * it, so frames and any bare wall block (behind furniture, past a stair) look the same.
 	 * Players can punch the frame off (or break the wall) like any other frame. Only blocks that are a
-	 * window or door, or have a painting or furniture directly in front, cannot hold a frame.
+	 * window or door, part of a fireplace, marked bare in the plan's tiles, or have a painting or furniture directly
+	 * in front, cannot hold a frame.
 	 */
 	private void hangWallTextures() {
 		if (!plan.has("textures") || !plan.has("_dir")) return;

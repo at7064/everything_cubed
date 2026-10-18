@@ -9,8 +9,8 @@ pixel is (SegFormer). A LiDAR scan already carries metric depth, the camera pose
 (usually) Apple RoomPlan's room model, so this analyzer needs no ML model at all by default:
 
 1. Geometry: every LiDAR depth pixel is unprojected with ARKit's intrinsics and pose. Only frames with normal
-   tracking are used. Depth up to 5 m is kept at medium confidence, up to --max-depth (10 m) at high confidence,
-   so the far walls of big rooms are measured too.
+   tracking are used (when enough remain). Depth up to 5 m is kept at medium confidence, up to --max-depth (10 m)
+   at high confidence, so the far walls of big rooms are measured too.
 2. Labels from geometry (all at the depth map's 256x192, normals straight from the depth image grid):
    - floor / ceiling: the lowest / highest horizontal plane along gravity (ARKit +Y);
    - walls: in each of the room's 4 directions (from RoomPlan's walls, else the LiDAR normals), the innermost
@@ -24,7 +24,8 @@ pixel is (SegFormer). A LiDAR scan already carries metric depth, the camera pose
    - everything else (people, clutter) stays unlabelled and is not built.
 3. --segformer (optional, needs transformers): SegFormer also names the small things geometry can't
    (lamps, plants, paintings, TVs, rugs, shelves). Geometry keeps the final say on floor, walls and ceiling.
-4. The existing roomplan.build_plan and walltex.render_walls turn this into the plan exactly as for photos.
+4. The existing roomplan.build_plan and walltex.render_walls turn this into the plan as for photos, at the
+   measured size (no --enlarge), with RoomPlan's windows and wall ends where it has them.
 """
 from __future__ import annotations
 
@@ -40,7 +41,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np  # noqa: E402
 
-from perception import ARKIT_MAX_DEPTH, ARKIT_TO_CV, ARKIT_WIDTH, _upright, category_lut, fuse  # noqa: E402
+from perception import (ARKIT_MAX_DEPTH, ARKIT_TO_CV, ARKIT_WIDTH, _upright, category_lut, fuse,  # noqa: E402
+                        upright_camera)
 
 # Labels this analyzer gives pixels; index = label id. Names are roomplan categories.
 LABELS = ["other", "floor", "ceiling", "wall", "window", "door", "bed", "table", "coffee_table", "desk", "chair",
@@ -76,18 +78,6 @@ def log(msg):
 def _mat(t):
     """RoomPlan / simd 4x4 matrices are stored column by column."""
     return np.array(t, dtype=np.float64).reshape(4, 4).T
-
-
-def _quarter_turns(c2w):
-    """How many times perception._upright turns a view (same test), so label maps can follow it."""
-    c2w = c2w.copy()
-    rot = np.eye(4); rot[:3, :3] = [[0, 1, 0], [-1, 0, 0], [0, 0, 1]]
-    for k in range(4):
-        up = c2w[:3, :3].T @ np.array([0.0, 1.0, 0.0])
-        if -up[1] >= abs(up[0]):
-            return k
-        c2w = c2w @ rot.T
-    return 0
 
 
 def _unproject(depth, K, c2w):
@@ -611,7 +601,7 @@ def to_views(frames, labels):
     geo_views, geo_labels, views, label_maps = [], [], [], []
     for fr, (lab, moved) in zip(frames, labels):
         dh, dw = fr["depth"].shape
-        turns = _quarter_turns(fr["c2w"])
+        turns = upright_camera(np.eye(3), fr["c2w"], 1, 1)[0]   # the turns _upright gave this view
         valid = fr["valid"]
         # The labelled cloud: window pixels sit where their ray crossed the wall, not outdoors.
         Kd = fr["K"].copy(); Kd[:2] *= dw / fr["imageSize"][0]
@@ -650,7 +640,7 @@ def main(argv=None):
     ap.add_argument("--seg-model", default="nvidia/segformer-b5-finetuned-ade-640-640")
     # uniform: every wall block is a map in the room's one paint colour, with the things on the wall on top.
     ap.add_argument("--wall-detail", default="uniform", choices=["uniform", "style", "pattern", "items", "photo", "none"])
-    ap.add_argument("--texture-px", type=int, help="texture pixels per block (default 64 for items, 128 for photo)")
+    ap.add_argument("--texture-px", type=int, help="texture pixels per block (default 128 for photo, 64 otherwise)")
     ap.add_argument("--save-cloud", action="store_true", help="also write the labelled point cloud (.npz)")
     ap.add_argument("--mirror-walls", action="store_true",
                     help="a wall the scan hardly saw copies the opposite wall (halls, libraries, churches)")

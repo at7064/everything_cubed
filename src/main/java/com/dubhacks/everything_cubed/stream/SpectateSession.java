@@ -26,7 +26,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Mode {@code spectate}: starts from a room the player has scanned with LiDAR and built ({@code folder} in
- * {@code begin}, their last build). The phone keeps the scan's RoomPlan session running and streams RoomPlan's live
+ * {@code begin}, their last build; refused when there is no build or the folder differs, and the analyzer worker
+ * refuses a build without RoomPlan's room.json). The phone keeps the scan's RoomPlan session running and streams RoomPlan's live
  * room model ({@code room}) and camera frames (about 5 a second each). They go to {@code spectate_analyzer.py}, a
  * worker process that moves built furniture (or adds new pieces) only when RoomPlan clearly shows it, and finds
  * people in the frames. Only the newest message of each kind waits while the worker is busy, so the game never

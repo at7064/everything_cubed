@@ -7,7 +7,9 @@ so the same paint is the same block everywhere (unseen walls inferred). Item fra
 blend with smoothly lit blocks, so frames are only used for the things on the wall (posters, boards,
 clocks...): snapped to whole blocks, in a few flat colours, filling their frames completely.
 detail="photo": the actual photo on every block (paint where unseen).
-detail="style" (default): one wall style for the whole room, so every wall matches. Its vertical profile is the
+detail="uniform" (the analyzers' default): every wall block is a map in the room's one measured paint, with the
+things detected on the wall drawn on top.
+detail="style": one wall style for the whole room, so every wall matches. Its vertical profile is the
 median colour at each height over all clean wall pixels of all walls (bands such as a wainscot and its trim
 line stay at their height; photo lighting averages out), and its fine texture is one typical block-sized
 patch made seamless and tiled. Every wall gets that same picture; a room with neither bands nor texture is
@@ -94,7 +96,7 @@ def even_wall_lighting(img, seen, px):
     """Removes the photos' own lighting from a wall image: sun bands, cast shadows and fall-off become an even
     brightness, while colour and detail finer than LIGHT_SCALE blocks stay. Blown-out glare and near-black
     shadow carry no wall at all and become unseen (the pattern fill replaces them). Returns (image, seen)."""
-    Y = img @ np.array([0.299, 0.587, 0.114], np.float32)
+    Y = _luma(img)
     seen = seen & (Y < LUMA_GLARE) & (Y > LUMA_SHADOW)
     if seen.sum() < px * px:
         return img, seen
@@ -276,7 +278,7 @@ def _snap(colours):
 def posterise(pix, max_colours=6):
     """A few flat colours for the things on the wall (near-identical colours and edge slivers merged)."""
     k = int(min(max_colours, max(1, len(pix) // 200)))
-    km = KMeans(n_clusters=k, n_init=3, random_state=0).fit(srgb_to_lab(pix[:: max(1, len(pix) // 20000)]))
+    km = KMeans(n_clusters=k, n_init=3, random_state=0).fit(_lab_sample(pix))
     lbl = km.predict(srgb_to_lab(pix))
     counts = np.bincount(lbl, minlength=k)
     keep, remap = [], np.arange(k)
@@ -674,8 +676,7 @@ def render_walls(views, label_maps, cat_names_of_pixel, ctx, out_dir: Path, px=6
     style = None
     if detail == "style":
         # Glare and deep shadow carry no wall; everything else is averaged over the whole room.
-        clean = {s: (img, seen & ((img @ np.array([0.299, 0.587, 0.114], np.float32) < LUMA_GLARE)
-                                   & (img @ np.array([0.299, 0.587, 0.114], np.float32) > LUMA_SHADOW)))
+        clean = {s: (img, seen & (_luma(img) < LUMA_GLARE) & (_luma(img) > LUMA_SHADOW))
                  for s, (img, seen) in proj.items()}
         style = room_style([clean[s] for s in sides if clean[s][1].any()], px) if any(c[1].any() for c in clean.values()) else None
         if style is None:

@@ -141,8 +141,6 @@ def reconstruct_mapanything(paths, device, model_name, log, use_exif=True, batch
     all_views = []
     overlap = 1 if batch_size == 3 else 2
     for start in range(0, len(paths), batch_size - overlap):
-        if start and start + overlap >= len(paths):
-            break
         subset = paths[start:start + batch_size]
         inputs = (load_images([str(p) for p in subset]) if resolution == 518 else
                   load_images([str(p) for p in subset], resize_mode="longest_side", size=resolution))

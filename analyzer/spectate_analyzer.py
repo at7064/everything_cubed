@@ -23,7 +23,7 @@ Only whole pieces of furniture change, and only from RoomPlan's objects; no sing
   object of that kind is taken to be that piece (RoomPlan once reported the room's one bed 1.8 m off), not a new one;
 - anything RoomPlan is unsure of, or stops reporting, stays as built.
 People are found in the camera frames (the `person` mask the phone sends with LiDAR depth), moved by the same
-alignment as the furniture (none are reported before it is agreed), and reported as tracked positions, which the mod shows as villagers. A person lying on a bed (low and flat over a built bed, LYING_FRAMES
+alignment as the furniture (none are reported before it is agreed), and reported as tracked positions, which the mod shows as villagers. A person lying on a bed (low and flat over a built bed, or anywhere on the real bed it was built from, LYING_FRAMES
 frames in a row) is reported with the bed block they lie on ("sleep": [x, z]); the mod puts the villager to sleep
 there.
 

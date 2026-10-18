@@ -40,7 +40,8 @@ import java.util.UUID;
  *   <li>right-click a built bed in the daytime to lie down in it (at night it is ordinary sleep), "Leave Bed" to get up;</li>
  *   <li>right-click a lamp to switch it on or off;</li>
  *   <li>right-click a trash can with something in your main hand to throw that stack away;</li>
- *   <li>punch a seat or lamp, or break the real block inside a model, to remove that piece of furniture.</li>
+ *   <li>punch a seat, lamp or trash can, or break the real block inside a model, to remove that piece of
+ *   furniture.</li>
  * </ul>
  * Tags are saved with the entities, so this keeps working after a restart.
  */
@@ -163,17 +164,14 @@ public final class FurnitureInteractions {
 				shade.setBrightnessOverride(on ? null : Brightness.FULL_BRIGHT);
 	}
 
-	/** Removes the model (if any) that had the real block at {@code pos} inside it. */
 	/**
 	 * Removes every furniture model in the block at {@code pos}: the one whose real block it is, and any whose parts
 	 * (or hitbox) are in it, such as a bin or a monitor with no real block (spectate: it is gone in the real room).
 	 */
 	public static void removeModelsIn(ServerLevel level, BlockPos pos) {
 		removeModelAround(level, pos);
-		for (Entity e : level.getEntitiesOfClass(Entity.class, new AABB(pos), e -> groupOf(e) != null)) {
-			String group = groupOf(e);
-			if (group != null) removeGroup(level, group, e.position());
-		}
+		for (Entity e : level.getEntitiesOfClass(Entity.class, new AABB(pos), e -> groupOf(e) != null))
+			removeGroup(level, groupOf(e), e.position());
 	}
 
 	private static void removeModelAround(ServerLevel level, BlockPos pos) {

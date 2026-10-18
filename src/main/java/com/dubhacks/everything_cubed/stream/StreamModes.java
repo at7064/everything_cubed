@@ -7,7 +7,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Session modes a phone can ask for in {@code begin}. {@code capture} records a scan and builds it;
- * {@code spectate} mirrors the room into the world live.
+ * {@code spectate} moves and adds whole pieces of the built furniture as the real room changes, live.
  * New modes register here without touching the connection code.
  */
 public final class StreamModes {
