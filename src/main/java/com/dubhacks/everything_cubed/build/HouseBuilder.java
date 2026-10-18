@@ -595,15 +595,7 @@ public class HouseBuilder {
 							0.62f, 0.9f, FurnitureInteractions.TRASH, group));
 				}
 			}
-			case "fireplace" -> {
-				fill(x0, z0, w, d, 1, Blocks.BRICKS.defaultBlockState());
-				int cx = x0 + w / 2, cz = z0 + d / 2;
-				set(cx, 1, cz, Blocks.CAMPFIRE.defaultBlockState());
-				for (int y = 2; y <= Math.min(H, 1 + Math.max(2, h)); y++)
-					for (int x = x0; x < x0 + w; x++)
-						for (int z = z0; z < z0 + d; z++)
-							if (claim(x, y, z)) set(x, y, z, Blocks.BRICKS.defaultBlockState());
-			}
+			case "fireplace" -> fireplace(x0, z0, w, d, facing);
 			case "tv" -> fill(x0, z0, w, d, Math.min(2, h), first("black_concrete"));
 			case "monitor" -> {
 				int y = Math.max(2, Math.min(H, o.has("y") ? o.get("y").getAsInt() : 2));
@@ -768,6 +760,42 @@ public class HouseBuilder {
 	 * Fill a footprint up to height h, skipping cells another object (or a doorway) already uses.
 	 * Returns the positions that were filled.
 	 */
+	/**
+	 * A fireplace against the back of its footprint (the side away from {@code facing}), centred along it:
+	 * brick, campfire, brick with a brick mantel row on top and a one-block chimney up to the ceiling. Detected
+	 * footprints are often wide and deep, and filling them whole left a recessed campfire in a brick mass with holes
+	 * wherever another piece had claimed a cell; this shape is always complete. The firebox and mantel are checked
+	 * first: when the 3-wide one doesn't fit, it is just a campfire under the chimney, and when that doesn't fit
+	 * either, nothing. The chimney rises until it meets something (a ceiling light) or the ceiling.
+	 */
+	private void fireplace(int x0, int z0, int w, int d, Direction facing) {
+		if (H < 2) return;
+		boolean alongX = facing.getAxis() == Direction.Axis.Z;   // the fireplace runs along the wall behind it
+		int span = alongX ? w : d;
+		int back = alongX ? (facing.getStepZ() > 0 ? z0 : z0 + d - 1) : (facing.getStepX() > 0 ? x0 : x0 + w - 1);
+		BlockState brick = Blocks.BRICKS.defaultBlockState();
+		for (int width : span >= 3 ? new int[]{3, 1} : new int[]{1}) {
+			int start = (alongX ? x0 : z0) + (span - width) / 2, mid = width / 2;
+			boolean fits = true;
+			for (int i = 0; i < width; i++)
+				for (int y = 1; y <= 2; y++) {
+					int x = alongX ? start + i : back, z = alongX ? back : start + i;
+					fits &= inside(x, z) && !occupied.contains(BlockPos.asLong(x, y, z));
+				}
+			if (!fits) continue;
+			for (int i = 0; i < width; i++) {
+				int x = alongX ? start + i : back, z = alongX ? back : start + i;
+				claim(x, 1, z);
+				set(x, 1, z, i == mid ? Blocks.CAMPFIRE.defaultBlockState() : brick);
+				claim(x, 2, z);
+				set(x, 2, z, brick);
+				if (i == mid)
+					for (int y = 3; y <= H && claim(x, y, z); y++) set(x, y, z, brick);
+			}
+			return;
+		}
+	}
+
 	private List<BlockPos> fill(int x0, int z0, int w, int d, int h, BlockState s) {
 		List<BlockPos> filled = new ArrayList<>();
 		for (int x = x0; x < x0 + w; x++)
